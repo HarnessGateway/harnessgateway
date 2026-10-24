@@ -15,9 +15,9 @@ SHELL = {"type": "shell_call", "id": "sh_1", "call_id": "c1", "status": "complet
 def test_request_parses_routing_text_and_files():
     r = wire.Request.parse({"model": "claude-code/deepseek/deepseek-chat", "stream": True, "metadata": {"a": "b"},
                             "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"},
-                                                                   {"type": "input_file", "filename": "../a.txt", "file_data": "data:text/plain;base64,aGVsbG8="}]}]})
+                                                                   {"type": "input_file", "filename": "src/./a.txt", "file_data": "data:text/plain;base64,aGVsbG8="}]}]})
     assert (r.harness, r.provider, r.model, r.text, r.stream, r.store) == ("claude-code", "deepseek", "deepseek-chat", "hi", True, True)
-    assert r.files == {"a.txt": b"hello"} and r.metadata == {"a": "b"}
+    assert r.files == {"src/a.txt": b"hello"} and r.metadata == {"a": "b"}                       # a relative path, kept
     assert "characters" in r.for_trace()["input"][0]["content"][1]["file_data"]
     plain = wire.Request.parse({"model": "pi", "input": "just text", "store": False})
     assert (plain.provider, plain.model, plain.store, plain.files) == ("", "", False, {})
@@ -33,6 +33,8 @@ def test_request_parses_routing_text_and_files():
     ({"model": "Bad", "input": "hi"}, "model is a harness name"),
     ({"model": "a", "input": ""}, "input is required"),
     ({"model": "a", "input": [{"role": "user", "content": [{"type": "input_file", "filename": "f", "file_data": "data:x;base64,!!"}]}]}, "not valid base64"),
+    ({"model": "a", "input": [{"role": "user", "content": [{"type": "input_file", "filename": "../f", "file_data": "x"}]}]}, "relative filename"),
+    ({"model": "a", "input": [{"role": "user", "content": [{"type": "input_file", "filename": "/etc/f", "file_data": "x"}]}]}, "relative filename"),
     ({"model": "a", "input": "x", "previous_response_id": "nope"}, "previous_response_id"),
     ({"model": "a", "input": "x", "metadata": {"k": 1}}, "not a valid Responses request"),
     ("nope", "JSON object"),

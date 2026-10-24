@@ -460,7 +460,8 @@ class Store:
         try:
             return self._settle(org, name, repo, sha, h.team, h.origin, h.created)
         except Invalid:
-            repo._git("update-ref", "refs/heads/main", h.head) if h.head else None   # the bad commit is unreachable
+            if h.head:
+                repo.reset(h.head)                    # the bad commit is unreachable
             raise
 
     def replace_harness(self, org: str, name: str, archive: bytes, message: str, author: str) -> Harness:
@@ -481,7 +482,7 @@ class Store:
         try:
             return self._settle(org, name, repo, sha, h.team, h.origin, h.created)
         except Invalid:
-            repo._git("update-ref", "refs/heads/main", h.head)
+            repo.reset(h.head)
             raise
 
     def move_harness(self, org: str, name: str, team: str) -> Harness:

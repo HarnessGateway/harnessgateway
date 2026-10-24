@@ -284,14 +284,28 @@ def test_harness_repository_and_teams(platform):
         assert (await dev.post("/v1/harnesses/mine", json={"catalog": "demo", "team": "platform"})).status_code == 200
         r = (await dev.post("/v1/responses", json={"model": "echo-platform", "input": "team run"})).json()
         assert r["status"] == "completed"
+        # a team's sessions are the team's: a teammate sees them, another member of the organization does not
+        for name in ("peer", "outsider"):
+            await client.post("/v1/members", json={"name": name, "role": "member"})
+        await client.put("/v1/teams/platform", json={"members": ["dev", "peer"], "title": "Platform"})
+        peer_key, out_key = [(await client.post(f"/v1/members/{n}/keys", json={})).json()["secret"] for n in ("peer", "outsider")]
+        peer = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {peer_key}"}, timeout=60)
+        outsider = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {out_key}"}, timeout=60)
+        team_sid = r["metadata"]["session_id"]
+        assert (await peer.get(f"/v1/sessions/{team_sid}")).status_code == 200 and (await peer.get(f"/v1/responses/{r['id']}")).status_code == 200
+        assert team_sid in {s["id"] for s in (await peer.get("/v1/sessions")).json()["data"]}
+        assert (await outsider.get(f"/v1/sessions/{team_sid}")).status_code == 404 and (await outsider.get(f"/v1/responses/{r['id']}")).status_code == 404
+        assert (await outsider.get("/v1/sessions")).json()["data"] == []
+        mine = (await dev.post("/v1/responses", json={"model": "echo", "input": "private"})).json()
+        assert (await peer.get(f"/v1/responses/{mine['id']}")).status_code == 404                 # a member's own session stays theirs
         await client.put("/v1/teams/platform", json={"members": []})
         assert (await dev.post("/v1/responses", json={"model": "echo-platform", "input": "x"})).status_code == 404
         assert (await client.delete("/v1/teams/platform")).status_code == 409
         # the deployer sees counts, never content
         dep = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": "Bearer hgd_deployer"})
         orgs = (await dep.get("/v1/orgs")).json()["data"]
-        assert orgs[0]["name"] == org and orgs[0]["usage"]["turns"] == 4
-        assert (await dep.get("/v1/usage")).json()["totals"]["turns"] == 4
+        assert orgs[0]["name"] == org and orgs[0]["usage"]["turns"] == 5
+        assert (await dep.get("/v1/usage")).json()["totals"]["turns"] == 5
         assert (await dep.get("/v1/responses/" + r["id"])).status_code == 403
         # another organization sees nothing of this one
         other, _, _ = await owner_client(transport, email="eve@other.test")

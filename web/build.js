@@ -45,7 +45,7 @@ VIEWS.Conversations = async function conversations(main, args) {
       pane.append(files.length ? tree : empty("no files yet"), viewer);
     } else if (paneTab === "trace") {
       const trace = (await api("GET", `/v1/sessions/${sid}/trace`)).data;
-      pane.append(h("div", { class: "trace" }, ...trace.map(t => h("div", { class: "t" }, h("span", { class: "muted" }, new Date(t.at * 1000).toLocaleTimeString()), tag(t.kind, { request: "blue", response: "ok", interrupt: "orange", cancel: "bad" }[t.kind] || ""),
+      pane.append(h("div", { class: "trace" }, ...trace.map(t => h("div", { class: "t" }, h("span", { class: "muted" }, new Date(t.at * 1000).toLocaleTimeString()), tag(t.kind, { request: "blue", response: "ok", interrupt: "orange", cancel: "bad", disconnect: "bad" }[t.kind] || ""),
         h("details", {}, h("summary", { class: "mono", style: "cursor:pointer" }, t.kind === "request" ? (typeof t.body.input === "string" ? t.body.input : JSON.stringify(t.body.input)).slice(0, 80) : t.kind === "response" ? `${t.body.status} · ${(t.body.output || []).length} items` : JSON.stringify(t.body).slice(0, 80)), h("pre", { class: "light" }, JSON.stringify(t.body, null, 1)))))));
     } else {
       const s = await api("GET", `/v1/sessions/${sid}`);

@@ -9,8 +9,8 @@ workspace, the CLI's state, and the home the member's package keeps. A request w
 Conversations: pick a harness (and a provider and model when the package has no default or you
 want another), write the task, Send. The items stream in as the harness produces them: commands
 with their output, patches, reasoning, messages. The pane on the right shows the workspace after
-each turn (every file, readable), the trace (every request and response as sent, every steer and
-cancel) and the log (the package's own lines and stderr). The session list on the left reopens any
+each turn (every file, readable), the trace (every request and response as sent, every steer, cancel
+and disconnect) and the log (the package's own lines and stderr). The session list on the left reopens any
 conversation, including one still running on another client; the stream resumes from its start.
 
 <figure class="shot" markdown>
@@ -28,12 +28,22 @@ CLI session, so the steer lands with everything the first turn did. Over the API
 line. A CLI with no way to take a message mid-run gets the steer as the next turn's input, which
 the package documents.
 
-## Cancel
+## Cancel, and closing the request
 
-Cancel stops the turn (`POST /v1/responses/{id}/cancel`, `hg cancel RESPONSE`): `SIGTERM` to the
-package's process group, the stop grace from `harness.json`, then `response.sh` if there is one.
-The response ends `cancelled` with the items produced so far; the session is idle again and can
-continue.
+A turn belongs to the request that made it. Close that request, by closing the stream or by
+giving up on a blocking call, and the turn is stopped the same way a cancel stops it: no endpoint
+to call, nothing left running for nobody. The response ends `cancelled` with
+`metadata.incomplete_reason: client_disconnected` and the items produced so far, and the session
+is idle again. Closing the console's tab mid-turn does this; so does `Ctrl-C` on `hg ask`.
+
+A turn made with `background: true` was asked to outlive its request: following it
+(`GET /v1/responses/{id}?stream=true`) and closing the stream changes nothing, and only Cancel
+ends it early.
+
+Cancel (`POST /v1/responses/{id}/cancel`, `hg cancel RESPONSE`) stops a turn on purpose: `SIGTERM`
+to the package's process group, the stop grace from `harness.json`, then `response.sh` if there is
+one. The response ends `cancelled` with the items produced so far; the session is idle again and
+can continue.
 
 ## The workspace
 
@@ -54,7 +64,7 @@ when a CLI's behaviour needs the wire itself.
 
 ## Sessions
 
-Sessions lists every session the member can see: their own, and for owners the whole
+Sessions lists every session the member can see: their own, their teams', and for owners the whole
 organization's, with the harness, the member, the status, the turn count and whether a workspace
 is kept. A session is deleted with everything it holds (`DELETE /v1/sessions/{id}`); a running
 one cannot be.

@@ -62,6 +62,8 @@ class Record:
     metadata: dict[str, str]
     text: str = ""                                   # the input's text, for lists and the console
     instructions: Any = None
+    team: str = ""                                   # the harness's team: its members may see this turn
+    background: bool = False                         # a background turn outlives the request that made it
     status: str = "queued"
     running: str = "0"                               # "1" while a worker has it: counted against max_runs
     worker: str = ""
@@ -78,6 +80,7 @@ class Record:
     truncated: bool = False
     files: str = ""                                  # blob key of the request's files, if any
     cancel: bool = False
+    stop_reason: str = ""                            # why it was stopped: cancelled, or client_disconnected
     interrupts: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -142,25 +145,28 @@ class Sessions:
         seq = len(self.records.list("trace", s.org, f"{s.id}:"))
         self.records.put("trace", s.org, f"{s.id}:{seq:06d}", {"at": time.time(), "kind": kind, "response": rid, "body": body})
 
-    @staticmethod
-    def _reachable(who: Member, org: str, member: str) -> bool:
-        return org == who.org and (who.owner or member == who.name)
+    def _reachable(self, who: Member, org: str, member: str, team: str = "") -> bool:
+        """Reach is organization, then team, then member: a member sees their own work and the work
+        of the teams they are in; an owner the organization's; nobody another organization's."""
+        if org != who.org:
+            return False
+        return who.owner or member == who.name or (bool(team) and self.store.in_team(who, team))
 
     def session(self, who: Member, sid: str) -> SessionRecord:
         s = self._session_by_id(sid)
-        if not self._reachable(who, s.org, s.member):
+        if not self._reachable(who, s.org, s.member, s.team):
             raise NotFound(f"no session {sid}")
         return s
 
     def response(self, who: Member, rid: str) -> Record:
         r = self._record_by_id(rid)
-        if not self._reachable(who, r.org, r.member):
+        if not self._reachable(who, r.org, r.member, r.team):
             raise NotFound(f"no response {rid}")
         return r
 
     def sessions(self, who: Member) -> list[SessionRecord]:
         found = [SessionRecord(**d) for d in self.records.list("session", who.org)]
-        return sorted((s for s in found if self._reachable(who, s.org, s.member)), key=lambda s: -s.created)
+        return sorted((s for s in found if self._reachable(who, s.org, s.member, s.team)), key=lambda s: -s.created)
 
     def records_of(self, who: Member, sid: str) -> list[Record]:
         s = self.session(who, sid)
@@ -178,7 +184,7 @@ class Sessions:
             raise Invalid(f"organization {org.name} is suspended")
         if req.previous:
             prev = self._record_by_id(req.previous)
-            if not self._reachable(who, prev.org, prev.member):
+            if not self._reachable(who, prev.org, prev.member, prev.team):
                 raise NotFound(f"no response {req.previous}")
             s = self._session_by_id(prev.session)
             if not s.stored:
@@ -215,7 +221,7 @@ class Sessions:
         self.blobs.put(turn_blob(s.org, s.id, rid, "request.json"), json.dumps(req.body).encode())
         r = Record(rid, s.id, s.org, s.member, s.harness, version, provider.name, req.model or config.model, s.turn + 1,
                    time.time(), req.previous, req.store, dict(req.metadata), text=req.text, instructions=req.body.get("instructions"),
-                   files=files)
+                   team=s.team, background=req.background, files=files)
         s.responses.append(rid)
         s.running = rid
         self._put_session(s)
@@ -247,7 +253,7 @@ class Sessions:
         home = home_blob(r.org, r.member, r.harness)
         get, put = self.blobs.presign_get, self.blobs.presign_put
         ttl = int(timeout) + 600
-        return {"id": r.id, "session": s.id, "org": r.org, "member": r.member, "harness": r.harness, "version": r.version,
+        return {"id": r.id, "session": s.id, "org": r.org, "team": r.team, "member": r.member, "harness": r.harness, "version": r.version,
                 "turn": r.turn, "new_session": r.turn == 1, "previous": r.previous or "", "model": r.model,
                 "store": r.store, "config": config.as_json(), "limits": ceilings.as_dict(), "timeout_s": timeout, "token": token,
                 "provider": {"name": provider.name, "api": provider.api, "path": provider.path, "url": PROVIDER_URL + provider.path},
@@ -299,7 +305,7 @@ class Sessions:
         cap = ceilings.output_mb * 1024 * 1024
         kind, code = body.get("outcome", "failed"), body.get("exit_code")
         stdout, stderr = str(body.get("stdout", ""))[:cap], str(body.get("stderr", ""))[:cap]
-        r.truncated = bool(body.get("truncated")) or len(str(body.get("stdout", ""))) > cap
+        r.truncated = bool(body.get("truncated")) or any(len(str(body.get(k, ""))) > cap for k in ("stdout", "stderr", "response"))
         r.exit_code, r.ended = code, time.time()
         events, r.log = wire.events_of(stdout)
         r.stderr = stderr
@@ -322,7 +328,7 @@ class Sessions:
         elif kind == "timed_out":
             r.status, r.incomplete = "incomplete", {"reason": "timeout"}
         elif kind in ("stopped", "killed"):
-            r.status, r.incomplete = "cancelled", {"reason": "cancelled"}
+            r.status, r.incomplete = "cancelled", {"reason": r.stop_reason or "cancelled"}
         elif code == 0:
             r.status = "completed"
         else:
@@ -418,23 +424,33 @@ class Sessions:
         except Invalid:
             return []
 
-    def cancel(self, who: Member, rid: str) -> Record:
-        """Ask the worker to stop it; a queued turn ends at once."""
+    def cancel(self, who: Member, rid: str, reason: str = "cancelled") -> Record:
+        """Ask the worker to stop it gracefully (the package's stop signal, then its grace); a queued
+        turn ends at once. `reason` is what the response says: `cancelled`, or `client_disconnected`."""
         r = self.response(who, rid)
         if r.final:
             return r
         s = self._session_by_id(r.session)
-        self._trace(s, "cancel", rid, {})
+        self._trace(s, "cancel" if reason == "cancelled" else "disconnect", rid, {})
         if r.status == "queued" and self.records.update_if("response", r.org, rid, "status", "queued",
-                                                           asdict(Record(**{**asdict(r), "status": "cancelled", "running": "0",
-                                                                            "incomplete": {"reason": "cancelled"}, "ended": time.time()}))):
+                                                           asdict(Record(**{**asdict(r), "status": "cancelled", "running": "0", "stop_reason": reason,
+                                                                            "incomplete": {"reason": reason}, "ended": time.time()}))):
             s.running = ""
             self._put_session(s)
             return self._record_by_id(rid)
         r = self._record_by_id(rid)
-        r.cancel = True
+        r.cancel, r.stop_reason = True, reason
         self._put_record(r)
         return r
+
+    def disconnected(self, who: Member, rid: str) -> Record:
+        """The client that asked for this turn closed its request. A foreground turn is theirs for as
+        long as they wait, so it is stopped the way a cancel stops it; a background turn (`background:
+        true`) was asked to outlive the request and runs on."""
+        r = self.response(who, rid)
+        if r.final or r.background:
+            return r
+        return self.cancel(who, rid, reason="client_disconnected")
 
     def interrupt(self, who: Member, sid: str, text: str) -> Record:
         """Steer the session's running turn: the text reaches request.sh with the package's signal."""

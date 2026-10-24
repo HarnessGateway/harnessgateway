@@ -28,7 +28,7 @@ from .errors import Invalid
 from .execution import Execution, Outcome, Spec
 from .limits import Limits
 from .runtimes.docker import TURN_SCRIPT
-from .sandboxes import InstallFailed, path_with
+from .sandboxes import InstallFailed, path_with, scope_of
 
 CHUNK_EVERY_S = 0.25
 HEARTBEAT_S = 5
@@ -38,9 +38,9 @@ CLAIM_IDLE_S = 1
 class NodeLike(Protocol):
     async def prepare(self) -> str: ...
     async def recover(self) -> None: ...
-    def runtime_for(self, org: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
+    def runtime_for(self, scope: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
                     egress: Sequence[str] = (), gateway_url: str = "", token: str = ""): ...
-    async def tools_for(self, org: str, limits: Limits, folder: Path, config: harness.Config, root: Path, image_id: str) -> Path: ...
+    async def tools_for(self, scope: str, limits: Limits, folder: Path, config: harness.Config, root: Path, image_id: str) -> Path: ...
 
 
 def turn_env(job: dict[str, Any], config: harness.Config, *, workspace: Path, home: Path, rundir: Path, state: Path,
@@ -184,11 +184,12 @@ class Worker:
 
     async def _run(self, job: dict[str, Any]) -> dict[str, Any]:
         rid, sid, org = job["id"], job["session"], job["org"]
+        scope = scope_of(org, job.get("team", ""))     # the sandbox's uid: the team's, when the harness is a team's
         config = harness.load_config_dict(job["config"])
         limits = Limits.from_dict(job["limits"])
         urls = job["urls"]
         folder = await self._package(job["version"], urls["folder"])
-        tools = await self.node.tools_for(org, limits, folder, config, self.cache / "tools", self._image_id)
+        tools = await self.node.tools_for(scope, limits, folder, config, self.cache / "tools", self._image_id)
         session_dir = self.cache / "sessions" / sid
         workspace, state, rundir = session_dir / "workspace", session_dir / "state", session_dir / "run"
         home = self.cache / "homes" / org / job["member"] / job["harness"]
@@ -203,7 +204,7 @@ class Worker:
         await asyncio.to_thread(self._materialize, job, folder, session_dir, home, fetched)
         await self._http.post(f"/internal/turns/{rid}/started", json={})
         self._stop_timeouts[rid], self._interrupts[rid], self._sessions[rid] = config.stop_timeout_s, config.interrupt, sid
-        runtime = self.node.runtime_for(org, limits, read_only=(folder, tools), writable=(home, rundir, state),
+        runtime = self.node.runtime_for(scope, limits, read_only=(folder, tools), writable=(home, rundir, state),
                                         egress=config.run_egress, gateway_url=self.gateway_url or job["gateway_url"], token=job["token"])
         base = getattr(runtime, "provider_base", "")   # a node without a door names the gateway itself
         env = turn_env(job, config, workspace=workspace, home=home, rundir=rundir, state=state, folder=folder, tools=tools,

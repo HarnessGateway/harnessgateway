@@ -10,11 +10,11 @@ bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 
 
 | Route | Does |
 |---|---|
-| `POST /v1/responses` | a turn; the body is a Responses request ([Requests](requests.md)); `x-session-id` header on the response |
+| `POST /v1/responses` | a turn; the body is a Responses request ([Requests](requests.md)); `x-session-id` header on the response. Closing a foreground request stops its turn ([Requests](requests.md#closing-the-request)) |
 | `GET /v1/responses/{id}` | the response object; `?stream=true` streams it (a running one from its start) |
 | `GET /v1/responses/{id}/detail` | plus the package's log and stderr, the worker, the timings, the raw status |
 | `GET /v1/responses/{id}/request` | the request as sent |
-| `POST /v1/responses/{id}/cancel` | stop it |
+| `POST /v1/responses/{id}/cancel` | stop it on purpose (the one way to end a background turn early) |
 | `GET /v1/responses/{id}/captures`, `…/captures/{name}` | the provider exchanges the gateway relayed |
 
 ## Sessions and rodeos
@@ -23,7 +23,7 @@ bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 
 |---|---|
 | `GET /v1/sessions`, `GET /v1/sessions/{id}` | the member's sessions (an owner's organization's); one with its turns |
 | `POST /v1/sessions/{id}/interrupt` | `{"input": "…"}`: steer the running turn |
-| `GET /v1/sessions/{id}/trace` | every request, response, steer and cancel |
+| `GET /v1/sessions/{id}/trace` | every request, response, steer, cancel and disconnect |
 | `GET /v1/sessions/{id}/files`, `…/files/{path}`, `…/archive` | the workspace after the last turn |
 | `DELETE /v1/sessions/{id}` | remove it and everything it holds |
 | `POST /v1/rodeos`, `GET /v1/rodeos`, `GET/PATCH/DELETE /v1/rodeos/{id}` | `{"task", "entries": [{"response"}]}`; the list with the leaderboard; `{"winner": "harness"}` |

@@ -191,6 +191,11 @@ class Repo:
             self._git("update-ref", REF, sha)
         return sha
 
+    def reset(self, sha: str) -> None:
+        """Move the branch back to `sha`, a commit here: what was committed after it stays in the
+        object store, unreachable."""
+        self._git("update-ref", REF, self.resolve(sha))
+
     def import_tree(self, folder: Path, message: str, author: str) -> str:
         """Every file under `folder` as the next commit: files absent from the folder are removed."""
         wanted = {p.relative_to(folder).as_posix(): p.read_bytes() for p in sorted(folder.rglob("*"))

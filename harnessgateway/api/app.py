@@ -387,11 +387,29 @@ def create_app(service: Service) -> FastAPI:
                         headers={"Content-Disposition": f'attachment; filename="{name}.tar.gz"'})
 
     # responses: the OpenAI Responses API
-    def streamed(who: Member, r: Record) -> StreamingResponse:
+    def streamed(who: Member, r: Record, *, owns: bool = False) -> StreamingResponse:
+        """The turn's event stream. When the request `owns` the turn (it made it, in the foreground),
+        the client closing the stream stops the turn gracefully: a request that is gone has no one
+        waiting for it. A follower of a background turn closing its stream changes nothing."""
         async def ended() -> dict[str, Any]:
             return sessions.response_object(await sessions.wait(r.id))
-        return StreamingResponse(wire.stream(sessions.response_object(r), sessions.follow(who, r.id), ended), media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache", "X-Session-Id": r.session})
+
+        async def events() -> Any:
+            try:
+                async for chunk in wire.stream(sessions.response_object(r), sessions.follow(who, r.id), ended):
+                    yield chunk
+            finally:
+                if owns:
+                    sessions.disconnected(who, r.id)   # nothing when the turn has ended or runs in the background
+        return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Session-Id": r.session})
+
+    async def awaited(request: Request, who: Member, r: Record) -> Record:
+        """The turn's end, unless the client stops waiting first: then the turn is stopped gracefully."""
+        while not (r := sessions.response(who, r.id)).final:
+            if await request.is_disconnected():
+                return sessions.disconnected(who, r.id)
+            await asyncio.sleep(0.25)
+        return r
 
     @app.post("/v1/responses")
     async def create_response(request: Request, who: Member = member) -> Any:
@@ -402,9 +420,9 @@ def create_app(service: Service) -> FastAPI:
         req = wire.Request.parse(body)
         r = await asyncio.to_thread(sessions.create, who, req)
         if req.stream:
-            return streamed(who, r)
+            return streamed(who, r, owns=not req.background)
         if not req.background:
-            r = await sessions.wait(r.id)
+            r = await awaited(request, who, r)
         return JSONResponse(sessions.response_object(r), headers={"X-Session-Id": r.session})
 
     @app.get("/v1/responses/{rid}")

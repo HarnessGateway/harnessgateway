@@ -190,6 +190,7 @@ def run_local(a: argparse.Namespace) -> None:
     shutil.rmtree(rundir / "files", ignore_errors=True)
     (rundir / "files").mkdir()
     for name, data in req.files.items():
+        (rundir / "files" / name).parent.mkdir(parents=True, exist_ok=True)
         (rundir / "files" / name).write_bytes(data)
     if turn == 1 and (seed := contract.seed(folder, "workspace")):
         contract.copy_seed(seed, workspace, overwrite=False)

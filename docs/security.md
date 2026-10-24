@@ -7,10 +7,11 @@ CI.
 |---|---|---|
 | 1 | A provider's key is in the clear only inside the gateway process, for one upstream request at a time. Never on a command line, in a sandbox's environment, on a worker's disk, in a log, a trace, a capture or a response. | `test_docker.py::test_a_turn` (the sandbox's environment, token file and mounts hold the token, not the key), `test_api.py` (the capture never holds the key) |
 | 2 | A sandbox reaches only its door; the door tunnels only to the package's egress hosts and forwards provider calls to the gateway. Private, loopback, link-local and multicast addresses are refused after resolution, and the connection is made to the address that was checked. | `test_door.py`, `test_docker.py::test_a_turn` (the cloud metadata address is refused) |
-| 3 | A sandbox runs as a uid unique to its organization, with every capability dropped, no new privileges, a read-only root, and the organization's cpu, memory and pid ceilings; under a sandboxed runtime where the node has one. | `test_docker.py::test_a_turn` |
+| 3 | A sandbox runs as a uid unique to its scope, the organization or the team whose harness runs, with every capability dropped, no new privileges, a read-only root, and the organization's cpu, memory and pid ceilings; under a sandboxed runtime where the node has one. Two teams of one organization are as apart as two organizations. | `test_docker.py::test_a_turn`, `test_sandboxes.py` |
 | 4 | The platform never writes through a path a sandbox can create. Every write into a workspace, home, run or tools directory goes through one helper that refuses links at every component, and every read of a sandbox's output refuses anything but a plain file. | `test_files.py`, `test_harness.py` |
 | 5 | A worker can see only the turns it was handed: its credential claims, reports and posts output; the blob URLs it receives name one object each for a short while. It holds no database, bucket or cloud credential. | `test_api.py`, `test_blobs.py` |
-| 6 | Reach is organization, then team, then member: members see their own sessions and their teams' harnesses, owners their organization's, nobody another organization's; every miss is a 404. | `test_api.py::test_harness_repository_and_teams` |
+| 6 | Reach is organization, then team, then member: a member sees their own sessions and the sessions and harnesses of the teams they are in, an owner the organization's, nobody another organization's; every miss is a 404. | `test_api.py::test_harness_repository_and_teams`, `test_sessions.py` |
+| 13 | A turn belongs to the request that made it: a client that closes a foreground request (its stream, or a blocking call it stops waiting on) stops the turn gracefully, with no endpoint called; a background turn outlives its request and stops only on `cancel`. | `test_disconnect.py`, `test_sessions.py` |
 | 7 | Every number an organization could influence has a deployer ceiling on the organization record: cpus, memory, pids, timeouts, runs at once, disk, output, upload. | `test_store.py`, `test_api.py` |
 | 8 | A package's output is validated against the Responses schema before a client sees it; a client never receives an item the SDK cannot parse. | `test_wire.py`, `test_api.py::test_response_sh_shapes` |
 | 9 | The gateway relays only the API shape's own endpoints under the provider's path, and refuses a mixed or missing credential. | `test_api.py`, the gateway's `allowed` |
@@ -23,7 +24,8 @@ CI.
 - **A fresh container per turn** from the platform's base image. Organizations choose neither
   the image nor the limits; only a package's egress list is theirs.
 - **No capabilities, no privilege escalation, a read-only root** with a writable `/tmp`, and the
-  organization's own unprivileged uid, derived from its name so it is the same on every node.
+  unprivileged uid of the run's scope: the organization's, or the team's when the harness is a
+  team's, derived from the name so it is the same on every node.
   The writable mounts are handed to that uid before the turn and nothing else on the host belongs
   to it.
 - **One route out.** The sandbox has no DNS and no default route. Its only neighbour is a door on

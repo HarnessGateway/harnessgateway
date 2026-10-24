@@ -43,7 +43,7 @@ the console at `/app`.
 3. **Fork a harness** from the catalog, or write one. A harness is a git repository the platform
    hosts: edit it in the console and commit, or `hg harness pull`, change, `hg harness push`.
 4. **Converse**: a conversation with a harness, its items streamed, the workspace's files and the
-   trace beside it; steer it mid-run, cancel it, continue it from any client with `previous_response_id`.
+   trace beside it; steer it mid-run, cancel it or just close the request, continue it from any client with `previous_response_id`.
 5. **Run a rodeo**: one task across several harnesses side by side; pick the winner, keep the leaderboard.
 
 ## The division of labour

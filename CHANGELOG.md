@@ -4,6 +4,25 @@ Every release is a section here, newest first, and the newest section's heading 
 A merge to `main` that adds a section releases it: the release workflow tags that version, builds
 the wheel and the image, and publishes the section as its notes.
 
+## [7.1.0]
+
+- **Closing the request stops the turn.** A turn belongs to the request that made it: when a client
+  closes a foreground stream, or stops waiting on a blocking `POST /v1/responses`, the platform
+  stops the turn gracefully (the package's stop signal and grace, `response.sh`), with no endpoint
+  called. The response ends `cancelled` with `metadata.incomplete_reason: client_disconnected` and
+  the trace records the disconnect. A `background: true` turn outlives its request: a follower
+  closing its stream changes nothing; only `cancel` ends it early.
+- **Teams are isolated in their sandboxes and their sessions.** A turn on a team's harness runs as
+  a uid of the team's own, not the organization's, so two teams of one organization are as apart
+  on a worker as two organizations are. A team's sessions are the team's: every member of the team
+  sees them, opens them in Conversations and continues them; other members of the organization do
+  not. Reach is organization, then team, then member.
+- Input files keep their relative path inside `$HG_FILES` (`src/a.txt`), never an absolute one and
+  never one climbing out.
+- The tests that 7.0 dropped are back: the gateway's key swap against a TLS upstream, the first
+  boot, the containerized platform, sessions and accounts as units; plus the disconnect, the team
+  scope and the sandbox uid.
+
 ## [7.0.1]
 
 - `harnessgateway serve --dev` sends a turn's provider calls through the gateway: the node without a

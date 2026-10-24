@@ -1,7 +1,8 @@
 """Layer 4: one worker node's capabilities: the platform's base image, a package's tools layer in that
 image (`install.sh` run once per package version, cached on the node), and a runtime for a turn with
-an organization's uid and ceilings. Nothing of any package is in the image; the CLI arrives as the tools
-layer, mounted read-only at the same path on every turn.
+the uid of its scope (an organization, or a team within it) and the organization's ceilings. Nothing
+of any package is in the image; the CLI arrives as the tools layer, mounted read-only at the same
+path on every turn.
 """
 from __future__ import annotations
 
@@ -31,9 +32,16 @@ class InstallFailed(RuntimeError):
     pass
 
 
-def uid_for(org: str) -> int:
-    """The unprivileged uid an organization's runs use on a node: the same for the same organization everywhere."""
-    return UID_BASE + int(hashlib.sha256(org.encode()).hexdigest()[:8], 16) % UID_RANGE
+def scope_of(org: str, team: str = "") -> str:
+    """Whose runs these are, for the sandbox: the organization's, or one team's within it. Each
+    scope gets its own uid, so a team's sandboxes are as apart from another team's as from another
+    organization's."""
+    return f"{org}/{team}" if team else org
+
+
+def uid_for(scope: str) -> int:
+    """The unprivileged uid a scope's runs use on a node: the same for the same scope everywhere."""
+    return UID_BASE + int(hashlib.sha256(scope.encode()).hexdigest()[:8], 16) % UID_RANGE
 
 
 def path_with(tools: Path) -> str:
@@ -116,14 +124,14 @@ class Node:
     async def recover(self) -> None:
         await sweep(self.owner, self.secrets)
 
-    def runtime_for(self, org: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
+    def runtime_for(self, scope: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
                     egress: Sequence[str] = (), gateway_url: str = "", token: str = "") -> DockerRuntime:
-        return DockerRuntime(self.image, uid=uid_for(org), limits=Resources(limits.cpus, limits.memory, limits.pids),
+        return DockerRuntime(self.image, uid=uid_for(scope), limits=Resources(limits.cpus, limits.memory, limits.pids),
                              read_only=read_only, writable=writable, egress=egress, gateway_url=gateway_url, token=token,
                              ca_file=self.ca_file, owner=self.owner, runtime=self.runtime, allow_private=self.allow_private,
                              host=self.host, secrets=self.secrets, turn_script=self.turn_script, door_script=self.door_script)
 
-    async def tools_for(self, org: str, limits: Limits, folder: Path, config: Config, root: Path, image_id: str) -> Path:
+    async def tools_for(self, scope: str, limits: Limits, folder: Path, config: Config, root: Path, image_id: str) -> Path:
         """The package's tools in the base image, installed now unless they are already."""
         root.mkdir(parents=True, exist_ok=True)
         tools, log = root / f"{folder.name}-{image_id[:12]}", root / f"{folder.name}-{image_id[:12]}.log"
@@ -134,7 +142,7 @@ class Node:
             tools.mkdir()
             began = time.monotonic()
             try:
-                outcome = await self._install(org, limits, folder, config, tools, log)
+                outcome = await self._install(scope, limits, folder, config, tools, log)
             except BaseException:
                 await asyncio.shield(asyncio.to_thread(shutil.rmtree, tools, True))
                 raise
@@ -145,8 +153,8 @@ class Node:
             (tools / MARKER).write_text(json.dumps({"image": image_id, "seconds": round(time.monotonic() - began, 1)}))
             return tools
 
-    async def _install(self, org: str, limits: Limits, folder: Path, config: Config, tools: Path, log: Path) -> Outcome:
-        runtime = self.runtime_for(org, limits, read_only=(folder,), writable=(tools,), egress=config.install_egress)
+    async def _install(self, scope: str, limits: Limits, folder: Path, config: Config, tools: Path, log: Path) -> Outcome:
+        runtime = self.runtime_for(scope, limits, read_only=(folder,), writable=(tools,), egress=config.install_egress)
         env = {"HG_TOOLS": str(tools), "HG_HARNESS_DIR": str(folder), "HOME": "/tmp", "PATH": path_with(tools)}
         execution = await runtime.start(Spec(("bash", str(folder / "install.sh")), env=env, workspace=tools,
                                              timeout_s=min(config.install_timeout_s, limits.install_timeout_s)))
@@ -178,7 +186,7 @@ class ProcessNode:
     async def recover(self) -> None:
         pass
 
-    def runtime_for(self, org: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
+    def runtime_for(self, scope: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
                     egress: Sequence[str] = (), gateway_url: str = "", token: str = ""):
         from .runtimes.process import ProcessExecution, host_env
         # no door here: the CLI calls the gateway itself, with the session token in a file of the turn's
@@ -202,7 +210,7 @@ class ProcessNode:
                 pass
         return Runtime()
 
-    async def tools_for(self, org: str, limits: Limits, folder: Path, config: Config, root: Path, image_id: str) -> Path:
+    async def tools_for(self, scope: str, limits: Limits, folder: Path, config: Config, root: Path, image_id: str) -> Path:
         root.mkdir(parents=True, exist_ok=True)
         tools, log = root / f"{folder.name}-process", root / f"{folder.name}-process.log"
         async with locked(root / f".{tools.name}.lock"):

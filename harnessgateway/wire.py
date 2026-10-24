@@ -39,7 +39,7 @@ NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
 
 def refusal(e: ValidationError, what: str) -> Invalid:
     first = e.errors()[0]
-    where = ".".join(str(p) for p in first.get("loc", ()) if not isinstance(p, int) or True)
+    where = ".".join(str(p) for p in first.get("loc", ()) if not isinstance(p, int))
     return Invalid(f"{what}: {where or 'body'}: {first.get('msg', 'invalid')}")
 
 
@@ -74,10 +74,12 @@ def decode_file(file_data: str) -> bytes:
 
 
 def safe_filename(name: str) -> str:
-    name = (name or "").replace("\\", "/").split("/")[-1].strip()
-    if not name or name in (".", "..") or "\0" in name:
-        raise Invalid(f"an input_file needs a plain filename, not {name!r}")
-    return name
+    """An input file's name as a relative path inside `$HG_FILES`: `a.txt` or `src/a.txt`; never
+    absolute, never climbing out."""
+    parts = [p.strip() for p in (name or "").replace("\\", "/").split("/") if p.strip() not in ("", ".")]
+    if not parts or ".." in parts or (name or "").startswith("/") or any("\0" in p for p in parts):
+        raise Invalid(f"an input_file needs a relative filename, not {name!r}")
+    return "/".join(parts)
 
 
 @dataclass(frozen=True)

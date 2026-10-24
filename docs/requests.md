@@ -55,10 +55,20 @@ commit, and the same provider unless the request names one. A session runs one t
 a second request while one runs is a 409. A response made with `store: false` cannot be continued
 and its session keeps no workspace.
 
+## Closing the request
+
+A foreground turn (no `background`) runs for as long as its request is open. Close the stream, or
+stop waiting on a blocking call, and the platform stops the turn gracefully: the package's stop
+signal and grace, `response.sh` if there is one, and a response that ends `cancelled` with
+`metadata.incomplete_reason: client_disconnected` and whatever was produced. There is no endpoint
+to call. `GET /v1/responses/{id}` still returns the response afterwards, and the session can
+continue.
+
 ## Background turns
 
 `background: true` returns at once with status `queued` or `in_progress`; poll `GET
-/v1/responses/{id}`, or stream it with `?stream=true`. `POST /v1/responses/{id}/cancel` stops a
+/v1/responses/{id}`, or stream it with `?stream=true` (closing that stream changes nothing: a
+background turn outlives its requests). `POST /v1/responses/{id}/cancel` stops a
 turn: the package's `request.sh` gets `SIGTERM` (its whole process group), `response.sh` still
 runs within the stop grace, and the response ends `cancelled` with what was produced.
 
