@@ -30,6 +30,7 @@ pattern = '^## \[(?P<version>[^\]]+)\]'
 
 [tool.hatch.build.targets.wheel]
 packages = ["harnessgateway"]
+artifacts = ["harnessgateway/docs"]        # the built documentation site is ignored by git but ships
 
 [tool.hatch.build.targets.wheel.force-include]
 catalog = "harnessgateway/catalog"
