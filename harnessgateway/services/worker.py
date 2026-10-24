@@ -162,7 +162,7 @@ class Worker:
         except Exception as e:
             report = {"outcome": "failed", "error": f"{type(e).__name__}: {e}"[:2000]}
         finally:
-            report["seconds"] = round(time.monotonic() - began, 1)
+            report["seconds"] = round(time.monotonic() - began, 3)   # milliseconds: the meter keeps them
             self._executions.pop(rid, None)
             for d in (self._stop_timeouts, self._interrupts, self._sessions, self._seen):
                 d.pop(rid, None)
