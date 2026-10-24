@@ -1,0 +1,22 @@
+{
+ "title": "Pi",
+ "intro": "The minimal coding agent, headless over --mode json. The platform's session id is Pi's session id, so continuation needs no state; thinking levels, MCP servers and stateless runs pass through.",
+ "docs": "https://github.com/earendil-works/pi/tree/v1.3.0/packages/coding-agent/docs",
+ "verified": {
+  "on": "2026-10-24",
+  "contract": 7,
+  "provider": "deepseek (anthropic-messages)",
+  "model": "deepseek-chat",
+  "checks": {
+   "make": true,
+   "recall": true,
+   "stream": true
+  },
+  "how": "hg harness run against DeepSeek, two turns"
+ },
+ "notes": [
+  "models.json is written every turn with one provider, hg, whose api follows the provider's shape (anthropic-messages by default).",
+  "MCP servers in the request's tools are written to .pi/mcp.json with exposure direct, so the agent sees them as tools.",
+  "store: false runs with --no-session; everything else opens the session named after the platform's."
+ ]
+}

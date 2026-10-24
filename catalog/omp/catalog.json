@@ -1,0 +1,22 @@
+{
+ "title": "Oh My Pi",
+ "intro": "The Pi fork with its own extensions, headless over --mode json. Sessions resume by the id the stream announces; thinking levels, MCP servers, service tiers and stateless runs pass through.",
+ "docs": "https://github.com/can1357/oh-my-pi/blob/main/docs/cli-reference.md",
+ "verified": {
+  "on": "2026-10-24",
+  "contract": 7,
+  "provider": "deepseek (anthropic-messages)",
+  "model": "deepseek-chat",
+  "checks": {
+   "make": true,
+   "recall": true,
+   "stream": true
+  },
+  "how": "hg harness run against DeepSeek, two turns"
+ },
+ "notes": [
+  "models.yml is written every turn with one provider, hg, whose api follows the provider's shape (anthropic-messages by default).",
+  "MCP servers in the request's tools are written to .omp/mcp.json.",
+  "The session id comes from the first line of the JSON stream and is kept for --resume."
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "title": "Codex",
+ "intro": "OpenAI's Codex CLI in exec mode, on any provider that speaks the Responses API (OpenAI by default). Thread ids are kept for continuation; reasoning effort, summary, verbosity and a JSON schema for the answer all pass through.",
+ "docs": "https://learn.chatgpt.com/docs/non-interactive-mode",
+ "verified": {
+  "on": "2026-10-24",
+  "contract": 7,
+  "provider": "openai (openai-responses)",
+  "model": "gpt-5.4-mini",
+  "checks": {
+   "make": true,
+   "recall": true,
+   "stream": true
+  },
+  "how": "hg harness run against OpenAI, two turns"
+ },
+ "notes": [
+  "The provider must speak the Responses API (api: openai-responses): Codex's wire_api is responses only.",
+  "Codex's own sandbox is set to danger-full-access: the platform's sandbox is the boundary.",
+  "MCP servers in the request's tools are written into config.toml as [mcp_servers.<label>] with a bearer token from the environment."
+ ]
+}

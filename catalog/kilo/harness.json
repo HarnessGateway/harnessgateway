@@ -1,0 +1,11 @@
+{
+  "contract": 7,
+  "description": "Kilo Code CLI, headless over kilo run --format json, on an Anthropic-shaped provider. Text, reasoning and tool parts become items as they complete; sessions resume by id.",
+  "cli": {"name": "kilo", "version": "7.8.12"},
+  "defaults": {"provider": "deepseek", "model": "deepseek-chat"},
+  "provider_env": {"key": "ANTHROPIC_API_KEY", "url": "ANTHROPIC_BASE_URL"},
+  "interrupt": "SIGUSR1",
+  "install": {"egress": ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"], "timeout_s": 900},
+  "run": {"egress": [], "timeout_s": 1800, "stop_timeout_s": 20},
+  "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "metadata"]
+}

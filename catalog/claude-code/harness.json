@@ -1,0 +1,11 @@
+{
+  "contract": 7,
+  "description": "Claude Code, headless over stream-json, on any Anthropic-shaped provider. Text, thinking and every tool call become Responses items as they happen.",
+  "cli": {"name": "claude", "version": "2.1.310"},
+  "defaults": {"provider": "deepseek", "model": "deepseek-chat"},
+  "provider_env": {"key": "ANTHROPIC_API_KEY", "url": "ANTHROPIC_BASE_URL"},
+  "interrupt": "SIGUSR1",
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "timeout_s": 1800, "stop_timeout_s": 20},
+  "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "tools", "max_tool_calls", "text.format", "metadata"]
+}

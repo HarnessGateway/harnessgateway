@@ -1,0 +1,22 @@
+{
+ "title": "OpenClaw",
+ "intro": "OpenClaw's agent in exec mode: one JSON envelope per turn with the answer and usage. Continuity is the state directory kept with the session, since exec cannot name a prior session.",
+ "docs": "https://docs.openclaw.ai/cli/agent",
+ "verified": {
+  "on": "2026-10-24",
+  "contract": 7,
+  "provider": "deepseek (anthropic-messages)",
+  "model": "deepseek-chat",
+  "checks": {
+   "make": true,
+   "recall": false,
+   "stream": false
+  },
+  "how": "hg harness run against DeepSeek; exec starts a new agent session per turn (the workspace carries over, the conversation does not); one envelope, no stream"
+ },
+ "notes": [
+  "OpenClaw needs Node 24; install.sh puts a private Node under the tools layer.",
+  "The provider is written into a per-turn config file (models.providers.hg) with the gateway as baseUrl; --config pins it, so nothing ambient applies.",
+  "exec emits no events while it runs: the response arrives whole, and tool calls appear only as counts in its summary."
+ ]
+}

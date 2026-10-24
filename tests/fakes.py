@@ -108,9 +108,13 @@ class FakeNode:
         return LocalRuntime(token)
 
     async def tools_for(self, org, limits, folder, config, root, image_id) -> Path:
+        """install.sh runs here as a process, so a package's tools layer is real."""
+        import subprocess
         tools = root / f"{folder.name}-{image_id[:12]}"
         if not tools.is_dir():
             self.installs += 1
             tools.mkdir(parents=True)
             (tools / "bin").mkdir()
+            env = {**host_env(), "HG_TOOLS": str(tools), "HG_HARNESS_DIR": str(folder), "HOME": str(tools)}
+            subprocess.run(["bash", str(folder / "install.sh")], env=env, check=True, capture_output=True, timeout=120)
         return tools

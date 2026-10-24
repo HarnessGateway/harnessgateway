@@ -1,0 +1,11 @@
+{
+  "contract": 7,
+  "description": "Command Code, headless over -p --output-format json, on a bring-your-own provider in Anthropic or OpenAI shape. Text streams as it arrives; tools become items; sessions resume by id.",
+  "cli": {"name": "command-code", "version": "1.88.0"},
+  "defaults": {"provider": "deepseek", "model": "deepseek-chat"},
+  "provider_env": {"key": "ANTHROPIC_API_KEY", "url": "ANTHROPIC_BASE_URL"},
+  "interrupt": "SIGUSR1",
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "timeout_s": 1800, "stop_timeout_s": 20},
+  "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "max_tool_calls", "tools", "store", "metadata"]
+}

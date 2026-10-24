@@ -1,0 +1,11 @@
+{
+  "contract": 7,
+  "description": "Oh My Pi, the Pi fork, headless over --mode json on any Anthropic- or OpenAI-shaped provider. Text and thinking stream; every tool call becomes an item; sessions resume by id.",
+  "cli": {"name": "omp", "version": "18.12.0"},
+  "defaults": {"provider": "deepseek", "model": "deepseek-chat"},
+  "provider_env": {"key": "ANTHROPIC_API_KEY", "url": "ANTHROPIC_BASE_URL"},
+  "interrupt": "SIGUSR1",
+  "install": {"egress": ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"], "timeout_s": 900},
+  "run": {"egress": [], "timeout_s": 1800, "stop_timeout_s": 20},
+  "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "tools", "store", "service_tier", "metadata"]
+}

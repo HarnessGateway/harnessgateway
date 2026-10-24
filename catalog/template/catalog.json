@@ -1,0 +1,23 @@
+{
+ "title": "Template",
+ "intro": "A minimal package around a stand-in CLI: request.json read with jq, instructions into AGENTS.md, the CLI's output mapped onto Responses events by map.py. Fork it to start a package of your own.",
+ "docs": "https://github.com/HarnessGateway/harnessgateway/blob/main/docs/packages.md",
+ "verified": {
+  "on": "2026-10-24",
+  "contract": 7,
+  "provider": "(none)",
+  "model": "(none)",
+  "checks": {
+   "make": true,
+   "recall": true,
+   "stream": true
+  },
+  "how": "hg harness run, two turns, the stand-in CLI"
+ },
+ "notes": [
+  "Set defaults.provider to a provider you registered and defaults.model to a model it serves.",
+  "install.sh runs unprivileged in the base image; put the CLI under $HG_TOOLS.",
+  "map.py is the whole mapping; the item shapes are the SDK's and the platform validates them.",
+  "response.sh is optional: add one to shape the final response yourself instead of letting the events decide."
+ ]
+}

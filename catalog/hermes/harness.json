@@ -1,0 +1,35 @@
+{
+  "contract": 7,
+  "description": "Hermes Agent in quiet chat mode on an Anthropic-shaped provider: the final answer as a message, sessions resumed by id.",
+  "cli": {
+    "name": "hermes",
+    "version": "0.19.0"
+  },
+  "defaults": {
+    "provider": "deepseek",
+    "model": "deepseek-chat"
+  },
+  "provider_env": {
+    "key": "ANTHROPIC_API_KEY",
+    "url": "ANTHROPIC_BASE_URL"
+  },
+  "interrupt": "SIGUSR1",
+  "install": {
+    "egress": [
+      "pypi.org",
+      "files.pythonhosted.org"
+    ],
+    "timeout_s": 1200
+  },
+  "run": {
+    "egress": [],
+    "timeout_s": 1800,
+    "stop_timeout_s": 20
+  },
+  "accepts": [
+    "input",
+    "instructions",
+    "previous_response_id",
+    "metadata"
+  ]
+}

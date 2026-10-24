@@ -190,7 +190,9 @@ class Sessions:
             h = self.store.harness(who.org, s.harness)
             version = s.version
             config = self.store.harness_config(who.org, h.name, version)
+            inherited = prev.provider                 # a continuation keeps the provider unless the request names one
         else:
+            inherited = ""
             h = self.store.harness(who.org, req.harness)
             if not self.store.in_team(who, h.team):
                 raise NotFound(f"no harness {req.harness}")
@@ -198,7 +200,7 @@ class Sessions:
             config = h.configuration()
             s = SessionRecord(f"sess_{uuid.uuid4().hex}", who.org, who.name, h.name, version, time.time(), h.team,
                               req.text.strip().splitlines()[0][:120] if req.text.strip() else "", req.store)
-        provider_name = req.provider or config.provider
+        provider_name = req.provider or inherited or config.provider
         if not provider_name:
             raise Invalid("no provider: name one in the request's model path (harness/provider/model) or in harness.json's defaults")
         provider = self.store.provider(who.org, provider_name)

@@ -1,0 +1,11 @@
+{
+  "contract": 7,
+  "description": "DeepSeek Harness (dsh), headless profile over --json, on DeepSeek's Anthropic-compatible endpoint. Text, thinking and tool calls become items; sessions resume by id.",
+  "cli": {"name": "dsh", "version": "0.2.0-rc.2"},
+  "defaults": {"provider": "deepseek", "model": "deepseek-chat"},
+  "provider_env": {"key": "DEEPSEEK_API_KEY", "url": "DEEPSEEK_BASE_URL"},
+  "interrupt": "SIGUSR1",
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "timeout_s": 1800, "stop_timeout_s": 20},
+  "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "metadata"]
+}
