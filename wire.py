@@ -5,8 +5,9 @@ item a package reports is validated as its `ResponseOutputItem`, the response is
 model, the stream is its event classes, and the client is the real `openai` client pointed at
 this file's endpoint. Nothing of the schema is written here.
 
-    pip install openai
-    python3 wire.py
+    pip install -e .[dev]
+    uvicorn app:app --port 8000      # then any OpenAI SDK, base_url=http://127.0.0.1:8000/v1
+    pytest
 
 What it shows, in order:
 
@@ -19,8 +20,8 @@ What it shows, in order:
    configure.sh (seeds become the CLI's config), then run.sh (the CLI, its native events relayed
    live) piped through items.py (the package's filter: native events become Responses items).
 4. `response_object` and `events` put the items back on the wire, as the SDK's `Response` and its
-   stream events; a tiny HTTP server serves them at POST /v1/responses, and the `openai` client reads
-   them back as typed objects.
+   stream events. `app.py` serves them at POST /v1/responses as a FastAPI app; the tests
+   read them back with the `openai` client.
 
 Nothing here is Docker, the gateway or the store: the turn runs as a process in a temporary
 directory, with a fake provider URL and token, so the mapping is the whole subject.
@@ -30,19 +31,13 @@ from __future__ import annotations
 import base64
 import json
 import os
-import shutil
 import subprocess
-import sys
-import tempfile
-import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Iterator
 
-import openai
 from openai.types import responses as R
 from pydantic import TypeAdapter, ValidationError
 
@@ -298,116 +293,3 @@ class Platform:
                  body.get("previous_response_id"), ask["instructions"], ask["metadata"], ask["store"])
         self.turns[t.id] = (session, t)
         return t, run_turn(session, t, ask, self.tools)
-
-
-class Handler(BaseHTTPRequestHandler):
-    platform: Platform
-
-    def log_message(self, *a: Any) -> None:
-        pass
-
-    def do_POST(self) -> None:
-        body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0)) or 0) or b"{}")
-        if self.path != "/v1/responses":
-            return self.reply(404, {"error": {"type": "invalid_request_error", "code": "not_found", "message": f"no {self.path}", "param": None}})
-        try:
-            turn, relay = self.platform.create(body)
-        except Refused as e:
-            return self.reply(400 if e.body["error"]["code"] != "not_found" else 404, e.body)
-        if not body.get("stream"):
-            for _ in relay:
-                pass
-            return self.reply(200, response_object(turn).model_dump(mode="json"))
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        for ev in events(turn, relay):
-            self.wfile.write(f"event: {ev.type}\ndata: {ev.model_dump_json()}\n\n".encode())
-            self.wfile.flush()
-
-    def reply(self, status: int, body: dict[str, Any]) -> None:
-        data = json.dumps(body).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-
-def serve(platform: Platform) -> str:
-    Handler.platform = platform
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{server.server_port}/v1"
-
-
-# the demo: the real openai client, against this endpoint
-def show(title: str, body: Any = None) -> None:
-    print(f"\n\033[1m── {title}\033[0m")
-    if body is not None:
-        print(json.dumps(body, indent=2) if not isinstance(body, str) else body)
-
-
-def main() -> None:
-    root = Path(tempfile.mkdtemp(prefix="foobarness-"))
-    platform = Platform(root)
-    client = openai.OpenAI(base_url=serve(platform), api_key="hg_test-key")
-    show("the package's manifest: what it accepts of a request", platform.manifest["accepts"])
-
-    # A: a non-streaming request with instructions, an MCP tool of its own, a reasoning effort and metadata
-    show("A. client.responses.create(…), not streamed", 'client.responses.create(model="foobarness", instructions="Answer in one sentence.",\n'
-         '    input="Create hello.py that prints hello and run it",\n'
-         '    tools=[{"type": "mcp", "server_label": "search", "server_url": "https://mcp.example.com/search"}],\n'
-         '    reasoning={"effort": "high"}, metadata={"ticket": "HG-12"})')
-    a = client.responses.create(model="foobarness", instructions="Answer in one sentence.", input="Create hello.py that prints hello and run it",
-                                tools=[{"type": "mcp", "server_label": "search", "server_url": "https://mcp.example.com/search"}],
-                                reasoning={"effort": "high"}, metadata={"ticket": "HG-12"})
-    session = platform.turns[a.id][0]
-    show("A. what the harness got: $HG_REQUEST, written by the template", json.loads((session.run / "request.json").read_text()))
-    show("A. what the adapter made of the seeds and the request: foobar's own config", json.loads((session.home / ".foobar" / "config.json").read_text()))
-    show("A. the CLI's native events (foobar's shapes, kept whole as the capture)", (session.run / "native.jsonl").read_text().strip())
-    show("A. response.output, as the SDK typed it", "\n".join(f"  {type(i).__name__:<36} {i.type}" for i in a.output))
-    show("A. what the typed items hold", "\n".join([
-        f"  reasoning summary : {a.output[0].summary[0].text}",
-        f"  apply_patch_call  : {a.output[1].operation.type} {a.output[1].operation.path} ({len(a.output[1].operation.diff)} bytes)",
-        f"  shell_call        : {a.output[3].action.commands}",
-        f"  shell_call_output : stdout={a.output[4].output[0].stdout!r} exit={a.output[4].output[0].outcome.exit_code}",
-        f"  mcp_call          : {a.output[5].server_label}.{a.output[5].name} -> {a.output[5].output!r}",
-        f"  message           : {a.output[-1].content[0].text!r}"]))
-    show("A. response.output_text", a.output_text)
-    show("A. the whole Response, as the SDK holds it", json.loads(a.model_dump_json(exclude_none=True)))
-    show("A. the workspace after the turn", sorted(p.name for p in session.workspace.iterdir()))
-
-    # B: a streamed continuation, with a file attached
-    show("B. client.responses.create(…, previous_response_id=a.id, stream=True), with a file attached")
-    stream = client.responses.create(model="foobarness", previous_response_id=a.id, stream=True, input=[
-        {"type": "message", "role": "user", "content": [
-            {"type": "input_text", "text": "Run it again and tell me what files are here."},
-            {"type": "input_file", "filename": "notes.txt", "file_data": "data:text/plain;base64," + base64.b64encode(b"remember the milk\n").decode()}]}])
-    final = None
-    for ev in stream:
-        detail = ""
-        if ev.type == "response.output_item.added":
-            detail = f"item {ev.output_index}: {type(ev.item).__name__} ({ev.item.type})"
-        elif ev.type == "response.output_text.delta":
-            detail = f"delta={ev.delta!r}"
-        elif ev.type in ("response.function_call_arguments.delta", "response.mcp_call_arguments.delta"):
-            detail = f"delta={ev.delta!r}"
-        elif ev.type == "response.completed":
-            final = ev.response
-            detail = f"response: {len(ev.response.output)} items, status {ev.response.status}"
-        print(f"  {ev.sequence_number:>3}  {type(ev).__name__:<40} {ev.type:<40} {detail}")
-    show("B. final.output_text from response.completed", final.output_text)
-
-    # C: what the manifest refuses: the client raises the SDK's own error, with the API's error body
-    for kwargs in ({"tools": [{"type": "function", "name": "run", "parameters": {}, "strict": False}]}, {"temperature": 0.2}, {"reasoning": {"effort": "max"}}):
-        try:
-            client.responses.create(model="foobarness", input="x", **kwargs)
-        except openai.BadRequestError as e:
-            show(f"C. refused: {json.dumps(kwargs)} -> {type(e).__name__} {e.status_code}", e.body)
-    shutil.rmtree(root, ignore_errors=True)
-
-
-if __name__ == "__main__":
-    sys.exit(main())

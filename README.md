@@ -4,11 +4,20 @@ The OpenAI Responses API as the wire for coding-agent harnesses: a request in th
 schema goes to a harness package, the package runs its CLI and reports what it did as Responses
 output items, and the response comes back in the same schema. Any OpenAI SDK talks to it unchanged.
 
-This repository holds the prototype of that wire, in one file, around one template package.
+This repository holds the prototype of that wire: the mapping in one file, a FastAPI app that
+serves it, and one template package.
 
-    pip install openai pytest
-    python3 wire.py          # the walkthrough: a request, what the harness got, the response, the stream, the refusals
-    pytest                   # the same, as tests
+    pip install -e .[dev]
+    uvicorn app:app --port 8000      # POST /v1/responses; then any OpenAI SDK with base_url=http://127.0.0.1:8000/v1
+    pytest                           # the same, as tests, through the openai client over ASGI
+
+A request from the SDK, against the served app:
+
+    from openai import OpenAI
+    client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="hg_anything")
+    r = client.responses.create(model="foobarness", input="Create hello.py that prints hello and run it")
+    print(r.output_text)
+    for item in r.output: print(item.type)
 
 ## The pieces
 
@@ -25,8 +34,11 @@ This repository holds the prototype of that wire, in one file, around one templa
    through `items.py` (the package's filter: native events become Responses items). Every item is
    validated against the SDK's `ResponseOutputItem`.
 4. `response_object` and `events` put the items back on the wire as the SDK's `Response` and its
-   stream event classes. A small HTTP server serves `POST /v1/responses`, and the demo and the
-   tests read it back with the real `openai` client.
+   stream event classes.
+
+**`app.py`** is the endpoint: FastAPI, `POST /v1/responses` (streamed or not) and
+`GET /v1/responses/{id}`. The body goes straight to the SDK's `ResponseCreateParams`; the reply is
+the SDK's `Response`; nothing of the schema is written in the app.
 
 **`foobarness/`** is the template package, around a stand-in CLI called foobar that has its own
 flags, config file, session state and event format, as every real agent CLI does:

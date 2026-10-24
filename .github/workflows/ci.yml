@@ -9,4 +9,3 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e .[dev]
       - run: pytest -q
-      - run: python3 wire.py
