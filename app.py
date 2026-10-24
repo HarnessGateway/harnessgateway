@@ -68,6 +68,7 @@ class Turn:
     metadata: dict[str, str]
     workspace: Path
     claude_session: str = ""                        # Claude Code's own session id, for --resume
+    number: int = 1
     created: float = field(default_factory=time.time)
     items: list[Any] = field(default_factory=list)   # the SDK's output items, in order
     messages: list[R.ResponseOutputMessage] = field(default_factory=list)
@@ -75,6 +76,10 @@ class Turn:
     status: str = "in_progress"
     error: str = ""
     usage: R.ResponseUsage | None = None
+
+    @property
+    def state(self) -> Path:
+        return DATA / "turns" / self.id
 
     @property
     def message_id(self) -> str:
@@ -129,7 +134,7 @@ def parse(body: dict[str, Any]) -> dict[str, Any]:
             "instructions": body.get("instructions") or "", "previous": previous, "metadata": dict(body.get("metadata") or {})}
 
 
-def new_turn(ask: dict[str, Any]) -> Turn:
+def new_turn(ask: dict[str, Any], body: dict[str, Any]) -> Turn:
     prev = TURNS.get(ask["previous"] or "")
     workspace = prev.workspace if prev else DATA / "workspaces" / uuid.uuid4().hex[:12]
     workspace.mkdir(parents=True, exist_ok=True)
@@ -140,9 +145,34 @@ def new_turn(ask: dict[str, Any]) -> Turn:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
     t = Turn(f"resp_{uuid.uuid4().hex}", ask["model"], ask["prompt"], ask["instructions"], ask["previous"], ask["metadata"], workspace,
-             claude_session=prev.claude_session if prev else "")
+             claude_session=prev.claude_session if prev else "", number=prev.number + 1 if prev else 1)
     TURNS[t.id] = t
+    stage(t, ask, body)
     return t
+
+
+def stage(t: Turn, ask: dict[str, Any], body: dict[str, Any]) -> Path:
+    """The document a harness package parses: the Responses request, verbatim, and the platform's
+    reading of it, with the places this turn runs in. Written to the turn's state directory as
+    request.json; HG_REQUEST names it. The files in the request are already in the workspace."""
+    t.state.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "harness": HARNESS,
+        "turn": {"id": t.id, "number": t.number, "previous_response_id": t.previous,
+                 "workspace": str(t.workspace), "home": str(DATA / "home"), "state": str(t.state)},
+        "request": {k: v for k, v in body.items() if k != "stream"},
+        "resolved": {"model": t.model, "prompt": t.prompt, "instructions": t.instructions, "files": sorted(ask["files"]),
+                     "resume": bool(t.previous)},
+        "provider": {"api": "anthropic-messages", "url": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic"),
+                     "key_env": "ANTHROPIC_API_KEY", "url_env": "ANTHROPIC_BASE_URL"},
+    }
+    for item in (doc["request"].get("input") or []) if not isinstance(doc["request"].get("input"), str) else []:
+        for part in (item.get("content") if isinstance(item.get("content"), list) else [item]):
+            if isinstance(part, dict) and part.get("type") == "input_file":
+                part["file_data"] = f"<written to the workspace as {part.get('filename')}>"
+    path = t.state / "request.json"
+    path.write_text(json.dumps(doc, indent=2))
+    return path
 
 
 # Claude Code, one turn, its stream-json events as lines
@@ -153,7 +183,8 @@ def claude_lines(t: Turn) -> Iterator[str]:
     home = DATA / "home"
     home.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k in PASS_THROUGH}
-    env.update({"HOME": str(home), "ANTHROPIC_BASE_URL": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic"),
+    env.update({"HG_REQUEST": str(t.state / "request.json"), "HG_WORKSPACE": str(t.workspace), "HG_STATE": str(t.state), "HG_MODEL": t.model,
+                "HOME": str(home), "ANTHROPIC_BASE_URL": os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic"),
                 "ANTHROPIC_API_KEY": key, "ANTHROPIC_DEFAULT_HAIKU_MODEL": t.model, "ANTHROPIC_SMALL_FAST_MODEL": t.model,
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "IS_SANDBOX": "1"})
     args = [shutil.which("claude") or "claude", "-p", t.prompt, "--output-format", "stream-json", "--verbose",
@@ -321,7 +352,7 @@ async def create_response(request: Request) -> Any:
     except ValueError:
         return refused(Refused("the body is a JSON object", None, "invalid_value"))
     try:
-        t = new_turn(parse(body))
+        t = new_turn(parse(body), body)
     except Refused as e:
         return refused(e)
 
@@ -343,6 +374,15 @@ async def create_response(request: Request) -> Any:
         t.items.append(t.messages[-1])
         t.text = ""
     return JSONResponse(response(t).model_dump(mode="json"))
+
+
+@app.get("/v1/responses/{rid}/request", include_in_schema=False)
+def get_request(rid: str) -> Any:
+    """The document the harness received for this turn (a HarnessGateway addition, not OpenAI's)."""
+    t = TURNS.get(rid)
+    if t is None:
+        return refused(Refused(f"no response {rid}", "id", "not_found", 404))
+    return JSONResponse(json.loads((t.state / "request.json").read_text()))
 
 
 @app.get("/v1/responses/{rid}")
