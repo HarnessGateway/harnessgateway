@@ -1,0 +1,12 @@
+[project]
+name = "harnessgateway-wire"
+version = "0.1.0"
+description = "The OpenAI Responses API as the wire for coding-agent harnesses: the prototype."
+requires-python = ">=3.11"
+dependencies = ["openai>=1.40", "pydantic>=2.7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
