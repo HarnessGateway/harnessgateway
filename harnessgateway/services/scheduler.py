@@ -82,8 +82,7 @@ class Scheduler:
         r = self.sessions.turn_by_id(rid)
         if r.worker != node.id or r.final:
             raise Conflict(f"{rid} is not this node's running turn")
-        for c in chunks:
-            self.records.put("chunk", r.org, f"{rid}:{int(c['seq']):08d}", {"stream": c["stream"], "text": c["text"]})
+        self.sessions.events.append(r.org, rid, chunks)
 
     def commands(self, node: Node, running: list[str]) -> dict[str, dict[str, Any]]:
         """What the node should do to the turns it reports; also its heartbeat."""

@@ -340,7 +340,7 @@ def test_accounts_sign_up_invite_switch_and_the_cookie_on_member_routes(platform
 
     async def scenario():
         async with httpx.AsyncClient(transport=transport, base_url="http://api.test") as c:
-            assert (await c.get("/auth/providers")).json() == {"signup": "open", "password": True, "mail": False, "github": False, "google": False}
+            assert (await c.get("/auth/providers")).json() == {"signup": "open", "password": True, "mail": False, "identities": [], "github": False, "google": False}
             assert (await c.get("/auth/me")).status_code == 401
             assert (await c.post("/auth/signup", json={"email": "chase@example.com", "password": "short"})).status_code == 400
             r = await c.post("/auth/signup", json={"email": "Chase@Example.com", "password": "correct horse", "name": "Chase"})
@@ -401,8 +401,8 @@ def test_sign_up_is_closed_but_an_invitation_opens_it(tmp_path, vault):
 
 def test_sign_up_with_mail_verifies_first(tmp_path, vault, monkeypatch):
     sent = []
-    from harnessgateway.api import signin as auth_routes
-    monkeypatch.setattr(auth_routes.Mail, "send", lambda self, to, subject, text: sent.append((to, subject, text)))
+    from harnessgateway.backends.mail.smtp import SmtpMail
+    monkeypatch.setattr(SmtpMail, "send", lambda self, to, subject, text: sent.append((to, subject, text)))
     settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="open", smtp_url="smtp://mail.test:587", mail_from="hg@test")
     app = create_app(Service(settings, vault))
 

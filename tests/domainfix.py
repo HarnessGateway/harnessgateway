@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from harnessgateway.backends.events.records import RecordEvents
 from harnessgateway.domain.accounts import Accounts
 from harnessgateway.domain.harnesses import Harnesses
 from harnessgateway.domain.keys import Keys
@@ -28,7 +29,7 @@ def domain(records, blobs, vault, git_root: Path, allow_private: bool = False, g
     providers = Providers(records, vault, orgs, allow_private)
     harnesses = Harnesses(records, blobs, git_root, orgs, teams, allow_private)
     nodes = Nodes(records)
-    sessions = Sessions(records, blobs, orgs, teams, harnesses, providers)
+    sessions = Sessions(records, blobs, RecordEvents(records), orgs, teams, harnesses, providers)
     metering = Metering(records, blobs, orgs)
     return SimpleNamespace(records=records, blobs=blobs, vault=vault, orgs=orgs, members=members, teams=teams, keys=keys, providers=providers,
                            harnesses=harnesses, nodes=nodes, sessions=sessions, rodeos=Rodeos(records, sessions),

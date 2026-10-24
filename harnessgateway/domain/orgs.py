@@ -29,6 +29,7 @@ class Org:
     title: str = ""
     plan: str = "free"                               # free, team, enterprise
     trace_sharing: bool = False                      # whether its traces go into the shared dataset
+    billing_id: str = ""                             # the billing system's customer id, when billed
 
     @property
     def ceilings(self) -> Limits:
@@ -73,7 +74,7 @@ class Orgs:
         return [Org(**d) for d in self.records.list("org", PLATFORM)]
 
     def update(self, name: str, *, limits: dict[str, Any] | None = None, status: str | None = None, title: str | None = None,
-               plan: str | None = None, trace_sharing: bool | None = None) -> Org:
+               plan: str | None = None, trace_sharing: bool | None = None, billing_id: str | None = None) -> Org:
         o = self.get(name)
         if status is not None and status not in STATUSES:
             raise Invalid("an organization's status is active or suspended")
@@ -82,7 +83,8 @@ class Orgs:
         plan = plan or o.plan
         sharing = o.trace_sharing if trace_sharing is None else bool(trace_sharing)
         o = Org(o.name, o.created, Limits.from_dict(limits).as_dict() if limits is not None else o.limits, status or o.status,
-                (title or "")[:80] if title is not None else o.title, plan, sharing and plan != "enterprise")
+                (title or "")[:80] if title is not None else o.title, plan, sharing and plan != "enterprise",
+                o.billing_id if billing_id is None else billing_id[:80])
         self.records.put("org", PLATFORM, name, asdict(o))
         return o
 

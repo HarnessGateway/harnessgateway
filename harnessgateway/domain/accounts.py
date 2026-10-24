@@ -25,14 +25,13 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..errors import Conflict, Invalid, NotFound
-from ..kernel.ids import NAME, check_name, digest_of
+from ..kernel.ids import NAME, check_name, digest_of, is_name
 from ..kernel.vault import Sealer
 from . import PLATFORM
 from .members import Member, Members
 from .orgs import Orgs
 
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
-PROVIDERS = ("github", "google")
 SESSION_TTL_S = 7 * 86400
 MIN_PASSWORD = 8
 
@@ -122,14 +121,13 @@ class Accounts:
         return self.by_id(ref["account"]) if ref else None
 
     def by_oauth(self, provider: str, subject: str) -> Account | None:
-        if provider not in PROVIDERS or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", subject or ""):
+        if not is_name(provider) or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", subject or ""):
             return None
         ref = self.records.get("oauth", PLATFORM, f"{provider}:{subject}")
         return self.by_id(ref["account"]) if ref else None
 
     def link_oauth(self, a: Account, provider: str, subject: str) -> Account:
-        if provider not in PROVIDERS:
-            raise Invalid(f"an identity provider is one of {', '.join(PROVIDERS)}")
+        check_name(provider, "identity provider")
         a = Account(**{**asdict(a), "oauth": {**a.oauth, provider: subject}, "verified": True})
         self._put(a)
         self.records.put("oauth", PLATFORM, f"{provider}:{subject}", {"account": a.id})

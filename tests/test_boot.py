@@ -81,3 +81,19 @@ def test_a_node_without_an_image_takes_the_shipped_one(monkeypatch):
     assert asyncio.run(node.prepare()) == "id-hg-base:shipped" and node.image == "hg-base:shipped"
     node = docker.DockerNode("python:3.12-slim", "0123456789ab")
     assert asyncio.run(node.prepare()) == "id-python:3.12-slim"
+
+
+def test_doctor_tries_every_backend_and_reports_one_line_each(tmp_path, vault, monkeypatch):
+    from harnessgateway.__main__ import doctor_checks
+    from harnessgateway.kernel.vault import Vault
+    monkeypatch.setenv("HG_MASTER_KEY", Vault.generate())
+    monkeypatch.delenv("HG_MASTER_KEY_FILE", raising=False)
+    settings = Settings(data_dir=tmp_path / "data", sandbox="process")
+    results = doctor_checks(settings)
+    assert [name for name, _, _ in results] == ["records", "kms", "blobs", "events", "mail", "identities", "billing", "sandbox"]
+    assert all(state.startswith("ok") for _, _, state in results), results
+    assert dict((n, w) for n, w, _ in results) == {"records": "sqlite", "kms": "local", "blobs": "dir", "events": "polling", "mail": "none",
+                                                  "identities": "none", "billing": "none", "sandbox": "process"}
+    # the probes leave nothing behind
+    from harnessgateway.backends.records import open_records
+    assert open_records(settings.records_url).list("doctor", "") == []

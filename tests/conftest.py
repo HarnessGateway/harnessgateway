@@ -1,6 +1,10 @@
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))          # fakes, domainfix and test_api are importable from every suite
 
 from harnessgateway.backends.blobs.dir import DirBlobs
 from harnessgateway.backends.blobs.s3 import S3Blobs
@@ -44,6 +48,15 @@ def s3_endpoint():
     os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
     yield f"http://127.0.0.1:{port}"
     server.stop()
+
+
+@pytest.fixture
+def kms_client(s3_endpoint):
+    """A KMS client against the same moto server, with one key made."""
+    import boto3
+    client = boto3.client("kms", endpoint_url=s3_endpoint, region_name="us-east-1")
+    key_id = client.create_key(Description="hg test")["KeyMetadata"]["KeyId"]
+    return client, key_id
 
 
 @pytest.fixture(params=["dir", "s3"])

@@ -28,6 +28,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, AsyncIterator, Mapping
 
 from ..backends.blobs import Blobs
+from ..backends.events import Events
 from ..backends.records import Records
 from ..contract import wire
 from ..errors import Conflict, Invalid, NotFound
@@ -124,8 +125,8 @@ def snapshot_blob(org: str, sid: str) -> str:
 
 
 class Sessions:
-    def __init__(self, records: Records, blobs: Blobs, orgs: Orgs, teams: Teams, harnesses: Harnesses, providers: Providers):
-        self.records, self.blobs = records, blobs
+    def __init__(self, records: Records, blobs: Blobs, events: Events, orgs: Orgs, teams: Teams, harnesses: Harnesses, providers: Providers):
+        self.records, self.blobs, self.events = records, blobs, events
         self.orgs, self.teams, self.harnesses, self.providers = orgs, teams, harnesses, providers
 
     # records
@@ -252,10 +253,8 @@ class Sessions:
         async def live() -> AsyncIterator[dict[str, Any]]:
             seen, pending = 0, ""
             while True:
-                chunks = self.records.list("chunk", r.org, f"{rid}:")
                 final = self.turn_by_id(rid).final
-                if final:
-                    chunks = self.records.list("chunk", r.org, f"{rid}:")
+                chunks = self.events.read(r.org, rid)             # after the final check, so nothing arrives unseen
                 for c in chunks[seen:]:
                     if c["stream"] == "stdout":
                         pending += c["text"]
@@ -267,7 +266,7 @@ class Sessions:
                     for e in wire.events_of(pending)[0]:
                         yield e
                     return
-                await asyncio.sleep(poll_s)
+                await self.events.wait(r.org, rid, seen, poll_s)
 
         async def replay() -> AsyncIterator[dict[str, Any]]:
             for item in r.output:
@@ -278,7 +277,7 @@ class Sessions:
         """What a running turn has printed so far: the log lines and stderr."""
         if r.final:
             return r.log, r.stderr
-        chunks = self.records.list("chunk", r.org, f"{r.id}:")
+        chunks = self.events.read(r.org, r.id)
         stdout = "".join(c["text"] for c in chunks if c["stream"] == "stdout")
         return wire.events_of(stdout)[1], "".join(c["text"] for c in chunks if c["stream"] == "stderr")
 
@@ -286,7 +285,7 @@ class Sessions:
         """The items a running turn has completed so far."""
         if r.final:
             return r.output
-        chunks = self.records.list("chunk", r.org, f"{r.id}:")
+        chunks = self.events.read(r.org, r.id)
         try:
             return wire.from_events(wire.events_of("".join(c["text"] for c in chunks if c["stream"] == "stdout"))[0]).output
         except Invalid:
@@ -402,8 +401,7 @@ class Sessions:
         for rid in s.responses:
             for kind in ("response", "usage"):
                 self.records.delete(kind, s.org, rid)
-            for i in range(len(self.records.list("chunk", s.org, f"{rid}:"))):
-                self.records.delete("chunk", s.org, f"{rid}:{i:08d}")
+            self.events.clear(s.org, rid)
         for i in range(len(self.records.list("trace", s.org, f"{sid}:"))):
             self.records.delete("trace", s.org, f"{sid}:{i:06d}")
         self.blobs.delete(f"tenants/{s.org}/sessions/{sid}")

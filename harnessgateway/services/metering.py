@@ -14,6 +14,7 @@ import re
 import time
 from typing import Any
 
+from ..backends.billing import Billing
 from ..backends.blobs import Blobs
 from ..backends.records import Records
 from ..domain.orgs import Orgs
@@ -29,8 +30,8 @@ def memory_bytes(size: str) -> int:
 
 
 class Metering:
-    def __init__(self, records: Records, blobs: Blobs, orgs: Orgs):
-        self.records, self.blobs, self.orgs = records, blobs, orgs
+    def __init__(self, records: Records, blobs: Blobs, orgs: Orgs, billing: Billing | None = None):
+        self.records, self.blobs, self.orgs, self.billing = records, blobs, orgs, billing
 
     def turn_ended(self, r: Turn, report: dict[str, Any]) -> dict[str, Any]:
         """The turn's usage record, completed with what the node reported."""
@@ -45,6 +46,9 @@ class Metering:
                "egress_bytes": int(report.get("egress_bytes", 0)) + usage.get("bytes_out", 0) + usage.get("bytes_in", 0),
                "snapshot_bytes": int(report.get("snapshot_bytes", 0))}
         self.records.put("usage", r.org, r.id, doc)
+        if self.billing and self.billing.enabled:
+            self.billing.report(self.orgs.get(r.org).billing_id, {"cpu_seconds": doc["cpu_seconds"], "memory_gb_seconds": doc["memory_gb_seconds"],
+                                                              "egress_bytes": doc["egress_bytes"]}, doc["at"])
         return doc
 
     def sample_storage(self, org: str) -> dict[str, Any]:
@@ -57,6 +61,8 @@ class Metering:
                 sizes[kind] += len(self.blobs.get(key))
         doc = {"at": time.time(), "day": day, **sizes, "bytes": sum(sizes.values())}
         self.records.put("meter", org, f"storage:{day}", doc)
+        if self.billing and self.billing.enabled:
+            self.billing.report(self.orgs.get(org).billing_id, {"storage_gb_days": doc["bytes"] / SIZES["g"]}, doc["at"])
         return doc
 
     def summary(self, org: str, since: float = 0, team: str = "", member: str = "") -> dict[str, Any]:

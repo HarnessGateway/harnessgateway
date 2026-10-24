@@ -12,7 +12,7 @@ LAYERS = {"errors": 0, "kernel": 0,
           "services": 4,
           "api": 5, "config": 5, "cli": 5, "__main__": 5, "__init__": 5}
 VENDOR = {"boto3", "botocore", "psycopg", "google", "azure", "kubernetes", "openai"}
-VENDOR_ALLOWED = {"backends.blobs.s3": {"boto3", "botocore"}, "backends.records.postgres": {"psycopg"}, "contract.wire": {"openai"}, "cli": {"openai"}}
+VENDOR_ALLOWED = {"backends.blobs.s3": {"boto3", "botocore"}, "backends.kms.aws": {"boto3", "botocore"}, "backends.records.postgres": {"psycopg"}, "backends.events.postgres": {"psycopg"}, "contract.wire": {"openai"}, "cli": {"openai"}}
 
 
 def modules():
