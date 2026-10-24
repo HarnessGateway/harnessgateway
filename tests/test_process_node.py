@@ -3,7 +3,6 @@ the session token is a file of the turn, so a package's CLI reaches the provider
 sandbox; the worker appends the provider's path to that base."""
 import asyncio
 import os
-from pathlib import Path
 
 from harnessgateway.execution import Spec
 from harnessgateway.limits import Limits
