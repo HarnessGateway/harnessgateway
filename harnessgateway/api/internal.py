@@ -1,18 +1,17 @@
-"""Layer 6: the workers' routes. A worker joins with the join token, then pulls with its own credential:
-heartbeat (and receive commands), claim, report a start, post chunks, post the result. Blob URLs for
-the directory backend are served here too; their token is their authorization."""
+"""The nodes' routes. A node joins with the join token, then pulls with its own credential: heartbeat
+(and receive commands), claim, report a start, post chunks, post the result. Blob URLs for the
+directory backend are served here too; their token is their authorization."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
-from ..blobs import DirBlobs
+from ..backends.blobs.dir import DirBlobs
+from ..domain.nodes import Node
 from ..errors import Invalid
-from ..sessions import Sessions
-from ..store import Store, Worker
-from .auth import Principals
 
 
 class JoinBody(BaseModel):
@@ -29,42 +28,42 @@ class ChunksBody(BaseModel):
     chunks: list[dict[str, Any]]
 
 
-def router(store: Store, sessions: Sessions, principals: Principals, version: str) -> APIRouter:
+def router(service, version: str) -> APIRouter:
     r = APIRouter(prefix="/internal")
+    principals, scheduler, nodes = service.principals, service.scheduler, service.nodes
 
     @r.post("/join")
     def join(body: JoinBody, _: None = Depends(principals.joiner)) -> dict:
-        w, secret = store.register_worker(body.name, body.slots, body.version)
-        return {"id": w.id, "secret": secret, "version": version}
+        n, secret = nodes.register(body.name, body.slots, body.version)
+        return {"id": n.id, "secret": secret, "version": version}
 
     @r.post("/heartbeat")
-    def heartbeat(body: HeartbeatBody, w: Worker = Depends(principals.worker)) -> dict:
-        return {"commands": sessions.commands(w, body.running)}
+    def heartbeat(body: HeartbeatBody, n: Node = Depends(principals.node)) -> dict:
+        return {"commands": scheduler.commands(n, body.running)}
 
     @r.post("/claim")
-    def claim(w: Worker = Depends(principals.worker)) -> Response:
-        job = sessions.claim(w)
+    def claim(n: Node = Depends(principals.node)) -> Response:
+        job = scheduler.claim(n)
         if job is None:
             return Response(status_code=204)
-        import json
         return Response(json.dumps(job), media_type="application/json")
 
     @r.post("/turns/{rid}/started")
-    def started(rid: str, w: Worker = Depends(principals.worker)) -> dict:
-        sessions.started(w, rid)
+    def started(rid: str, n: Node = Depends(principals.node)) -> dict:
+        scheduler.started(n, rid)
         return {"ok": True}
 
     @r.post("/turns/{rid}/chunks")
-    def chunks(rid: str, body: ChunksBody, w: Worker = Depends(principals.worker)) -> dict:
-        sessions.chunks_in(w, rid, body.chunks)
+    def chunks(rid: str, body: ChunksBody, n: Node = Depends(principals.node)) -> dict:
+        scheduler.chunks_in(n, rid, body.chunks)
         return {"ok": True}
 
     @r.post("/turns/{rid}/result")
-    def result(rid: str, body: dict, w: Worker = Depends(principals.worker)) -> dict:
-        return {"status": sessions.result(w, rid, body).status}
+    def result(rid: str, body: dict, n: Node = Depends(principals.node)) -> dict:
+        return {"status": scheduler.result(n, rid, body).status}
 
-    if isinstance(store.blobs, DirBlobs):
-        blobs = store.blobs
+    if isinstance(service.blobs, DirBlobs):
+        blobs = service.blobs
 
         @r.get("/blobs/{token}")
         def get_blob(token: str) -> Response:

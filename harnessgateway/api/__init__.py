@@ -1,2 +1,4 @@
-"""Layer 6: the OpenAI Responses API over the sessions layer, the routes that register what it runs,
-the deployer's routes, and the workers' routes."""
+"""Layer 5, the API: HTTP in, HTTP out, nothing else. `responses` is the OpenAI Responses API and
+what hangs off a response; `control` the organization's own routes; `signin` the console's accounts;
+`deployer` the operator's; `internal` the nodes'. `app` builds the service from its settings and
+mounts them all."""

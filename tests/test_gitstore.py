@@ -5,7 +5,7 @@ import tarfile
 import pytest
 
 from harnessgateway.errors import Invalid, NotFound
-from harnessgateway.gitstore import Repo, checked_path, split_author
+from harnessgateway.backends.repos.git import Repo, checked_path, split_author
 
 
 def test_commits_tree_read_log_export(tmp_path):

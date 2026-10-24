@@ -5,17 +5,17 @@ import time
 
 import pytest
 
-from harnessgateway.accounts import Accounts, check_password, handle_of, hash_password
-from harnessgateway.blobs import DirBlobs
+from domainfix import domain
+from harnessgateway.domain.accounts import check_password, handle_of, hash_password
+from harnessgateway.backends.blobs.dir import DirBlobs
 from harnessgateway.errors import Conflict, Invalid, NotFound
-from harnessgateway.store import Store
 
 
 @pytest.fixture
 def accounts(records, tmp_path, vault):
-    store = Store(records, DirBlobs(tmp_path / "blobs", "http://api.test", b"s"), vault, tmp_path / "git")
-    store.create_org("acme")
-    return Accounts(store)
+    d = domain(records, DirBlobs(tmp_path / "blobs", "http://api.test", b"s"), vault, tmp_path / "git")
+    d.orgs.create("acme")
+    return d.accounts
 
 
 def test_passwords_are_hashed_and_checked():
@@ -96,9 +96,9 @@ def test_tokens_carry_purpose_and_expiry(accounts):
     got = accounts.resolve_session(s)
     assert got and got[0].id == a.id and got[1].name == "chase" and got[1].org == "acme"
     assert accounts.resolve_session(accounts.session(a, "nope")) is None
-    accounts.store.update_org("acme", status="suspended")
+    accounts.orgs.update("acme", status="suspended")
     assert accounts.resolve_session(s) is None
-    accounts.store.update_org("acme", status="active")
+    accounts.orgs.update("acme", status="active")
     u = accounts.create("u@example.com", "", "correct horse")                     # not verified: no session
     assert accounts.resolve_session(accounts.session(u, "acme")) is None
     assert time.time() < accounts.open_token(s, "session")["e"]

@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from harnessgateway.runtimes.door import Forwarder, check_host, is_public, normalize, resolve
+from harnessgateway.backends.egress.door import Forwarder, check_host, is_public, normalize, resolve
 
 
 def test_normalize():

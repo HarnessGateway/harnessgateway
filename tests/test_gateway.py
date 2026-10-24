@@ -11,10 +11,10 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from harnessgateway.blobs import DirBlobs
-from harnessgateway.gateway import Gateway, allowed, credential
-from harnessgateway.records import SqliteRecords
-from harnessgateway.store import Store
+from harnessgateway.backends.blobs.dir import DirBlobs
+from domainfix import domain
+from harnessgateway.services.gateway import Gateway, allowed, credential
+from harnessgateway.backends.records.sqlite import SqliteRecords
 
 
 def test_paths_and_credentials():
@@ -61,12 +61,12 @@ def test_relay_capture_and_usage(tmp_path, vault):
         server_ctx.load_cert_chain(cert, key)
         server = await asyncio.start_server(upstream, "127.0.0.1", 0, ssl=server_ctx)
         port = server.sockets[0].getsockname()[1]
-        store = Store(SqliteRecords(tmp_path / "r.db"), DirBlobs(tmp_path / "b", "http://api.test", b"s"), vault, tmp_path / "git", allow_private=True)
-        store.create_org("acme")
-        store.put_provider("acme", "prov", f"https://127.0.0.1:{port}/v1", "openai-chat", "sk-real-secret")
-        token = store.issue_token("acme", "prov", "sess_1", "resp_1", "openai-chat", 60)
+        store = domain(SqliteRecords(tmp_path / "r.db"), DirBlobs(tmp_path / "b", "http://api.test", b"s"), vault, tmp_path / "git", allow_private=True)
+        store.orgs.create("acme")
+        store.providers.put("acme", "prov", f"https://127.0.0.1:{port}/v1", "openai-chat", "sk-real-secret")
+        token = store.providers.issue_token("acme", "prov", "sess_1", "resp_1", "openai-chat", 60)
         client_ctx = ssl.create_default_context(cafile=str(cert))
-        gw = Gateway(store, store.blobs, tls=client_ctx)
+        gw = Gateway(store.providers, store.records, store.blobs, tls=client_ctx)
         gws = await asyncio.start_server(gw.handle, "127.0.0.1", 0)
         gport = gws.sockets[0].getsockname()[1]
 

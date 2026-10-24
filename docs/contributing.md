@@ -14,18 +14,20 @@ uvx --from mkdocs-material mkdocs serve   # this documentation at :8000/docs/
 The package is layered and `tests/test_layers.py` holds the rule: a module imports only its own
 layer or below.
 
-| Layer | Modules | Knows about |
-|---|---|---|
-| 0 | `errors`, `execution`, `secrets`, `files` | nothing of ours |
-| 1 | `runtimes/process`, `runtimes/docker`, `runtimes/door`, `runtimes/turn.sh` | running a command, in a container, behind a door |
-| 2 | `harness`, `gitstore`, `wire` | a package's contents; a git repository; the Responses schema |
-| 3 | `records`, `blobs`, `limits`, `store`, `catalog`, `accounts` | what the platform keeps |
-| 4 | `sandboxes`, `gateway` | a node's Docker; the provider relay |
-| 5 | `sessions`, `worker` | turns and sessions; running them |
-| 6 | `api/*`, `__main__`, `cli` | HTTP, settings, the command line |
+| Layer | Package | Holds | Knows about |
+|---|---|---|---|
+| 0 | `kernel` | `execution`, `files`, `vault`, `ids`, `limits`, and `errors` beside it | nothing of ours |
+| 1 | `contract` | `package`, `wire`, `turn.sh` | what a harness package is; the Responses schema; running one turn |
+| 2 | `backends` | `records`, `blobs`, `repos`, `sandboxes`, `egress` | one Protocol per directory, one module per implementation |
+| 3 | `domain` | `orgs`, `members`, `teams`, `keys`, `providers`, `harnesses`, `nodes`, `sessions`, `rodeos`, `catalog`, `accounts` | what the platform keeps and its rules |
+| 4 | `services` | `scheduler`, `intake`, `metering`, `worker`, `gateway` | what moves between the domain and the backends |
+| 5 | `api`, `cli` | the routes; `config`; `__main__`; the `hg` command | HTTP, settings, the command line |
 
-`wire.py` is the only module that imports the OpenAI SDK; `harness.py` the only one that knows
-what is in a package; `gateway.py` the only process where a provider's key is in the clear.
+`contract/wire.py` is the only module that imports the OpenAI SDK; `contract/package.py` the only one
+that knows what is in a package; `services/gateway.py` the only process where a provider's key is in
+the clear. A backend directory's `__init__` holds its Protocol; `config.Settings` names the
+implementation of each, and a managed deployment and a self-hosted one differ in nothing but those
+names. `tests/conformance/` runs one suite per protocol against every implementation.
 
 ## Tests
 

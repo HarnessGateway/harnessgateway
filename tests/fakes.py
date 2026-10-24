@@ -7,8 +7,8 @@ import os
 import tarfile
 from pathlib import Path
 
-from harnessgateway.execution import Execution, Spec
-from harnessgateway.runtimes.process import ProcessExecution, host_env
+from harnessgateway.kernel.execution import Execution, Spec
+from harnessgateway.backends.sandboxes.process import ProcessExecution, host_env
 
 HARNESS_JSON = {"contract": 7, "description": "a test harness", "cli": {"name": "echo-cli", "version": "1"},
                 "defaults": {"provider": "prov", "model": "m1"},

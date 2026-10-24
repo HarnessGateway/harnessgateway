@@ -1,19 +1,18 @@
-"""The layer rule: a module imports only modules of its layer or below; cloud SDKs appear only in the
-two backend modules. A failure here is a design regression, not a bug."""
+"""The layer rule: a module imports only modules of its layer or below; vendor SDKs appear only in the
+backend module that wraps them (and the SDK the wire is built on, in the contract). A failure here is a
+design regression, not a bug."""
 import ast
 from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[1] / "harnessgateway"
-LAYERS = {"errors": 0, "execution": 0, "secrets": 0, "files": 0,
-          "runtimes": 1, "runtimes.process": 1, "runtimes.docker": 1, "runtimes.door": 1,
-          "harness": 2, "gitstore": 2, "wire": 2,
-          "records": 3, "blobs": 3, "limits": 3, "store": 3, "catalog": 3, "accounts": 3,
-          "sandboxes": 4, "gateway": 4,
-          "sessions": 5, "worker": 5,
-          "api": 6, "api.config": 6, "api.auth": 6, "api.accounts": 6, "api.app": 6, "api.deployer": 6, "api.internal": 6,
-          "cli": 7, "__main__": 7, "__init__": 7}
+LAYERS = {"errors": 0, "kernel": 0,
+          "contract": 1,
+          "backends": 2,
+          "domain": 3,
+          "services": 4,
+          "api": 5, "config": 5, "cli": 5, "__main__": 5, "__init__": 5}
 VENDOR = {"boto3", "botocore", "psycopg", "google", "azure", "kubernetes", "openai"}
-VENDOR_ALLOWED = {"blobs": {"boto3", "botocore"}, "records": {"psycopg"}, "wire": {"openai"}, "cli": {"openai"}}
+VENDOR_ALLOWED = {"backends.blobs.s3": {"boto3", "botocore"}, "backends.records.postgres": {"psycopg"}, "contract.wire": {"openai"}, "cli": {"openai"}}
 
 
 def modules():

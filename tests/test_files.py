@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from harnessgateway import files
+from harnessgateway.kernel import files
 from harnessgateway.errors import Invalid
 
 

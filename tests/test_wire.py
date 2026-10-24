@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from harnessgateway import wire
+from harnessgateway.contract import wire
 from harnessgateway.errors import Invalid
 
 MSG = {"type": "message", "id": "msg_1", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "done", "annotations": []}]}

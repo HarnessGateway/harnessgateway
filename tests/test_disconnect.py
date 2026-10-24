@@ -13,8 +13,8 @@ import uvicorn
 
 from fakes import FakeNode, archive
 from harnessgateway.api.app import Service, create_app
-from harnessgateway.api.config import Settings
-from harnessgateway.worker import Worker
+from harnessgateway.config import Settings
+from harnessgateway.services.worker import Worker
 from test_api import SLOW
 
 

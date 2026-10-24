@@ -2,8 +2,8 @@
 the paths behind its mounts are translated and the door's way out is the container's own network."""
 from pathlib import Path
 
-from harnessgateway.runtimes.docker import Host
-from harnessgateway.sandboxes import Node
+from harnessgateway.backends.sandboxes.docker import Host
+from harnessgateway.backends.sandboxes.docker import DockerNode as Node
 
 INSPECT = {
     "Mounts": [

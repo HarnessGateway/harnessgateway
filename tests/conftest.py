@@ -2,9 +2,11 @@ import os
 
 import pytest
 
-from harnessgateway.blobs import DirBlobs, S3Blobs
-from harnessgateway.records import PostgresRecords, SqliteRecords
-from harnessgateway.secrets import Vault
+from harnessgateway.backends.blobs.dir import DirBlobs
+from harnessgateway.backends.blobs.s3 import S3Blobs
+from harnessgateway.backends.records.postgres import PostgresRecords
+from harnessgateway.backends.records.sqlite import SqliteRecords
+from harnessgateway.kernel.vault import Vault
 
 POSTGRES = os.environ.get("HG_TEST_POSTGRES", "postgresql://postgres@/postgres?host=/var/lib/postgresql/hg&port=54329")
 

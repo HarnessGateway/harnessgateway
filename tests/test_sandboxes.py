@@ -1,6 +1,6 @@
 """Layer 4: a sandbox's uid is its scope's: an organization's, or one team's within it, the same on
 every node and different from every other scope's."""
-from harnessgateway.sandboxes import UID_BASE, UID_RANGE, scope_of, uid_for
+from harnessgateway.backends.sandboxes import UID_BASE, UID_RANGE, scope_of, uid_for
 
 
 def test_scopes_and_uids():

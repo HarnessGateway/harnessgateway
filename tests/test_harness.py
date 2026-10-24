@@ -9,7 +9,7 @@ import pytest
 
 from fakes import HARNESS_JSON, archive
 from harnessgateway.errors import Invalid
-from harnessgateway.harness import Config, copy_seed, digest, load_config, pack, unpack, validate
+from harnessgateway.contract.package import Config, copy_seed, digest, load_config, pack, unpack, validate
 
 
 def test_config_defaults_and_values():

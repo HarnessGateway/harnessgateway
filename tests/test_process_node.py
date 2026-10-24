@@ -4,10 +4,10 @@ sandbox; the worker appends the provider's path to that base."""
 import asyncio
 import os
 
-from harnessgateway.execution import Spec
-from harnessgateway.limits import Limits
-from harnessgateway.sandboxes import ProcessNode
-from harnessgateway.worker import turn_env
+from harnessgateway.kernel.execution import Spec
+from harnessgateway.kernel.limits import Limits
+from harnessgateway.backends.sandboxes.process import ProcessNode
+from harnessgateway.services.worker import turn_env
 
 
 def test_process_node_names_the_gateway_and_writes_the_token(tmp_path):
@@ -19,7 +19,7 @@ def test_process_node_names_the_gateway_and_writes_the_token(tmp_path):
     assert oct(os.stat(rt.token_path).st_mode & 0o777) == "0o600"
     job = {"session": "sess_1", "id": "resp_1", "turn": 1, "model": "", "token": "tok_1", "provider": {"api": "anthropic-messages", "path": "/p", "url": "http://hg-provider:8080/p"}}
     base = rt.provider_base
-    env = turn_env(job, __import__("harnessgateway.harness", fromlist=["Config"]).Config(key_env="ANTHROPIC_API_KEY", url_env="ANTHROPIC_BASE_URL"),
+    env = turn_env(job, __import__("harnessgateway.contract.package", fromlist=["Config"]).Config(key_env="ANTHROPIC_API_KEY", url_env="ANTHROPIC_BASE_URL"),
                    workspace=tmp_path, home=tmp_path, rundir=run, state=run, folder=tmp_path, tools=tmp_path,
                    provider_url=base + job["provider"]["path"], token_path=str(rt.token_path))
     assert env["HG_PROVIDER_URL"] == "http://127.0.0.1:8081/p" == env["ANTHROPIC_BASE_URL"]

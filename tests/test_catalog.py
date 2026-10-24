@@ -5,8 +5,8 @@ import asyncio
 
 import httpx
 
-from harnessgateway import harness
-from harnessgateway.catalog import Catalog
+from harnessgateway.contract import package as harness
+from harnessgateway.domain.catalog import Catalog
 from test_api import owner_client, with_worker
 
 NAMES = {"template", "claude-code", "codex", "hermes", "pi", "cline", "kilo", "omp", "openclaw", "dsh", "command-code"}
@@ -30,8 +30,8 @@ def test_every_package_validates():
 
 def test_template_runs_end_to_end(tmp_path, vault):
     from harnessgateway.api.app import Service, create_app
-    from harnessgateway.api.config import Settings
-    from harnessgateway.worker import Worker
+    from harnessgateway.config import Settings
+    from harnessgateway.services.worker import Worker
     from fakes import FakeNode
     settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="open", join_token="jt", deployer_key="hgd_x")
     app = create_app(Service(settings, vault))

@@ -1,7 +1,7 @@
 """Layer 3: blobs on both backends: put, get, exists, list, delete by prefix; signed URLs for the directory."""
 import pytest
 
-from harnessgateway.blobs import DirBlobs
+from harnessgateway.backends.blobs.dir import DirBlobs
 from harnessgateway.errors import Invalid, NotFound
 
 

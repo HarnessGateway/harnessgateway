@@ -17,8 +17,8 @@ import os
 import signal
 import sys
 
-from .api.config import Settings
-from .secrets import Vault
+from .config import Settings
+from .kernel.vault import Vault
 
 
 def master_key(settings: Settings) -> None:
@@ -40,11 +40,11 @@ def init(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
     master_key(settings)
     service = Service(settings)
-    print(f"deployer key (shown once): {service.store.set_deployer_key()}")
+    print(f"deployer key (shown once): {service.keys.set_deployer()}")
     if args.org:
-        t = service.store.create_org(args.org)
-        service.store.create_member(t.name, args.owner, "owner")
-        _, secret = service.store.mint_key(t.name, args.owner, "first")
+        t = service.orgs.create(args.org)
+        service.members.create(t.name, args.owner, "owner")
+        _, secret = service.keys.mint(t.name, args.owner, "first")
         print(f"org {t.name} created with owner {args.owner}")
         print(f"owner's API key (shown once): {secret}")
 
@@ -55,13 +55,13 @@ def first_boot(service, settings: Settings) -> list[str]:
     does this: a worker's own records are not the platform's. The lines say what was made."""
     if "api" not in settings.roles:
         return []
-    store, lines = service.store, []
-    if not settings.deployer_key and not store.has_deployer_key():
-        lines.append(f"deployer key: {store.set_deployer_key()}")
-    if settings.signup == "closed" and not store.orgs():
-        t = store.create_org(settings.org)
-        store.create_member(t.name, settings.owner, "owner")
-        _, secret = store.mint_key(t.name, settings.owner, "first")
+    lines = []
+    if not settings.deployer_key and not service.keys.has_deployer():
+        lines.append(f"deployer key: {service.keys.set_deployer()}")
+    if settings.signup == "closed" and not service.orgs.list():
+        t = service.orgs.create(settings.org)
+        service.members.create(t.name, settings.owner, "owner")
+        _, secret = service.keys.mint(t.name, settings.owner, "first")
         lines += [f"org {t.name} created with owner {settings.owner}", f"{settings.owner}'s API key: {secret}"]
     if lines:
         print("first boot: shown once; `harnessgateway init` makes new ones\n  " + "\n  ".join(lines), file=sys.stderr, flush=True)
@@ -78,18 +78,19 @@ async def run(settings: Settings, dev: bool = False) -> None:
         server = uvicorn.Server(uvicorn.Config(create_app(service), host=settings.host, port=settings.port, log_level="info"))
         tasks.append(asyncio.create_task(server.serve()))
     if "gateway" in settings.roles:
-        from .gateway import Gateway, serve as serve_gateway
-        tasks.append(asyncio.create_task(serve_gateway(Gateway(service.store, service.blobs), settings.gateway_host, settings.gateway_port)))
+        from .services.gateway import Gateway, serve as serve_gateway
+        tasks.append(asyncio.create_task(serve_gateway(Gateway(service.providers, service.records, service.blobs), settings.gateway_host, settings.gateway_port)))
     if "worker" in settings.roles:
-        from .runtimes.docker import owner_of
-        from .sandboxes import Node, ProcessNode
-        from .worker import Worker
-        if dev:
+        from .backends.sandboxes import open_node
+        from .backends.sandboxes.docker import owner_of
+        from .services.worker import Worker
+        if dev or settings.sandbox == "process":
             print("DEV MODE: turns run as processes on this machine with no sandbox; only for packages you trust", file=sys.stderr, flush=True)
-            node = ProcessNode(settings.data_dir / "worker", gateway_url=f"http://127.0.0.1:{settings.gateway_port}")
+            node = open_node("process", root=settings.data_dir / "worker", gateway_url=f"http://127.0.0.1:{settings.gateway_port}")
         else:
-            node = Node(settings.base_image, owner_of(settings.data_dir), settings.runtime, settings.ca_file, settings.allow_private,
-                        root=settings.data_dir / "worker", gateway_port=settings.gateway_port if "gateway" in settings.roles else 0)
+            node = open_node("docker", image=settings.base_image, owner=owner_of(settings.data_dir), runtime=settings.runtime, ca_file=settings.ca_file,
+                             allow_private=settings.allow_private, root=settings.data_dir / "worker",
+                             gateway_port=settings.gateway_port if "gateway" in settings.roles else 0)
         worker = Worker(settings.control_url, node, settings.data_dir / "worker", name=settings.worker_name,
                         slots=settings.worker_slots, version=service_version(), join_token=service.join_token, ca_file=settings.ca_file,
                         gateway_url=os.environ.get("HG_GATEWAY_URL", "").rstrip("/"))

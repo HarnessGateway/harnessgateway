@@ -6,7 +6,7 @@ on:
   schedule: [{cron: "17 4 * * 1"}]
   push:
     branches: [main]
-    paths: [harnessgateway/runtimes/base.Dockerfile, .github/workflows/base-image.yml]
+    paths: [harnessgateway/backends/sandboxes/base.Dockerfile, .github/workflows/base-image.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,7 +21,7 @@ jobs:
       - run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           image=ghcr.io/$(echo "${{ github.repository }}" | tr "[:upper:]" "[:lower:]")-base
-          docker buildx build --platform linux/amd64,linux/arm64 -f harnessgateway/runtimes/base.Dockerfile \
+          docker buildx build --platform linux/amd64,linux/arm64 -f harnessgateway/backends/sandboxes/base.Dockerfile \
             -t "$image:$(date +%Y%m%d)" -t "$image:latest" --push .
       - name: Scan it (critical and high, with a fix available)
         run: |

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from harnessgateway.execution import Spec
-from harnessgateway.runtimes.docker import TURN_SCRIPT, DockerRuntime, Resources, docker, owner_of
+from harnessgateway.kernel.execution import Spec
+from harnessgateway.backends.sandboxes.docker import TURN_SCRIPT, DockerRuntime, Resources, docker, owner_of
 
 pytestmark = pytest.mark.docker
 IMAGE = "python:3.12-slim"
