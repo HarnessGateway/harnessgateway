@@ -78,7 +78,7 @@ def test_storage_is_sampled_from_blob_sizes_once_a_day(d):
     assert d.metering.sample_due(at=1_700_000_000) == ["beta"]
     assert d.metering.sample_due(at=1_700_000_000) == []
     assert sorted(d.metering.sample_due(at=1_700_100_000)) == ["acme", "beta"]
-    assert d.metering.summary("acme")["storage"]["day"] == "2023-11-16"
+    assert d.metering.summary("acme", now=1_700_100_000)["storage"]["day"] == "2023-11-16"
 
 
 def test_summary_narrows_and_groups(d):
@@ -91,7 +91,8 @@ def test_summary_narrows_and_groups(d):
     assert [h["harness"] for h in whole["harnesses"]] == ["cc", "team-cc"] and whole["harnesses"][0]["turns"] == 2
     assert [m["member"] for m in whole["members"]] == ["dev", "ops"] and [t["team"] for t in whole["teams"]] == ["", "platform"]
     assert len(whole["sessions"]) == 3 and set(whole["meters"]) == {"cpu_seconds", "memory_gb_seconds", "egress_bytes", "storage_gb_days"}
-    assert whole["daily"][-1]["turns"] == 3 and len(whole["daily"]) == 1 and whole["storage"] is None
+    assert whole["daily"][-1]["turns"] == 3 and len(whole["daily"]) == 1
+    assert whole["storage"]["day"] == time.strftime("%Y-%m-%d", time.gmtime()) and whole["storage"]["sessions"] > 0   # sampled on first ask
     assert d.metering.summary("acme", team="platform")["totals"]["turns"] == 1
     assert d.metering.summary("acme", member="ops")["totals"]["seconds"] == 5.0
     assert d.metering.summary("acme", harness="cc", member="dev")["totals"]["turns"] == 1

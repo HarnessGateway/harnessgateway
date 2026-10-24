@@ -95,6 +95,8 @@ class Metering:
         since = now - days * 86400 if days > 0 else 0
         rows = self.rows(org, since, now, team, member, harness)
         samples = self.records.list("meter", org, "storage:")
+        if not samples or samples[-1]["day"] != day_of(now):            # a new organization is not kept waiting for the daily pass
+            samples = [self.sample_storage(org, now)]
         return {"days": days, "totals": totals(rows), "daily": daily(rows, days, now),
                 "harnesses": grouped(rows, "harness"), "teams": grouped(rows, "team"), "members": grouped(rows, "member"),
                 "sessions": grouped(rows, "session"), "storage": samples[-1] if samples else None,

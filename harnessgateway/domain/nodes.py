@@ -47,10 +47,12 @@ class Nodes:
                 return Node(**{k: v for k, v in d.items() if k != "digest"})
         return None
 
-    def touch(self, n: Node, running: int) -> None:
+    def touch(self, n: Node, running: int, version: str = "", slots: int = 0) -> None:
+        """A heartbeat: alive now, running this many; a node that restarted says its version and slots again."""
         d = self.records.get("worker", PLATFORM, n.id)
         if d:
-            self.records.put("worker", PLATFORM, n.id, {**d, "last_seen": time.time(), "running": running})
+            self.records.put("worker", PLATFORM, n.id, {**d, "last_seen": time.time(), "running": running,
+                                                        "version": version or d.get("version", ""), "slots": slots or d.get("slots", 0)})
 
     def list(self) -> list[Node]:
         return [Node(**{k: v for k, v in d.items() if k != "digest"}) for d in self.records.list("worker", PLATFORM)]

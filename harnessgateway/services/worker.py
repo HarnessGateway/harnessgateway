@@ -80,7 +80,7 @@ class Worker:
             try:
                 if saved.is_file():
                     self._http.headers["Authorization"] = f"Bearer {json.loads(saved.read_text())['secret']}"
-                    r = await self._http.post("/internal/heartbeat", json={"running": []})
+                    r = await self._http.post("/internal/heartbeat", json={"running": [], "version": self.version, "slots": self.slots})
                     if r.status_code == 200:
                         return
                 if not self.join_token:
@@ -124,7 +124,7 @@ class Worker:
     async def _heartbeats(self) -> None:
         while True:
             try:
-                r = await self._http.post("/internal/heartbeat", json={"running": list(self._turns)})
+                r = await self._http.post("/internal/heartbeat", json={"running": list(self._turns), "version": self.version, "slots": self.slots})
                 if r.status_code == 200:
                     for rid, command in r.json().get("commands", {}).items():
                         await self._obey(rid, command)

@@ -22,6 +22,8 @@ class JoinBody(BaseModel):
 
 class HeartbeatBody(BaseModel):
     running: list[str] = []
+    version: str = ""                                # a node that restarted on a new release says so
+    slots: int = 0
 
 
 class ChunksBody(BaseModel):
@@ -39,7 +41,7 @@ def router(service, version: str) -> APIRouter:
 
     @r.post("/heartbeat")
     def heartbeat(body: HeartbeatBody, n: Node = Depends(principals.node)) -> dict:
-        return {"commands": scheduler.commands(n, body.running)}
+        return {"commands": scheduler.commands(n, body.running, body.version, body.slots)}
 
     @r.post("/claim")
     def claim(n: Node = Depends(principals.node)) -> Response:

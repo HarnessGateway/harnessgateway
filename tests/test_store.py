@@ -86,7 +86,9 @@ def test_nodes(d):
     n, secret = d.nodes.register("node-1", slots=4, version="8.0.0")
     assert d.nodes.by_secret(secret).id == n.id and d.nodes.by_secret("hgw_nope") is None and n.alive
     d.nodes.touch(n, running=2)
-    assert d.nodes.list()[0].running == 2
+    assert d.nodes.list()[0].running == 2 and d.nodes.list()[0].version == "8.0.0"
+    d.nodes.touch(n, running=0, version="8.1.0", slots=8)                                    # restarted on a new release
+    assert d.nodes.list()[0].version == "8.1.0" and d.nodes.list()[0].slots == 8
     d.nodes.forget(n.id)
     assert d.nodes.list() == []
 

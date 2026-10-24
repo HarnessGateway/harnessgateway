@@ -85,9 +85,9 @@ class Scheduler:
             raise Conflict(f"{rid} is not this node's running turn")
         self.sessions.events.append(r.org, rid, chunks)
 
-    def commands(self, node: Node, running: list[str]) -> dict[str, dict[str, Any]]:
+    def commands(self, node: Node, running: list[str], version: str = "", slots: int = 0) -> dict[str, dict[str, Any]]:
         """What the node should do to the turns it reports; also its heartbeat."""
-        self.nodes.touch(node, len(running))
+        self.nodes.touch(node, len(running), version, slots)
         out: dict[str, dict[str, Any]] = {}
         for rid in running:
             try:
