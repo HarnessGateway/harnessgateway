@@ -1,17 +1,20 @@
-"""The deployer's routes: organizations and their ceilings and plans, the fleet, usage. The deployer
-sees counts and sizes, never an organization's prompts, output, packages or keys."""
+"""The deployer's routes: organizations and their ceilings and plans, the fleet, usage, and the
+dataset. The deployer sees counts and sizes of every organization; the content of only those that
+share their traces, through the dataset export, pseudonymized."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..domain.members import Member
 from ..domain.sessions import RUNNING
-from ..services.metering import totals
+from ..services.metering import METERS, SHOWN, daily, grouped, totals
 
 
 class OrgBody(BaseModel):
@@ -27,6 +30,7 @@ class OrgPatch(BaseModel):
     status: str | None = Field(default=None, pattern="^(active|suspended)$")
     plan: str | None = Field(default=None, pattern="^(free|team|enterprise)$")
     trace_sharing: bool | None = None
+    billing_id: str | None = None
 
 
 def router(service) -> APIRouter:
@@ -39,27 +43,18 @@ def router(service) -> APIRouter:
                 "running": records.count("response", org, "running", RUNNING),
                 "queued": records.count("response", org, "status", "queued")}
 
-    @r.get("/usage")
+    @r.get("/platform/usage")
     def usage(days: int = 0) -> dict:
         """The platform's usage: all time with `days=0`, else the last `days` days; totals, a row per
         day, a row per organization, a row per harness. Counts and sizes only."""
         now = time.time()
         since = now - days * 86400 if days > 0 else 0
-        rows = [(o.name, u) for o in orgs.list() for u in records.list("usage", o.name) if u.get("at", 0) >= since]
-        by_day: dict[str, list] = {}
-        by_org: dict[str, list] = {}
-        by_harness: dict[str, list] = {}
-        for org, u in rows:
-            by_day.setdefault(time.strftime("%Y-%m-%d", time.gmtime(u.get("at", 0))), []).append(u)
-            by_org.setdefault(org, []).append(u)
-            by_harness.setdefault(u.get("harness") or "(in progress)", []).append(u)
-        span = days if days > 0 else max(1, int((now - min((u.get("at", now) for _, u in rows), default=now)) // 86400) + 1)
-        day_rows = [{"day": time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400)),
-                     **totals(by_day.get(time.strftime("%Y-%m-%d", time.gmtime(now - i * 86400)), []))} for i in range(span - 1, -1, -1)]
-        return {"days": days, "totals": totals([u for _, u in rows]), "daily": day_rows,
-                "orgs": [{"org": o, **totals(us)} for o, us in sorted(by_org.items())],
-                "harnesses": [{"harness": h, **totals(us)} for h, us in sorted(by_harness.items(), key=lambda kv: -len(kv[1]))],
-                "statuses": {st: sum(1 for _, u in rows if u.get("status") == st) for st in ("completed", "failed", "cancelled", "incomplete")}}
+        rows = [{**u, "org": o.name} for o in orgs.list() for u in records.list("usage", o.name) if u.get("at", 0) >= since]
+        storage = [s for o in orgs.list() for s in records.list("meter", o.name, "storage:")[-1:]]
+        return {"days": days, "totals": totals(rows), "daily": daily(rows, days, now), "orgs": grouped(rows, "org"),
+                "harnesses": grouped(rows, "harness"),
+                "statuses": {st: sum(1 for u in rows if u.get("status") == st) for st in ("completed", "failed", "cancelled", "incomplete")},
+                "storage": {"bytes": sum(s["bytes"] for s in storage), "orgs": len(storage)}, "meters": METERS, "shown": SHOWN}
 
     @r.post("/orgs")
     def create_org(body: OrgBody, _: Member = Depends(principals.deployer)) -> dict:
@@ -80,7 +75,28 @@ def router(service) -> APIRouter:
 
     @r.patch("/orgs/{name}")
     def patch_org(name: str, body: OrgPatch) -> dict:
-        return asdict(orgs.update(name, limits=body.limits, status=body.status, plan=body.plan, trace_sharing=body.trace_sharing))
+        return asdict(orgs.update(name, limits=body.limits, status=body.status, plan=body.plan, trace_sharing=body.trace_sharing,
+                                  billing_id=body.billing_id))
+
+    @r.get("/orgs/{name}/usage")
+    def org_usage(name: str, days: int = 30) -> dict:
+        orgs.get(name)
+        return service.metering.summary(name, days)
+
+    # the dataset: the traces of organizations that share them
+    @r.get("/dataset/summary")
+    def dataset_summary(since: float = 0, until: float = 0) -> dict:
+        return service.dataset.summary(since, until or None)
+
+    @r.get("/dataset")
+    def dataset(since: float = 0, until: float = 0) -> StreamingResponse:
+        """One JSON line per session of the organizations that share their traces, created in
+        [since, until): request, response, steers, provider captures; identities pseudonymized."""
+        def lines():
+            for row in service.dataset.rows(since, until or None):
+                yield json.dumps(row, separators=(",", ":")) + "\n"
+        return StreamingResponse(lines(), media_type="application/x-ndjson",
+                                 headers={"Content-Disposition": 'attachment; filename="dataset.jsonl"'})
 
     @r.delete("/orgs/{name}")
     def delete_org(name: str) -> dict:

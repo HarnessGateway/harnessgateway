@@ -305,8 +305,29 @@ def test_harness_repository_and_teams(platform):
         dep = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": "Bearer hgd_deployer"})
         orgs = (await dep.get("/v1/orgs")).json()["data"]
         assert orgs[0]["name"] == org and orgs[0]["usage"]["turns"] == 5
-        assert (await dep.get("/v1/usage")).json()["totals"]["turns"] == 5
+        assert (await dep.get("/v1/platform/usage")).json()["totals"]["turns"] == 5
         assert (await dep.get("/v1/responses/" + r["id"])).status_code == 403
+        assert (await dep.get(f"/v1/orgs/{org}/usage")).json()["totals"]["turns"] == 5
+        # the organization sees its own usage: an owner all of it, a member their own and their teams'
+        u = (await client.get("/v1/usage?days=0")).json()
+        assert u["totals"]["turns"] == 5 and u["totals"]["cpu_seconds"] > 0 and "cpu_seconds" in u["meters"] and "input_tokens" in u["shown"]
+        assert {m["member"] for m in u["members"]} == {"chase", "dev"} and {t["team"] for t in u["teams"]} == {"", "platform"}
+        assert (await client.get("/v1/usage?days=0&team=platform")).json()["totals"]["turns"] == 1
+        own = (await dev.get("/v1/usage?days=0")).json()
+        assert own["totals"]["turns"] == 2 and [m["member"] for m in own["members"]] == ["dev"]
+        assert (await peer.get("/v1/usage?days=0")).json()["totals"]["turns"] == 0
+        assert (await peer.get("/v1/usage?team=platform")).status_code == 403                    # no longer in the team
+        # the dataset: nothing until an organization shares; then its sessions, pseudonymized
+        assert (await dep.get("/v1/dataset/summary")).json()["orgs"] == 0 and (await dep.get("/v1/dataset")).text == ""
+        assert (await client.patch("/v1/org", json={"trace_sharing": True})).json()["trace_sharing"] is True
+        shared = (await client.post("/v1/responses", json={"model": "echo", "input": "shared"})).json()
+        lines = [json.loads(x) for x in (await dep.get("/v1/dataset")).text.splitlines()]
+        assert [x["session"] for x in lines] == [shared["metadata"]["session_id"]] and lines[0]["turns"][0]["request"]["input"] == "shared"
+        assert lines[0]["org"].startswith("org_") and org not in json.dumps(lines)
+        summary = (await dep.get("/v1/dataset/summary")).json()
+        assert {k: summary[k] for k in ("orgs", "sessions", "turns", "since")} == {"orgs": 1, "sessions": 1, "turns": 1, "since": 0} and summary["until"] > 0
+        assert (await dep.patch(f"/v1/orgs/{org}", json={"plan": "enterprise"})).json()["trace_sharing"] is False
+        assert (await dep.get("/v1/dataset")).text == ""
         # another organization sees nothing of this one
         other, _, _ = await owner_client(transport, email="eve@other.test")
         assert (await other.get("/v1/harnesses")).json()["data"] == []

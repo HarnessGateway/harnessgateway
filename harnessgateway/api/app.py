@@ -39,6 +39,8 @@ from ..domain.teams import Teams
 from ..errors import Conflict, Invalid, NotFound
 from ..kernel.vault import Sealer
 from ..services.intake import Intake
+from ..services.dataset import Dataset
+from ..services.housekeeping import Housekeeping
 from ..services.metering import Metering
 from ..services.scheduler import Scheduler
 from . import control, deployer, internal, responses, signin
@@ -78,7 +80,9 @@ class Service:
         self.scheduler = Scheduler(self.sessions, self.harnesses, self.providers, self.orgs, self.nodes, settings.gateway_url,
                                    on_final=self.metering.turn_ended)
         self.catalog = Catalog()
-        self.accounts = Accounts(self.records, self.vault, self.orgs, self.members)
+        self.accounts = Accounts(self.records, self.vault, self.orgs, self.members, settings.trace_sharing)
+        self.dataset = Dataset(self.records, self.blobs, self.orgs, self.vault)
+        self.housekeeping = Housekeeping(self.scheduler, self.metering)
         self.join_token = settings.join_token or secrets.token_urlsafe(32)   # an in-process node joins with it
         self.principals = Principals(self.keys, self.nodes, settings.deployer_key, self.join_token, self.accounts)
 
@@ -88,14 +92,7 @@ def create_app(service: Service) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        async def sweeps() -> None:
-            while True:
-                await asyncio.sleep(15)
-                try:
-                    service.scheduler.sweep_lost()
-                except Exception:
-                    pass
-        task = asyncio.create_task(sweeps())
+        task = asyncio.create_task(service.housekeeping.run())
         yield
         task.cancel()
 

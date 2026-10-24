@@ -52,6 +52,13 @@ class DirBlobs:
             return []
         return sorted(f.relative_to(self.root).as_posix() for f in p.rglob("*") if f.is_file() and not f.name.startswith("."))
 
+    def size(self, prefix: str) -> int:
+        """Bytes under the prefix, without reading them."""
+        p = self._path(prefix)
+        if p.is_file():
+            return p.stat().st_size
+        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file() and not f.name.startswith(".")) if p.is_dir() else 0
+
     # signed URLs, served by the API's blob route
     def sign(self, method: str, key: str, ttl_s: int) -> str:
         expires = int(time.time()) + ttl_s

@@ -15,7 +15,9 @@ def d(tmp_path, vault):
 
 def test_orgs_members_teams_keys(d):
     o = d.orgs.create("acme", title="ACME")
-    assert o.plan == "free" and not o.trace_sharing and o.ceilings.requests_per_minute == 120
+    assert o.plan == "free" and not o.trace_sharing and o.trace_sharing_since == 0          # the free plan's ceilings, unless given
+    assert o.ceilings.requests_per_minute == 30 and o.ceilings.max_runs == 2 and o.ceilings.cpus == 2
+    assert d.orgs.create("given", {"max_runs": 7}).ceilings.max_runs == 7 and d.orgs.create("ent", plan="enterprise").ceilings.max_runs == 32
     with pytest.raises(Conflict):
         d.orgs.create("acme")
     with pytest.raises(Invalid):
@@ -23,7 +25,17 @@ def test_orgs_members_teams_keys(d):
     with pytest.raises(Invalid):
         d.orgs.create("x", plan="platinum")
     assert d.orgs.update("acme", plan="enterprise", trace_sharing=True).trace_sharing is False      # enterprise never shares
-    assert d.orgs.update("acme", plan="free", trace_sharing=True).trace_sharing is True
+    assert d.orgs.get("acme").ceilings.max_runs == 32                                              # a new plan brings its ceilings
+    assert d.orgs.update("acme", plan="team", limits={"max_runs": 3}).ceilings.max_runs == 3        # unless others are given
+    shared = d.orgs.update("acme", plan="free", trace_sharing=True)
+    assert shared.trace_sharing is True and shared.shares and shared.trace_sharing_since > 0        # sharing is dated
+    since = shared.trace_sharing_since
+    assert d.orgs.update("acme", title="still").trace_sharing_since == since                        # and the date holds while it is on
+    assert d.orgs.sharing() == [d.orgs.get("acme")] and d.orgs.get("acme").public()["trace_sharing_since"] == since
+    off = d.orgs.update("acme", trace_sharing=False)
+    assert off.trace_sharing_since == 0 and d.orgs.sharing() == [] and off.public()["trace_sharing_since"] == 0
+    assert d.orgs.update("acme", trace_sharing=True).trace_sharing_since > since                    # turned on again: a new date
+    d.orgs.update("acme", trace_sharing=False)
     d.members.create("acme", "chase", "owner")
     d.members.create("acme", "dev", "member")
     t = d.teams.put("acme", "platform", ["dev"], "Platform")

@@ -44,6 +44,14 @@ class S3Blobs:
             keys += [o["Key"] for o in page.get("Contents", [])]
         return sorted(keys)
 
+    def size(self, prefix: str) -> int:
+        """Bytes under the prefix, from the listing alone."""
+        checked_key(prefix)
+        total = 0
+        for page in self._s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix.rstrip("/") + "/"):
+            total += sum(o["Size"] for o in page.get("Contents", []))
+        return total
+
     def presign_get(self, key: str, ttl_s: int = 900) -> str:
         return self._s3.generate_presigned_url("get_object", Params={"Bucket": self.bucket, "Key": checked_key(key)}, ExpiresIn=ttl_s)
 

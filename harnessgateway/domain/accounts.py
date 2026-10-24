@@ -84,8 +84,8 @@ class Account:
 
 
 class Accounts:
-    def __init__(self, records, vault: Sealer, orgs: Orgs, members: Members):
-        self.records, self.orgs, self.members = records, orgs, members
+    def __init__(self, records, vault: Sealer, orgs: Orgs, members: Members, trace_sharing: bool = False):
+        self.records, self.orgs, self.members, self.trace_sharing = records, orgs, members, trace_sharing
         self._secret = vault.derive("accounts")
 
     # accounts
@@ -195,8 +195,9 @@ class Accounts:
         return m
 
     def create_org(self, a: Account, name: str, limits: dict[str, Any] | None = None) -> Member:
-        """An org of the account's own, with the account as its first owner."""
-        self.orgs.create(check_name(name, "org"), limits)
+        """An org of the account's own, on the free plan, with the account as its first owner. On a
+        deployment that shares traces, it shares until an owner turns that off."""
+        self.orgs.create(check_name(name, "org"), limits, trace_sharing=self.trace_sharing)
         return self.join(a, name, "owner")
 
     def free_org_name(self, wanted: str) -> str:

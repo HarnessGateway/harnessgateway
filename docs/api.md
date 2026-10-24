@@ -48,7 +48,9 @@ bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 
 
 | Route | Does |
 |---|---|
-| `GET /v1/me` | who the key is: member, organization, role, teams, limits |
+| `GET /v1/me` | who the key is: member, organization, role, teams, limits, plan |
+| `GET /v1/org`, `PATCH /v1/org` | the organization: `{"title", "trace_sharing"}` ([Data](data.md)) |
+| `GET /v1/usage?days=&team=&harness=` | what the organization used: compute, egress, storage, tokens shown ([Data](data.md)) |
 | `GET /v1/members`, `POST /v1/members`, `PATCH/DELETE …/{name}` | members; `{"name", "role"}`; a role change; removal |
 | `POST /v1/invites`, `GET /v1/invites`, `DELETE …/{email}` | invitations by email |
 | `PUT /v1/teams/{name}`, `GET /v1/teams`, `GET/DELETE …/{name}` | `{"members": [...], "title"}` |
@@ -64,7 +66,7 @@ a key.
 
 ## The deployer
 
-`GET /v1/usage?days=`, `POST /v1/orgs`, `GET /v1/orgs`, `GET/PATCH/DELETE /v1/orgs/{name}`,
+`GET /v1/platform/usage?days=`, `GET /v1/orgs/{name}/usage`, `GET /v1/dataset`, `GET /v1/dataset/summary`, `POST /v1/orgs`, `GET /v1/orgs`, `GET/PATCH/DELETE /v1/orgs/{name}`,
 `GET /v1/workers`, `DELETE /v1/workers/{id}`, `GET /v1/fleet`. See [Organizations and limits](organizations.md).
 
 ## Workers

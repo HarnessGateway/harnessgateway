@@ -31,7 +31,7 @@ A package's `harness.json` asks for timeouts within these; the lower wins.
 
 ## Usage
 
-`GET /v1/usage?days=30` is the platform's usage: totals, a row per day, per organization and per
+`GET /v1/platform/usage?days=30` is the platform's usage: totals, a row per day, per organization and per
 harness, of turns, sandbox seconds, provider calls and bytes relayed. Counts and sizes only. The
 dashboard draws it.
 

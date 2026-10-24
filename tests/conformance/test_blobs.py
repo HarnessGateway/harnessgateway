@@ -11,6 +11,7 @@ def test_put_get_list_delete(blobs):
     blobs.put("tenants/acme/b.txt", b"b")
     assert blobs.get("tenants/acme/a/x.txt") == b"x" and blobs.exists("tenants/acme/b.txt")
     assert blobs.list("tenants/acme") == ["tenants/acme/a/x.txt", "tenants/acme/a/y.txt", "tenants/acme/b.txt"]
+    assert blobs.size("tenants/acme") == 3 and blobs.size("tenants/acme/a") == 2 and blobs.size("tenants/nobody") == 0
     blobs.delete("tenants/acme/a")
     assert blobs.list("tenants/acme") == ["tenants/acme/b.txt"] and not blobs.exists("tenants/acme/a/x.txt")
     with pytest.raises(NotFound):

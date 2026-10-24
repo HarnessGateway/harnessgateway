@@ -66,7 +66,7 @@ function columns(rows, key, fmt, title) {
   return h("div", {}, h("h3", {}, title), s);
 }
 VIEWS.Dashboard = async function dashboard() {
-  const [u, fleet] = await Promise.all([api("GET", `/v1/usage?days=${state.window}`), api("GET", "/v1/fleet")]);
+  const [u, fleet] = await Promise.all([api("GET", `/v1/platform/usage?days=${state.window}`), api("GET", "/v1/fleet")]);
   const pick = (d) => h("button", { class: "quiet small" + (state.window === d ? " on" : ""), on: { click: () => { state.window = d; shell("Dashboard"); } } }, d ? `${d} days` : "all time");
   const stat = (b, s) => h("div", { class: "stat" }, h("b", {}, b), h("span", {}, s));
   return h("div", {}, head("Dashboard", "The platform's usage: counts and sizes only, never an organization's prompts, output, packages or keys.", pick(7), pick(30), pick(90), pick(0)),

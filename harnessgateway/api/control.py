@@ -90,6 +90,20 @@ def router(service) -> APIRouter:
     def get_org(who: Member = member) -> dict:
         return orgs.get(who.org).public()
 
+    @r.get("/usage")
+    def usage(days: int = 30, team: str = "", harness: str = "", who: Member = member) -> dict:
+        """What the organization used: the last `days` (all time with 0), narrowed to a team or a
+        harness. An owner sees the organization; a member sees their own turns and their teams'.
+        Compute, egress and storage are what the platform meters; tokens are shown, never billed here."""
+        if who.owner:
+            return service.metering.summary(who.org, days, team=team, harness=harness)
+        if team and not teams.includes(who, team):
+            raise HTTPException(403, f"you are not in team {team}")
+        mine = service.metering.summary(who.org, days, team=team, member="" if team else who.name, harness=harness)
+        if not team:
+            mine["members"] = [row for row in mine["members"] if row["member"] == who.name]
+        return mine
+
     @r.patch("/org")
     def patch_org(body: OrgSettingsBody, who: Member = owner) -> dict:
         return orgs.update(who.org, title=body.title, trace_sharing=body.trace_sharing).public()

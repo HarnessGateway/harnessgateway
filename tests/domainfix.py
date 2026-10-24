@@ -16,6 +16,8 @@ from harnessgateway.domain.providers import Providers
 from harnessgateway.domain.rodeos import Rodeos
 from harnessgateway.domain.sessions import Sessions
 from harnessgateway.domain.teams import Teams
+from harnessgateway.services.dataset import Dataset
+from harnessgateway.services.housekeeping import Housekeeping
 from harnessgateway.services.intake import Intake
 from harnessgateway.services.metering import Metering
 from harnessgateway.services.scheduler import Scheduler
@@ -31,8 +33,9 @@ def domain(records, blobs, vault, git_root: Path, allow_private: bool = False, g
     nodes = Nodes(records)
     sessions = Sessions(records, blobs, RecordEvents(records), orgs, teams, harnesses, providers)
     metering = Metering(records, blobs, orgs)
+    scheduler = Scheduler(sessions, harnesses, providers, orgs, nodes, gateway_url, on_final=metering.turn_ended)
     return SimpleNamespace(records=records, blobs=blobs, vault=vault, orgs=orgs, members=members, teams=teams, keys=keys, providers=providers,
                            harnesses=harnesses, nodes=nodes, sessions=sessions, rodeos=Rodeos(records, sessions),
                            intake=Intake(records, orgs, sessions), metering=metering,
-                           scheduler=Scheduler(sessions, harnesses, providers, orgs, nodes, gateway_url, on_final=metering.turn_ended),
-                           accounts=Accounts(records, vault, orgs, members))
+                           scheduler=scheduler, housekeeping=Housekeeping(scheduler, metering),
+                           dataset=Dataset(records, blobs, orgs, vault), accounts=Accounts(records, vault, orgs, members))

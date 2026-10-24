@@ -1,5 +1,9 @@
 """The organization: the tenant. It has a plan, ceilings the deployer set, a status, and a say in
-whether its traces may be shared. Everything else in the platform belongs to one organization."""
+whether its traces may be shared. Everything else in the platform belongs to one organization.
+
+Plans set the default ceilings and who may share traces: an enterprise organization's traces are
+never shared, whatever anyone sets. Sharing is dated: only sessions created after it was turned on
+are in the dataset, and turning it off ends it at once."""
 from __future__ import annotations
 
 import time
@@ -15,6 +19,11 @@ from ..kernel.limits import Limits
 
 RESERVED = {"catalog", "template", "platform", "deployer", "api", "internal", "auth", "app", "docs", "web"}
 PLANS = ("free", "team", "enterprise")
+PLAN_LIMITS: dict[str, dict[str, Any]] = {           # the ceilings a plan starts with; the deployer may set others
+    "free": {"max_runs": 2, "run_timeout_s": 1800, "requests_per_minute": 30, "disk_mb": 1024},
+    "team": {"max_runs": 8, "requests_per_minute": 240},
+    "enterprise": {"max_runs": 32, "requests_per_minute": 1200, "disk_mb": 8192},
+}
 STATUSES = ("active", "suspended")
 KINDS = ("member", "team", "key", "provider", "harness", "session", "response", "turn", "chunk", "usage", "trace", "rodeo", "invite",
          "webhook", "idem", "meter")
@@ -30,6 +39,11 @@ class Org:
     plan: str = "free"                               # free, team, enterprise
     trace_sharing: bool = False                      # whether its traces go into the shared dataset
     billing_id: str = ""                             # the billing system's customer id, when billed
+    trace_sharing_since: float = 0                   # when sharing was turned on; sessions created before stay out
+
+    @property
+    def shares(self) -> bool:
+        return self.trace_sharing and self.plan != "enterprise"
 
     @property
     def ceilings(self) -> Limits:
@@ -37,7 +51,7 @@ class Org:
 
     def public(self) -> dict[str, Any]:
         return {"name": self.name, "title": self.title, "plan": self.plan, "status": self.status, "created": self.created,
-                "trace_sharing": self.trace_sharing, "limits": self.limits}
+                "trace_sharing": self.shares, "trace_sharing_since": self.trace_sharing_since if self.shares else 0, "limits": self.limits}
 
 
 class Orgs:
@@ -52,8 +66,10 @@ class Orgs:
             raise Invalid(f"a plan is one of {', '.join(PLANS)}")
         if self.records.get("org", PLATFORM, name):
             raise Conflict(f"organization {name} exists")
-        o = Org(name, time.time(), Limits.from_dict(limits).as_dict(), title=title[:80], plan=plan,
-                trace_sharing=bool(trace_sharing) and plan != "enterprise")
+        now = time.time()
+        sharing = bool(trace_sharing) and plan != "enterprise"
+        o = Org(name, now, Limits.from_dict(limits if limits is not None else PLAN_LIMITS[plan]).as_dict(), title=title[:80], plan=plan,
+                trace_sharing=sharing, trace_sharing_since=now if sharing else 0)
         self.records.put("org", PLATFORM, name, asdict(o))
         return o
 
@@ -73,6 +89,10 @@ class Orgs:
     def list(self) -> list[Org]:
         return [Org(**d) for d in self.records.list("org", PLATFORM)]
 
+    def sharing(self) -> list[Org]:
+        """The organizations whose traces go into the dataset."""
+        return [o for o in self.list() if o.shares]
+
     def update(self, name: str, *, limits: dict[str, Any] | None = None, status: str | None = None, title: str | None = None,
                plan: str | None = None, trace_sharing: bool | None = None, billing_id: str | None = None) -> Org:
         o = self.get(name)
@@ -80,11 +100,17 @@ class Orgs:
             raise Invalid("an organization's status is active or suspended")
         if plan is not None and plan not in PLANS:
             raise Invalid(f"a plan is one of {', '.join(PLANS)}")
-        plan = plan or o.plan
-        sharing = o.trace_sharing if trace_sharing is None else bool(trace_sharing)
-        o = Org(o.name, o.created, Limits.from_dict(limits).as_dict() if limits is not None else o.limits, status or o.status,
-                (title or "")[:80] if title is not None else o.title, plan, sharing and plan != "enterprise",
-                o.billing_id if billing_id is None else billing_id[:80])
+        new_plan = plan or o.plan
+        sharing = (o.trace_sharing if trace_sharing is None else bool(trace_sharing)) and new_plan != "enterprise"
+        since = o.trace_sharing_since if (sharing and o.shares) else (time.time() if sharing else 0)
+        if limits is not None:
+            ceilings = Limits.from_dict(limits).as_dict()
+        elif plan is not None and plan != o.plan:
+            ceilings = Limits.from_dict(PLAN_LIMITS[plan]).as_dict()     # a new plan brings its ceilings unless others are given
+        else:
+            ceilings = o.limits
+        o = Org(o.name, o.created, ceilings, status or o.status, (title or "")[:80] if title is not None else o.title, new_plan, sharing,
+                o.billing_id if billing_id is None else billing_id[:80], since)
         self.records.put("org", PLATFORM, name, asdict(o))
         return o
 
