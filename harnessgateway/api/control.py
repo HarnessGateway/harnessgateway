@@ -69,6 +69,11 @@ class MoveBody(BaseModel):
     team: str = ""
 
 
+class WebhookBody(BaseModel):
+    url: str
+    label: str = ""
+
+
 class OrgSettingsBody(BaseModel):
     title: Optional[str] = None
     trace_sharing: Optional[bool] = None
@@ -107,6 +112,27 @@ def router(service) -> APIRouter:
     @r.patch("/org")
     def patch_org(body: OrgSettingsBody, who: Member = owner) -> dict:
         return orgs.update(who.org, title=body.title, trace_sharing=body.trace_sharing).public()
+
+    # webhooks: where final responses are posted
+    @r.post("/webhooks")
+    def create_webhook(body: WebhookBody, who: Member = owner) -> dict:
+        w, secret = service.webhooks.create(who.org, body.url, body.label)
+        return {**w.public(), "secret": secret}
+
+    @r.get("/webhooks")
+    def list_webhooks(who: Member = owner) -> dict:
+        return {"object": "list", "data": [w.public() for w in service.webhooks.list(who.org)]}
+
+    @r.post("/webhooks/{wid}/ping")
+    def ping_webhook(wid: str, who: Member = owner) -> dict:
+        """A `ping` event, delivered now; the webhook's record shows how it went."""
+        status = service.notifier.ping(service.webhooks.get(who.org, wid)).result(timeout=120)
+        return {**service.webhooks.get(who.org, wid).public(), "status": status}
+
+    @r.delete("/webhooks/{wid}")
+    def delete_webhook(wid: str, who: Member = owner) -> dict:
+        service.webhooks.delete(who.org, wid)
+        return {"deleted": wid}
 
     # members and invitations
     @r.post("/members")

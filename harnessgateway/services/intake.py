@@ -10,7 +10,7 @@ from ..contract import wire
 from ..domain.members import Member
 from ..domain.orgs import Orgs
 from ..domain.sessions import Sessions, Turn
-from ..errors import Invalid
+from ..errors import Invalid, TooMany
 
 IDEMPOTENCY_TTL_S = 24 * 3600
 RATE_WINDOW_S = 60
@@ -29,6 +29,7 @@ class Intake:
                 return self.sessions.turn(who, seen["response"])
         self.rate_check(who)
         turn = self.sessions.create(who, req)
+        self.rate_count(who)                         # a request refused for its own faults does not count
         if idempotency_key:
             self.records.put("idem", who.org, f"{who.name}:{idempotency_key}", {"response": turn.id, "expires": time.time() + IDEMPOTENCY_TTL_S})
         return turn
@@ -37,9 +38,13 @@ class Intake:
         """At most `requests_per_minute` turns created per organization per minute; the ceiling is the
         deployer's, like every other."""
         ceiling = self.orgs.get(who.org).ceilings.requests_per_minute
-        window = int(time.time() // RATE_WINDOW_S)
-        key = f"rate:{window}"
+        if self.rate_count(who, 0) >= ceiling:
+            raise TooMany(f"the organization's rate ceiling of {ceiling} requests per minute is reached; try again shortly")
+
+    def rate_count(self, who: Member, add: int = 1) -> int:
+        """Turns created this minute, after adding `add`."""
+        key = f"rate:{int(time.time() // RATE_WINDOW_S)}"
         d = self.records.get("meter", who.org, key) or {"count": 0}
-        if d["count"] >= ceiling:
-            raise Invalid(f"the organization's rate ceiling of {ceiling} requests per minute is reached; try again shortly")
-        self.records.put("meter", who.org, key, {"count": d["count"] + 1, "at": time.time()})
+        if add:
+            self.records.put("meter", who.org, key, {"count": d["count"] + add, "at": time.time()})
+        return d["count"] + add

@@ -92,3 +92,34 @@ and `metadata.error_code = package_output_invalid`. `metadata` always carries `s
 `GET /v1/responses/{id}/detail` adds the package's log (the non-event lines of `request.sh`'s
 output), its stderr, the worker and the timings; `GET /v1/responses/{id}/request` returns the
 request as sent.
+
+## For agents: retries and webhooks
+
+A program that calls the platform, rather than a person, wants three things a person does not.
+
+**A retry that makes one turn.** Send an `Idempotency-Key` header, any token of up to 200
+characters that is unique to the attempt. A request with a key the same member sent in the last
+day returns that request's turn, whatever the body says now, and is not a new turn. Without the
+key, every request is a turn.
+
+**A clear refusal when the ceiling is reached.** An organization creates at most
+`requests_per_minute` turns a minute (a ceiling on the organization, set by the deployer with the
+plan). Past it the answer is `429` with `Retry-After: 60` and nothing is queued. Turns at once are
+`max_runs`; past that, turns queue and the response is `in_progress` until a slot frees.
+
+**The result without holding a connection.** Send a background turn (`"background": true`), then
+let the platform call you. An owner registers a webhook:
+
+```bash
+curl -X POST https://hg.example.com/v1/webhooks -H "Authorization: Bearer hg_…" \
+  -d '{"url": "https://ci.example.com/hooks/hg", "label": "ci"}'
+```
+
+The reply carries the signing secret (`whsec_…`) once. From then on every final response of the
+organization is posted to the URL as `{"id": "evt_…", "type": "response.completed" | "response.failed"
+| "response.cancelled" | "response.incomplete", "created": …, "data": <the response object>}`, with
+headers `X-HG-Event`, `X-HG-Delivery`, `X-HG-Timestamp` and `X-HG-Signature: sha256=<hex>`, the
+HMAC-SHA256 of `<timestamp>.<body>` under the secret. Verify the signature and that the timestamp is
+within a few minutes; a delivery that is not accepted with a 2xx is retried after 1, 5 and 25
+seconds, then given up on and counted on the webhook (`failures`, `last_status`). `POST
+/v1/webhooks/{id}/ping` sends a `ping` event now.

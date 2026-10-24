@@ -16,14 +16,17 @@ from harnessgateway.domain.providers import Providers
 from harnessgateway.domain.rodeos import Rodeos
 from harnessgateway.domain.sessions import Sessions
 from harnessgateway.domain.teams import Teams
+from harnessgateway.domain.webhooks import Webhooks
 from harnessgateway.services.dataset import Dataset
 from harnessgateway.services.housekeeping import Housekeeping
 from harnessgateway.services.intake import Intake
 from harnessgateway.services.metering import Metering
 from harnessgateway.services.scheduler import Scheduler
+from harnessgateway.services.webhooks import Notifier
 
 
-def domain(records, blobs, vault, git_root: Path, allow_private: bool = False, gateway_url: str = "http://gateway.test:8081") -> SimpleNamespace:
+def domain(records, blobs, vault, git_root: Path, allow_private: bool = False, gateway_url: str = "http://gateway.test:8081",
+           webhook_transport=None) -> SimpleNamespace:
     orgs = Orgs(records, blobs)
     members = Members(records, orgs)
     teams = Teams(records, orgs, members)
@@ -33,9 +36,15 @@ def domain(records, blobs, vault, git_root: Path, allow_private: bool = False, g
     nodes = Nodes(records)
     sessions = Sessions(records, blobs, RecordEvents(records), orgs, teams, harnesses, providers)
     metering = Metering(records, blobs, orgs)
-    scheduler = Scheduler(sessions, harnesses, providers, orgs, nodes, gateway_url, on_final=metering.turn_ended)
+    webhooks = Webhooks(records, vault, orgs)
+    notifier = Notifier(webhooks, sessions, webhook_transport, pauses=(0.01, 0.01))
+
+    def turn_ended(r, report):
+        metering.turn_ended(r, report)
+        notifier.turn_ended(r, report)
+    scheduler = Scheduler(sessions, harnesses, providers, orgs, nodes, gateway_url, on_final=turn_ended)
     return SimpleNamespace(records=records, blobs=blobs, vault=vault, orgs=orgs, members=members, teams=teams, keys=keys, providers=providers,
                            harnesses=harnesses, nodes=nodes, sessions=sessions, rodeos=Rodeos(records, sessions),
                            intake=Intake(records, orgs, sessions), metering=metering,
-                           scheduler=scheduler, housekeeping=Housekeeping(scheduler, metering),
+                           webhooks=webhooks, notifier=notifier, scheduler=scheduler, housekeeping=Housekeeping(scheduler, metering),
                            dataset=Dataset(records, blobs, orgs, vault), accounts=Accounts(records, vault, orgs, members))

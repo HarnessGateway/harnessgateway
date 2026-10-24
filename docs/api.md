@@ -10,7 +10,7 @@ bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 
 
 | Route | Does |
 |---|---|
-| `POST /v1/responses` | a turn; the body is a Responses request ([Requests](requests.md)); `x-session-id` header on the response. Closing a foreground request stops its turn ([Requests](requests.md#closing-the-request)) |
+| `POST /v1/responses` | a turn; the body is a Responses request ([Requests](requests.md)); `x-session-id` header on the response. Closing a foreground request stops its turn ([Requests](requests.md#closing-the-request)). An `Idempotency-Key` header makes a retry return the first turn; past the organization's rate ceiling the answer is 429 with `Retry-After` |
 | `GET /v1/responses/{id}` | the response object; `?stream=true` streams it (a running one from its start) |
 | `GET /v1/responses/{id}/detail` | plus the package's log and stderr, the worker, the timings, the raw status |
 | `GET /v1/responses/{id}/request` | the request as sent |
@@ -55,6 +55,7 @@ bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 
 | `POST /v1/invites`, `GET /v1/invites`, `DELETE …/{email}` | invitations by email |
 | `PUT /v1/teams/{name}`, `GET /v1/teams`, `GET/DELETE …/{name}` | `{"members": [...], "title"}` |
 | `POST /v1/members/{name}/keys`, `GET /v1/keys`, `DELETE /v1/keys/{id}` | mint (`{"label"}`), list, revoke |
+| `POST /v1/webhooks`, `GET /v1/webhooks`, `POST …/{id}/ping`, `DELETE …/{id}` | owners: `{"url", "label"}` returns the signing secret once; every final response is posted there ([Requests](requests.md#for-agents-retries-and-webhooks)) |
 
 ## Accounts
 

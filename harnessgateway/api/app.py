@@ -36,17 +36,19 @@ from ..domain.providers import Providers
 from ..domain.rodeos import Rodeos
 from ..domain.sessions import Sessions
 from ..domain.teams import Teams
-from ..errors import Conflict, Invalid, NotFound
+from ..domain.webhooks import Webhooks
+from ..errors import Conflict, Invalid, NotFound, TooMany
 from ..kernel.vault import Sealer
 from ..services.intake import Intake
 from ..services.dataset import Dataset
 from ..services.housekeeping import Housekeeping
 from ..services.metering import Metering
+from ..services.webhooks import Notifier
 from ..services.scheduler import Scheduler
 from . import control, deployer, internal, responses, signin
 from .auth import Principals
 
-STATUS = {Invalid: 400, NotFound: 404, Conflict: 409}
+STATUS = {Invalid: 400, NotFound: 404, Conflict: 409, TooMany: 429}
 WEB = Path(__file__).resolve().parents[1] / "web"              # inside the wheel; a checkout has it at the repository root
 if not WEB.is_dir():
     WEB = Path(__file__).resolve().parents[2] / "web"
@@ -57,7 +59,7 @@ VERSION = version("harnessgateway")
 class Service:
     """The platform's parts, built from its settings; shared by every role in a process."""
 
-    def __init__(self, settings: Settings, vault: Optional[Sealer] = None, *, identities=None, mail=None, billing=None):
+    def __init__(self, settings: Settings, vault: Optional[Sealer] = None, *, identities=None, mail=None, billing=None, webhook_transport=None):
         self.settings = settings
         self.records = open_records(settings.records_url)
         self.vault = vault or open_sealer(settings.kms, os.environ, self.records)
@@ -77,14 +79,22 @@ class Service:
         self.rodeos = Rodeos(self.records, self.sessions)
         self.intake = Intake(self.records, self.orgs, self.sessions)
         self.metering = Metering(self.records, self.blobs, self.orgs, self.billing)
+        self.webhooks = Webhooks(self.records, self.vault, self.orgs)
+        self.notifier = Notifier(self.webhooks, self.sessions, webhook_transport)
         self.scheduler = Scheduler(self.sessions, self.harnesses, self.providers, self.orgs, self.nodes, settings.gateway_url,
-                                   on_final=self.metering.turn_ended)
+                                   on_final=self.turn_ended)
         self.catalog = Catalog()
         self.accounts = Accounts(self.records, self.vault, self.orgs, self.members, settings.trace_sharing)
         self.dataset = Dataset(self.records, self.blobs, self.orgs, self.vault)
         self.housekeeping = Housekeeping(self.scheduler, self.metering)
         self.join_token = settings.join_token or secrets.token_urlsafe(32)   # an in-process node joins with it
         self.principals = Principals(self.keys, self.nodes, settings.deployer_key, self.join_token, self.accounts)
+
+
+    def turn_ended(self, r, report) -> None:
+        """What happens when a turn ends, after its response is final: it is metered, then announced."""
+        self.metering.turn_ended(r, report)
+        self.notifier.turn_ended(r, report)
 
 
 def create_app(service: Service) -> FastAPI:
@@ -101,7 +111,7 @@ def create_app(service: Service) -> FastAPI:
     for error, code in STATUS.items():
         @app.exception_handler(error)
         async def refused(_: Request, e: Exception, code: int = code) -> JSONResponse:
-            return JSONResponse({"detail": str(e)}, status_code=code)
+            return JSONResponse({"detail": str(e)}, status_code=code, headers={"Retry-After": "60"} if code == 429 else None)
 
     @app.get("/healthz")
     def healthz() -> dict:

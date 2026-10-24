@@ -31,8 +31,14 @@ def platform(tmp_path, vault, monkeypatch):
     folder(tmp_path / "catalog" / "demo", description="shipped")
     settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="open", join_token="jt",
                         deployer_key="hgd_deployer")
-    service = Service(settings, vault)
+    hooks: list[httpx.Request] = []
+
+    def receive(request: httpx.Request) -> httpx.Response:
+        hooks.append(request)
+        return httpx.Response(200)
+    service = Service(settings, vault, webhook_transport=httpx.MockTransport(receive))
     app = create_app(service)
+    app.state.hooks, app.state.service = hooks, service
     transport = httpx.ASGITransport(app=app)
     node = FakeNode()
     worker = Worker("http://api.test", node, tmp_path / "cache", name="w1", slots=2, version="t", join_token="jt", transport=transport)
@@ -168,7 +174,19 @@ def test_refusals(platform):
         bad = (await client.post("/v1/harnesses/bad", json={"archive": base64.b64encode(archive(files={"request.sh": "if then"})).decode()})).json()
         assert "not valid bash" in bad["detail"]
         assert (await httpx.AsyncClient(transport=transport, base_url="http://api.test").get("/v1/me")).status_code == 401
-    asyncio.run(go())
+        # the organization's rate ceiling: a 429 with Retry-After, and a retried key is never a new turn
+        dep = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": "Bearer hgd_deployer"})
+        assert (await dep.patch(f"/v1/orgs/{org}", json={"limits": {"requests_per_minute": 2}})).status_code == 200
+        first = await client.post("/v1/responses", json={"model": "echo", "input": "one", "background": True}, headers={"Idempotency-Key": "job-1"})
+        assert first.status_code == 200
+        again = await client.post("/v1/responses", json={"model": "echo", "input": "changed", "background": True}, headers={"Idempotency-Key": "job-1"})
+        assert again.status_code == 200 and again.json()["id"] == first.json()["id"]
+        assert (await client.post("/v1/responses", json={"model": "echo", "input": "two", "background": True})).status_code == 200
+        refused = await client.post("/v1/responses", json={"model": "echo", "input": "three", "background": True})
+        assert refused.status_code == 429 and refused.headers["retry-after"] == "60" and "requests per minute" in refused.text
+        assert (await client.post("/v1/responses", json={"model": "echo", "input": "x", "background": True}, headers={"Idempotency-Key": "job-1"})).json()["id"] == first.json()["id"]
+        assert (await client.post("/v1/responses", json={"model": "echo", "input": "x"}, headers={"Idempotency-Key": "a b"})).status_code == 400
+    asyncio.run(with_worker(worker, go()))
 
 
 def test_background_cancel_steer(platform):
@@ -332,6 +350,38 @@ def test_harness_repository_and_teams(platform):
         other, _, _ = await owner_client(transport, email="eve@other.test")
         assert (await other.get("/v1/harnesses")).json()["data"] == []
         assert (await other.get(f"/v1/responses/{r['id']}")).status_code == 404
+    asyncio.run(with_worker(worker, go()))
+
+
+def test_webhooks_receive_every_final_response(platform):
+    app, transport, worker, node = platform
+
+    async def go():
+        client, key, org = await owner_client(transport)
+        await setup(transport, client)
+        made = (await client.post("/v1/webhooks", json={"url": "https://hooks.example/hg", "label": "ci"})).json()
+        assert made["secret"].startswith("whsec_") and made["label"] == "ci" and made["last_status"] == 0
+        listed = (await client.get("/v1/webhooks")).json()["data"]
+        assert [w["id"] for w in listed] == [made["id"]] and "secret" not in listed[0]
+        assert (await client.post("/v1/webhooks", json={"url": "nope"})).status_code == 400
+        pinged = (await client.post(f"/v1/webhooks/{made['id']}/ping")).json()
+        assert pinged["status"] == 200 and pinged["last_status"] == 200 and json.loads(app.state.hooks[-1].content)["type"] == "ping"
+        r = (await client.post("/v1/responses", json={"model": "echo", "input": "hello"})).json()
+        app.state.service.notifier.drain()
+        event = json.loads(app.state.hooks[-1].content)
+        assert event["type"] == "response.completed" and event["data"]["id"] == r["id"] and event["data"]["output"] == r["output"]
+        from harnessgateway.services.webhooks import SIGNATURE, TIMESTAMP, verify
+        assert verify(made["secret"], app.state.hooks[-1].headers[TIMESTAMP], app.state.hooks[-1].content, app.state.hooks[-1].headers[SIGNATURE])
+        # a member cannot manage webhooks; a deleted one receives nothing more
+        await client.post("/v1/members", json={"name": "dev", "role": "member"})
+        dev_key = (await client.post("/v1/members/dev/keys", json={})).json()["secret"]
+        dev = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {dev_key}"})
+        assert (await dev.get("/v1/webhooks")).status_code == 403
+        assert (await client.delete(f"/v1/webhooks/{made['id']}")).json() == {"deleted": made["id"]}
+        count = len(app.state.hooks)
+        await client.post("/v1/responses", json={"model": "echo", "input": "quiet"})
+        app.state.service.notifier.drain()
+        assert len(app.state.hooks) == count
     asyncio.run(with_worker(worker, go()))
 
 
