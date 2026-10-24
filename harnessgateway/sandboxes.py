@@ -160,3 +160,60 @@ class Node:
             execution.kill()
             await whole(execution.wait())
             raise
+
+
+class ProcessNode:
+    """A node without Docker, for development only: install.sh and every turn run as processes on
+    this machine, with no isolation at all (`harnessgateway serve --dev`). Never for anyone else's
+    packages."""
+    image = "process"
+    gateway_url = ""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+
+    async def prepare(self) -> str:
+        return "process"
+
+    async def recover(self) -> None:
+        pass
+
+    def runtime_for(self, org: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
+                    egress: Sequence[str] = (), gateway_url: str = "", token: str = ""):
+        from .runtimes.process import ProcessExecution, host_env
+
+        class Runtime:
+            provider_url = None
+            token_path = None
+
+            async def start(self, spec: Spec):
+                env = {**host_env(), **spec.env}
+                env["PATH"] = f"{spec.env.get('PATH', '')}:{host_env().get('PATH', '/usr/bin:/bin')}"
+                return await ProcessExecution.spawn(list(spec.command), env=env, cwd=spec.workspace, input=spec.input,
+                                                    interactive=spec.interactive, timeout_s=spec.timeout_s, stop_signal=15)
+
+            async def recover(self) -> None:
+                pass
+        return Runtime()
+
+    async def tools_for(self, org: str, limits: Limits, folder: Path, config: Config, root: Path, image_id: str) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        tools, log = root / f"{folder.name}-process", root / f"{folder.name}-process.log"
+        async with locked(root / f".{tools.name}.lock"):
+            if (tools / MARKER).is_file():
+                return tools
+            shutil.rmtree(tools, ignore_errors=True)
+            (tools / "bin").mkdir(parents=True)
+            from .runtimes.process import ProcessExecution, host_env
+            env = {**host_env(), "HG_TOOLS": str(tools), "HG_HARNESS_DIR": str(folder), "HOME": str(tools)}
+            execution = await ProcessExecution.spawn(["bash", str(folder / "install.sh")], env=env, cwd=tools, input=b"", interactive=False,
+                                                     timeout_s=min(config.install_timeout_s, limits.install_timeout_s), stop_signal=15)
+            with open(log, "wb") as f:
+                async for event in execution.events():
+                    f.write(event.data)
+            outcome = await execution.wait()
+            if not outcome.ok:
+                shutil.rmtree(tools, ignore_errors=True)
+                raise InstallFailed(f"install.sh {describe(outcome)}; its log ends:\n{log.read_text(errors='replace')[-2000:]}")
+            (tools / MARKER).write_text(json.dumps({"image": "process"}))
+            return tools

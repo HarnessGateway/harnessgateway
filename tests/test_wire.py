@@ -21,11 +21,15 @@ def test_request_parses_routing_text_and_files():
     assert "characters" in r.for_trace()["input"][0]["content"][1]["file_data"]
     plain = wire.Request.parse({"model": "pi", "input": "just text", "store": False})
     assert (plain.provider, plain.model, plain.store, plain.files) == ("", "", False, {})
+    two = wire.Request.parse({"model": "pi/deepseek", "input": "the package's default model"})
+    assert (two.harness, two.provider, two.model) == ("pi", "deepseek", "")
+    assert wire.model_path("pi", "deepseek", "") == "pi/deepseek" and wire.model_path("pi", "", "") == "pi"
 
 
 @pytest.mark.parametrize("body,text", [
     ({"model": "x", "input": "hi", "temperature": "hot"}, "not a valid Responses request"),
-    ({"model": "a/b", "input": "hi"}, "model is a harness name"),
+    ({"model": "a/b/", "input": "hi"}, "model is a harness name"),
+    ({"model": "a//m", "input": "hi"}, "model is a harness name"),
     ({"model": "Bad", "input": "hi"}, "model is a harness name"),
     ({"model": "a", "input": ""}, "input is required"),
     ({"model": "a", "input": [{"role": "user", "content": [{"type": "input_file", "filename": "f", "file_data": "data:x;base64,!!"}]}]}, "not valid base64"),

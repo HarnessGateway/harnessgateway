@@ -28,7 +28,7 @@ from .errors import Invalid
 PARAMS = TypeAdapter(R.ResponseCreateParams)
 ITEM = TypeAdapter(R.ResponseOutputItem)
 USAGE = TypeAdapter(R.ResponseUsage)
-MODEL_FORM = "model is a harness name, or harness/provider/model"
+MODEL_FORM = "model is a harness name, harness/provider, or harness/provider/model"
 ENVELOPE = {"response.created", "response.in_progress", "response.queued", "response.completed", "response.failed", "response.incomplete"}
 FINAL = {"completed": "response.completed", "failed": "response.failed", "incomplete": "response.incomplete", "cancelled": "response.incomplete"}
 STATUSES = ("completed", "failed", "incomplete", "cancelled")
@@ -44,18 +44,21 @@ def refusal(e: ValidationError, what: str) -> Invalid:
 
 
 def parse_model(model: str) -> tuple[str, str, str]:
-    """`model` as (harness, provider, model): a bare harness name takes the package's defaults; the
-    full path names all three, the model last so it may hold slashes of its own."""
+    """`model` as (harness, provider, model): a bare harness name takes the package's defaults;
+    harness/provider takes the package's default model; the full path names all three, the model
+    last so it may hold slashes of its own."""
     parts = (model or "").split("/", 2)
     if len(parts) == 1 and NAME.fullmatch(parts[0] or ""):
         return parts[0], "", ""
+    if len(parts) == 2 and NAME.fullmatch(parts[0]) and NAME.fullmatch(parts[1]):
+        return parts[0], parts[1], ""
     if len(parts) == 3 and NAME.fullmatch(parts[0]) and NAME.fullmatch(parts[1]) and parts[2]:
         return parts[0], parts[1], parts[2]
     raise Invalid(MODEL_FORM)
 
 
 def model_path(harness: str, provider: str, model: str) -> str:
-    return f"{harness}/{provider}/{model}" if provider else harness
+    return f"{harness}/{provider}/{model}" if provider and model else f"{harness}/{provider}" if provider else harness
 
 
 def decode_file(file_data: str) -> bytes:

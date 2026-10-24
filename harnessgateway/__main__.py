@@ -1,7 +1,8 @@
 """The command line.
 
-    harnessgateway serve [--role api,gateway,worker | all]
-        Runs the roles named in one process, as the environment configures them (HG_*). The first
+    harnessgateway serve [--role api,gateway,worker | all] [--dev]
+        Runs the roles named in one process, as the environment configures them (HG_*); --dev runs
+        turns as plain processes without Docker, for developing packages on a laptop. The first
         boot of an `api` makes what a fresh platform lacks and prints it once, to stderr: the deployer
         key, and, with sign-up closed, the org HG_ORG with its owner HG_OWNER and the owner's key.
     harnessgateway init [--org NAME --owner NAME]
@@ -67,7 +68,7 @@ def first_boot(service, settings: Settings) -> list[str]:
     return lines
 
 
-async def run(settings: Settings) -> None:
+async def run(settings: Settings, dev: bool = False) -> None:
     from .api.app import Service, create_app
     service = Service(settings)
     first_boot(service, settings)
@@ -81,10 +82,14 @@ async def run(settings: Settings) -> None:
         tasks.append(asyncio.create_task(serve_gateway(Gateway(service.store, service.blobs), settings.gateway_host, settings.gateway_port)))
     if "worker" in settings.roles:
         from .runtimes.docker import owner_of
-        from .sandboxes import Node
+        from .sandboxes import Node, ProcessNode
         from .worker import Worker
-        node = Node(settings.base_image, owner_of(settings.data_dir), settings.runtime, settings.ca_file, settings.allow_private,
-                    root=settings.data_dir / "worker", gateway_port=settings.gateway_port if "gateway" in settings.roles else 0)
+        if dev:
+            print("DEV MODE: turns run as processes on this machine with no sandbox; only for packages you trust", file=sys.stderr, flush=True)
+            node = ProcessNode(settings.data_dir / "worker")
+        else:
+            node = Node(settings.base_image, owner_of(settings.data_dir), settings.runtime, settings.ca_file, settings.allow_private,
+                        root=settings.data_dir / "worker", gateway_port=settings.gateway_port if "gateway" in settings.roles else 0)
         worker = Worker(settings.control_url, node, settings.data_dir / "worker", name=settings.worker_name,
                         slots=settings.worker_slots, version=service_version(), join_token=service.join_token, ca_file=settings.ca_file,
                         gateway_url=os.environ.get("HG_GATEWAY_URL", "").rstrip("/"))
@@ -109,7 +114,7 @@ def service_version() -> str:
 def serve(args: argparse.Namespace) -> None:
     settings = Settings.from_env(args.role)
     master_key(settings)
-    asyncio.run(run(settings))
+    asyncio.run(run(settings, dev=args.dev))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -121,6 +126,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(run=init)
     p = sub.add_parser("serve", help="run one or more roles")
     p.add_argument("--role", default="all", help="api,gateway,worker or all")
+    p.add_argument("--dev", action="store_true", help="no Docker: turns run as processes here, unsandboxed (development only)")
     p.set_defaults(run=serve)
     args = parser.parse_args(argv)
     args.run(args)

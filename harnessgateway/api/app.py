@@ -452,7 +452,7 @@ def create_app(service: Service) -> FastAPI:
     @app.get("/v1/sessions/{sid}")
     def get_session(sid: str, who: Member = member) -> dict:
         s = sessions.session(who, sid)
-        return {**session_view(s), "turns": [sessions.response_object(r) for r in sessions.records_of(who, sid)]}
+        return {**session_view(s), "turns": [{**sessions.response_object(r), "text": r.text} for r in sessions.records_of(who, sid)]}
 
     @app.post("/v1/sessions/{sid}/interrupt")
     def interrupt(sid: str, body: SteerBody, who: Member = member) -> dict:
