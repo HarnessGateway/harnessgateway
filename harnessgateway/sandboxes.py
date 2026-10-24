@@ -167,10 +167,10 @@ class ProcessNode:
     this machine, with no isolation at all (`harnessgateway serve --dev`). Never for anyone else's
     packages."""
     image = "process"
-    gateway_url = ""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, gateway_url: str = ""):
         self.root = Path(root)
+        self.gateway_url = gateway_url                 # the gateway as a process on this machine reaches it
 
     async def prepare(self) -> str:
         return "process"
@@ -181,10 +181,16 @@ class ProcessNode:
     def runtime_for(self, org: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
                     egress: Sequence[str] = (), gateway_url: str = "", token: str = ""):
         from .runtimes.process import ProcessExecution, host_env
+        # no door here: the CLI calls the gateway itself, with the session token in a file of the turn's
+        rundir = next((p for p in writable if p.name == "run"), None) or (writable[-1] if writable else self.root)
+        rundir.mkdir(parents=True, exist_ok=True)
+        token_file = rundir / ".token"
+        token_file.write_text(token)
+        token_file.chmod(0o600)
 
         class Runtime:
-            provider_url = None
-            token_path = None
+            provider_base = self.gateway_url or gateway_url   # this node's own, else the job's; the worker appends the provider's path
+            token_path = token_file
 
             async def start(self, spec: Spec):
                 env = {**host_env(), **spec.env}

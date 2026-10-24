@@ -4,6 +4,13 @@ Every release is a section here, newest first, and the newest section's heading 
 A merge to `main` that adds a section releases it: the release workflow tags that version, builds
 the wheel and the image, and publishes the section as its notes.
 
+## [7.0.1]
+
+- `harnessgateway serve --dev` sends a turn's provider calls through the gateway: the node without a
+  door names the gateway as the provider's address and puts the session token in a file of the
+  turn, as the sandboxed runtime's door does, so a catalog package runs unchanged on a laptop.
+- The base-image workflow scans the image it just pushed through the runner's own daemon.
+
 ## [7.0.0]
 
 HarnessGateway, rebuilt around one idea: the platform provides the wire and the sandbox, and a

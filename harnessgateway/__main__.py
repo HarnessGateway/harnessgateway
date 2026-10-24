@@ -86,7 +86,7 @@ async def run(settings: Settings, dev: bool = False) -> None:
         from .worker import Worker
         if dev:
             print("DEV MODE: turns run as processes on this machine with no sandbox; only for packages you trust", file=sys.stderr, flush=True)
-            node = ProcessNode(settings.data_dir / "worker")
+            node = ProcessNode(settings.data_dir / "worker", gateway_url=f"http://127.0.0.1:{settings.gateway_port}")
         else:
             node = Node(settings.base_image, owner_of(settings.data_dir), settings.runtime, settings.ca_file, settings.allow_private,
                         root=settings.data_dir / "worker", gateway_port=settings.gateway_port if "gateway" in settings.roles else 0)
