@@ -293,6 +293,84 @@ What converges, which is what a portable package should seed first:
   package's home seeds and the session store live in a directory the platform creates for the
   tenant and keeps between turns, and a `previous_response_id` finds its session there.
 
+## Precedence: which mechanism a package uses when there are several
+
+Most request fields and most seeds can reach a harness more than one way. A package picks one,
+and the pick follows a rule rather than taste, because the point of a package is that an
+organization writes its instructions, skills, MCP servers and hooks once and runs them on any
+harness with as little change as possible. The rule:
+
+1. **Prefer the mechanism the most harnesses share.** A file nine harnesses read beats a flag one
+   harness has, even when the flag is more precise, because the same template then serves nine
+   packages.
+2. **Among equals, prefer a file over a flag over an environment variable.** Files live in the
+   package's git repository, diff cleanly and can be reviewed. Flags are built at invocation and
+   leave no trace. Environment is invisible.
+3. **Use a flag when the shared file is absent or documented as defective for that harness**, and
+   record why in the package manifest.
+4. **Per-request values are flags.** The prompt, the model, `previous_response_id`, the reasoning
+   level and `stream` change on every call, so they go on the command line whatever rule 2 says.
+   Standing organizational assets are files.
+
+The request's `instructions` field is the one that straddles both: it arrives per request, but
+the shared mechanism for it is a file. Rule 1 wins, so a package appends the request's
+`instructions` to `AGENTS.md` under its own heading each turn, and uses `--append-system-prompt`
+only where the file is not read.
+
+The ladders that follow, best first:
+
+| What | 1st | 2nd | 3rd | Last resort |
+|---|---|---|---|---|
+| Standing instructions | `AGENTS.md` in the workspace (nine of ten read it; Claude Code reads it when no `CLAUDE.md` exists, so a package never writes one) | the harness's own file (`.clinerules/*.md`, `SOUL.md`, `.omp/RULES.md`) | `--append-system-prompt TEXT` or its file form | `--system-prompt TEXT`, which replaces the prompt and drops rules on Cline and others |
+| Request `instructions` | appended to `AGENTS.md` under a heading | `--append-system-prompt` | `-c developer_instructions=` (Codex), `system-prompt` row (DeepSeek Harness) | `-s` on Cline, which discards the rules |
+| Skills | `.agents/skills/<name>/SKILL.md` (eight of ten) plus a copy at `.claude/skills/` (Claude Code; also read by Cline, Kilo Code, Oh My Pi), which together cover all ten | the harness's own directory (`.pi/skills/`, `.omp/skills/`, `<workspace>/skills/`) | `--skill PATH`, `-s SKILLS` | — |
+| MCP servers | one server list in the package, written as `{"mcpServers": {}}` JSON where that is native (`.mcp.json` for Claude Code and Command Code, `.pi/mcp.json`, `.omp/mcp.json`, Cline's settings file) | the same list rendered into `kilo.jsonc`, `config.toml`, `config.yaml`, `openclaw.json`, a `dsh` patch | `--mcp-config JSON`, `-c mcp_servers.…`, `--config-override` | `cline mcp add`-style commands run before the turn |
+| Hooks | the `{"PreToolUse": [{"matcher", "hooks": [{"type": "command", "command"}]}]}` shape, read by Claude Code, Codex, Command Code and, through its hooks rows, DeepSeek Harness | the same hooks rendered to Cline's per-event executables, Hermes's YAML list, OpenClaw's `HOOK.md` | Pi, Oh My Pi and Kilo Code TypeScript handlers (`pi.on("tool_call", ..)`, `tool.execute.before`) | — |
+| Permissions and tool restriction | the platform sandbox (always on, harness independent) | the harness's deny rules: `permissions.deny` as `Tool(pattern)`, Kilo Code's `permission` map, Codex's `.codex/rules/*.rules` and `-s read-only`, OpenClaw's `tools.deny`, Hermes's `approvals.deny`, `DSH_PERMISSION_MODE` | a `PreToolUse` hook that blocks | tool allowlist flags (`--tools`, `-t TOOLSETS`, `--tools-enable`) |
+| Provider and key | environment (`ANTHROPIC_BASE_URL` with `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL` with `OPENAI_API_KEY`) where the harness honours it, since the key never touches disk | the provider file in the home seeds (`models.json`, `models.yml`, `providers.json`, `kilo.jsonc`, `config.toml`, `openclaw.json`, a `dsh` patch) with the key as a variable reference | `-c`, `--config-override`, `cline auth` | — |
+| Continuation | the resume flag (`--resume`, `exec resume`, `-s`, `--session-id`), per request | a state directory kept per session (OpenClaw) | — | — |
+| Home directory | one directory per tenant, named by the harness's variable (`HERMES_HOME`, `CLAUDE_CONFIG_DIR`, `KILO_CONFIG_DIR`, `CLINE_DIR`, `PI_CODING_AGENT_DIR`, `CODEX_HOME`, `OMP_PROFILE`, `OPENCLAW_STATE_DIR`, `DSH_HOME`, `HOME`), holding the home seeds and the session store | — | — | — |
+
+Where the ladder lands on a defect, the package says so instead of pretending: Cline's `--id` does
+not resume a `--json` run, so the Cline package refuses `previous_response_id` until that changes;
+OpenClaw's `exec` cannot name a session, so its package keeps a `--state-dir` per session and
+documents that continuity is the directory, not an id.
+
+### Interrupt and steer
+
+Every one of the ten writes its session to disk as it runs, so a cancelled request loses
+nothing: the platform sends SIGINT, the response ends with `status: incomplete` and the session
+id in `metadata`, and the next request with `previous_response_id` continues. That is the one
+steering model the wire offers, because it works on all ten.
+
+Live steering, a new instruction injected while the agent is still working, needs a long-lived
+process with a command channel, and about half have one: Pi and Oh My Pi in `--mode rpc`
+(`steer`, `follow_up`, `abort`, `abort_and_prompt`), Hermes through its API server
+(`/v1/runs/{id}/steer`, `/stop`) and `hermes acp`, Claude Code by queuing further user messages
+over `--input-format stream-json`, Cline and DeepSeek Harness in ACP mode, Codex through its app
+server and Kilo Code through its own server (both still to be verified at the pinned versions).
+OpenClaw and Command Code interrupt and resume only. Four of the ten ship an Agent Client
+Protocol mode (Hermes, Cline, Oh My Pi, DeepSeek Harness), which is the candidate for a single
+steering adapter if the platform later offers live steering behind the same cancel-and-continue
+contract.
+
+### Guardrails
+
+Four layers, strongest first, and a package should use all four:
+
+1. the platform sandbox: container, filesystem and egress rules the platform enforces, which no
+   prompt and no harness setting can loosen;
+2. the harness's deny rules, named in the permissions row above;
+3. `PreToolUse` hooks, which block a tool call by exiting 2 (Claude Code, Codex, Command Code,
+   DeepSeek Harness), by `cancel: true` (Cline), by `fail_closed` (Hermes) or by throwing in a
+   handler (Pi, Oh My Pi, Kilo Code); Oh My Pi's `before_provider_request` is the one hook that
+   can rewrite the model request itself;
+4. `AGENTS.md`, which is soft but universal.
+
+Two traps: Cline turns hooks off under `-y`, so a package with hooks uses `--auto-approve true`;
+Codex and Hermes refuse untrusted hooks headlessly unless the package passes
+`--dangerously-bypass-hook-trust` or sets `HERMES_ACCEPT_HOOKS=1`.
+
 ## Sources
 
 The documentation each harness's cells were checked against, as of October 2026. Pi's and

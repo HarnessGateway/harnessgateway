@@ -27,8 +27,11 @@ The same from the SDK:
 the same workspace. `model` is `claude-code` for the default DeepSeek model, or
 `claude-code/deepseek-reasoner` and the like.
 
-[The Responses wire](docs/responses-wire.md) explains the idea, links the official schema, and maps every request
-field to the invocation of the ten most used harnesses and every response field to their output.
+[The Responses wire](docs/responses-wire.md) explains the idea, links the official schema, maps every request
+field to the invocation of the ten most used harnesses and every response field to their output, lists the
+files a package seeds into the workspace and home for each, and sets the precedence a package follows when a
+harness offers more than one way. The procedure that produced those tables is the
+[harness-mapping skill](.agents/skills/harness-mapping/SKILL.md), for adding a harness or bumping a version.
 
 ## What comes back
 
