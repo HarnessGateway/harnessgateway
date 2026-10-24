@@ -50,13 +50,13 @@ class Metering:
         """The turn's usage record, completed with what the node reported."""
         org = self.orgs.get(r.org)
         ceilings = org.ceilings
-        seconds = round(float(report.get("seconds", 0)), 1)
+        seconds = round(float(report.get("seconds", 0)), 3)           # milliseconds: a fast turn still costs something
         usage = self.records.get("usage", r.org, r.id) or {"calls": 0, "bytes_in": 0, "bytes_out": 0}
         tokens = {k: (r.usage or {}).get(k, 0) for k in ("input_tokens", "output_tokens", "total_tokens")}
         doc = {**usage, **tokens, "seconds": seconds, "at": r.ended or time.time(), "harness": r.harness, "team": r.team,
                "member": r.member, "status": r.status, "session": r.session,
-               "cpu_seconds": round(ceilings.cpus * seconds, 1),
-               "memory_gb_seconds": round(memory_bytes(ceilings.memory) / SIZES["g"] * seconds, 1),
+               "cpu_seconds": round(ceilings.cpus * seconds, 3),
+               "memory_gb_seconds": round(memory_bytes(ceilings.memory) / SIZES["g"] * seconds, 3),
                "egress_bytes": int(report.get("egress_bytes", 0)) + usage.get("bytes_out", 0) + usage.get("bytes_in", 0),
                "snapshot_bytes": int(report.get("snapshot_bytes", 0))}
         self.records.put("usage", r.org, r.id, doc)
@@ -107,9 +107,9 @@ class Metering:
 
 def totals(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     rows = list(rows)
-    return {"turns": len(rows), "seconds": round(sum(u.get("seconds", 0) for u in rows), 1),
-            "cpu_seconds": round(sum(u.get("cpu_seconds", 0) for u in rows), 1),
-            "memory_gb_seconds": round(sum(u.get("memory_gb_seconds", 0) for u in rows), 1),
+    return {"turns": len(rows), "seconds": round(sum(u.get("seconds", 0) for u in rows), 3),
+            "cpu_seconds": round(sum(u.get("cpu_seconds", 0) for u in rows), 3),
+            "memory_gb_seconds": round(sum(u.get("memory_gb_seconds", 0) for u in rows), 3),
             "egress_bytes": sum(u.get("egress_bytes", 0) for u in rows),
             "calls": sum(u.get("calls", 0) for u in rows), "bytes_in": sum(u.get("bytes_in", 0) for u in rows),
             "bytes_out": sum(u.get("bytes_out", 0) for u in rows),

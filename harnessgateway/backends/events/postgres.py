@@ -22,7 +22,7 @@ class PostgresEvents(RecordEvents):
 
     def append(self, org: str, rid: str, chunks: list[Chunk]) -> None:
         super().append(org, rid, chunks)
-        self.records._run(f"NOTIFY {CHANNEL}, %s", (f"{org}:{rid}",))
+        self.records._run("SELECT pg_notify(%s, %s)", (CHANNEL, f"{org}:{rid}"))   # NOTIFY itself takes no parameters
 
     async def wait(self, org: str, rid: str, seen: int, timeout_s: float) -> None:
         self._ensure_listener()
