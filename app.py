@@ -334,8 +334,8 @@ async def create_response(request: Request) -> Any:
 
     if body.get("stream"):
         def sse() -> Iterator[str]:                      # a sync generator: Starlette iterates it in a thread
-            for ev in events(t, relay()):
-                yield f"event: {ev.type}\ndata: {ev.model_dump_json()}\n\n"
+            for ev in events(t, relay()):               # warnings off: the SDK's event unions lag its item union
+                yield f"event: {ev.type}\ndata: {ev.model_dump_json(warnings=False)}\n\n"
         return StreamingResponse(sse(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
     await asyncio.to_thread(lambda: all(True for _ in relay()))
     if t.text:
