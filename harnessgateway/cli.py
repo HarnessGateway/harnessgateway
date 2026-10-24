@@ -171,7 +171,6 @@ def run_local(a: argparse.Namespace) -> None:
     """request.sh then response.sh, here, as the platform's runner would, against this machine's
     environment: the package author's inner loop."""
     from . import harness as contract, wire
-    from .execution import Spec
     from .runtimes.docker import TURN_SCRIPT
     from .runtimes.process import ProcessExecution, host_env
 

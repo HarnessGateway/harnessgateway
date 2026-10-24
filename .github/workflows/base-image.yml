@@ -1,0 +1,29 @@
+# The sandbox base image, rebuilt from the shipped Dockerfile weekly and on change, scanned, and
+# published. A node pulls ghcr.io/harnessgateway/harnessgateway-base when HG_BASE_IMAGE is empty and
+# builds the Dockerfile itself only when the pull fails.
+name: base-image
+on:
+  schedule: [{cron: "17 4 * * 1"}]
+  push:
+    branches: [main]
+    paths: [harnessgateway/runtimes/base.Dockerfile, .github/workflows/base-image.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image=ghcr.io/$(echo "${{ github.repository }}" | tr "[:upper:]" "[:lower:]")-base
+          docker buildx build --platform linux/amd64,linux/arm64 -f harnessgateway/runtimes/base.Dockerfile \
+            -t "$image:$(date +%Y%m%d)" -t "$image:latest" --push .
+      - name: Scan it (critical and high, with a fix available)
+        run: |
+          image=ghcr.io/$(echo "${{ github.repository }}" | tr "[:upper:]" "[:lower:]")-base:latest
+          docker run --rm aquasec/trivy:0.65.0 image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 "$image"

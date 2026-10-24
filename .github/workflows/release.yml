@@ -1,0 +1,53 @@
+# A release is a CHANGELOG.md section merged to main. The newest section's heading is the version
+# (pyproject.toml reads it from there too); when it has no tag yet, this tests that commit, builds
+# the wheel and the image, tags it vX.Y.Z, publishes a GitHub release with the wheel and the section
+# as its notes, and pushes the image to GitHub's registry as :X.Y.Z, :X and :latest. Nothing else
+# creates tags.
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  packages: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: astral-sh/setup-uv@v5
+      - name: Is this version released yet?
+        id: version
+        run: |
+          version=$(sed -n 's/^## \[\([^]]*\)\].*/\1/p' CHANGELOG.md | head -n 1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then echo "new=false" >> "$GITHUB_OUTPUT"; else echo "new=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Its notes
+        if: steps.version.outputs.new == 'true'
+        run: |
+          awk -v v="${{ steps.version.outputs.version }}" '$0 ~ "^## \\[" v "\\]" { on = 1; next } on && /^## \[/ { exit } on { print }' CHANGELOG.md > notes.md
+          test -s notes.md
+      - name: Test
+        if: steps.version.outputs.new == 'true'
+        run: uv run --extra dev pytest -q
+      - name: Build
+        if: steps.version.outputs.new == 'true'
+        run: uvx --from mkdocs-material mkdocs build --strict && uv build
+      - uses: docker/setup-qemu-action@v3
+        if: steps.version.outputs.new == 'true'
+      - uses: docker/setup-buildx-action@v3
+        if: steps.version.outputs.new == 'true'
+      - name: Image, for amd64 and arm64
+        if: steps.version.outputs.new == 'true'
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image=ghcr.io/$(echo "${{ github.repository }}" | tr "[:upper:]" "[:lower:]")
+          docker buildx build --platform linux/amd64,linux/arm64 -f deploy/Dockerfile \
+            -t "$image:${{ steps.version.outputs.version }}" -t "$image:${{ steps.version.outputs.major }}" -t "$image:latest" --push .
+      - name: Tag and publish
+        if: steps.version.outputs.new == 'true'
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh release create "v${{ steps.version.outputs.version }}" dist/* --target "$GITHUB_SHA" --title "v${{ steps.version.outputs.version }}" --notes-file notes.md

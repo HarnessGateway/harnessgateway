@@ -1,0 +1,111 @@
+# One file, two profiles, the same image.
+#
+#   docker compose --profile one-box up -d       one box: every role in one container, SQLite and a
+#                                                blob directory on the `hg-data` volume, Caddy for TLS
+#   docker compose --profile ha up -d            many: api+gateway behind Caddy, workers that join,
+#                                                Postgres and MinIO (or point HG_RECORDS / HG_BLOBS at
+#                                                any Postgres and any S3)
+#
+# Each container that runs turns inspects itself through the socket and mounts the daemon's own
+# paths into its sandboxes, so the data lives on a named volume. Set HG_DOMAIN for Caddy's certificate.
+name: harnessgateway
+
+x-env: &env
+  HG_SIGNUP: ${HG_SIGNUP:-closed}
+  HG_ORG: ${HG_ORG:-main}
+  HG_OWNER: ${HG_OWNER:-owner}
+  HG_DEPLOYER_KEY: ${HG_DEPLOYER_KEY:-}
+  HG_MASTER_KEY: ${HG_MASTER_KEY:-}
+  HG_JOIN_TOKEN: ${HG_JOIN_TOKEN:-}
+  HG_PUBLIC_URL: ${HG_PUBLIC_URL:-https://${HG_DOMAIN:-localhost}}
+  HG_BASE_IMAGE: ${HG_BASE_IMAGE:-}
+  HG_RUNTIME: ${HG_RUNTIME:-}
+  HG_ALLOW_PRIVATE: ${HG_ALLOW_PRIVATE:-0}
+  HG_SMTP_URL: ${HG_SMTP_URL:-}
+  HG_MAIL_FROM: ${HG_MAIL_FROM:-}
+  HG_GITHUB_CLIENT_ID: ${HG_GITHUB_CLIENT_ID:-}
+  HG_GITHUB_CLIENT_SECRET: ${HG_GITHUB_CLIENT_SECRET:-}
+  HG_GOOGLE_CLIENT_ID: ${HG_GOOGLE_CLIENT_ID:-}
+  HG_GOOGLE_CLIENT_SECRET: ${HG_GOOGLE_CLIENT_SECRET:-}
+
+services:
+  caddy:
+    image: caddy:2.9.1
+    profiles: [one-box, ha]
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment: {HG_DOMAIN: "${HG_DOMAIN:-localhost}"}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # one box
+  platform:
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:7}
+    profiles: [one-box]
+    restart: unless-stopped
+    command: ["serve", "--role", "all"]
+    environment:
+      <<: *env
+      HG_HOST: 0.0.0.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - hg-data:/data
+
+  # many boxes
+  api:
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:7}
+    profiles: [ha]
+    restart: unless-stopped
+    command: ["serve", "--role", "api,gateway"]
+    deploy: {replicas: 2}
+    environment:
+      <<: *env
+      HG_HOST: 0.0.0.0
+      HG_GATEWAY_URL: ${HG_GATEWAY_URL:-http://api:8081}     # what a turn is told; a worker with its own HG_GATEWAY_URL uses that
+      HG_RECORDS: ${HG_RECORDS:-postgresql://hg:hg@postgres/hg}
+      HG_BLOBS: ${HG_BLOBS:-s3://hg}
+      HG_S3_ENDPOINT: ${HG_S3_ENDPOINT:-http://minio:9000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-hg}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-hg-secret-change-me}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    depends_on: [postgres, minio]
+
+  worker:
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:7}
+    profiles: [ha]
+    restart: unless-stopped
+    command: ["serve", "--role", "worker"]
+    environment:
+      <<: *env
+      HG_CONTROL_URL: ${HG_CONTROL_URL:-http://api:8000}
+      HG_GATEWAY_URL: ${HG_GATEWAY_URL:-http://api:8081}     # the gateway over the compose network; the doors are put on it too
+      HG_WORKER_SLOTS: ${HG_WORKER_SLOTS:-4}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - hg-worker-data:/data
+    depends_on: [api]
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: [ha]
+    restart: unless-stopped
+    environment: {POSTGRES_USER: hg, POSTGRES_PASSWORD: hg, POSTGRES_DB: hg}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    profiles: [ha]
+    restart: unless-stopped
+    command: server /data
+    environment: {MINIO_ROOT_USER: hg, MINIO_ROOT_PASSWORD: hg-secret-change-me}
+    volumes: [minio-data:/data]
+
+volumes:
+  hg-data: {}
+  hg-worker-data: {}
+  caddy-data: {}
+  caddy-config: {}
+  postgres-data: {}
+  minio-data: {}

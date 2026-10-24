@@ -394,7 +394,7 @@ class Store:
         return h
 
     def _new_repo(self, org: str, name: str, team: str) -> Repo:
-        o = self.org(org)
+        self.org(org)                                 # the organization must exist
         check_name(name, "harness")
         if name in RESERVED:
             raise Invalid(f"{name} is a reserved name")
@@ -437,7 +437,7 @@ class Store:
 
     def fork_harness(self, org: str, name: str, into: str, author: str, team: str = "") -> Harness:
         """A copy of a harness, history and all, as another harness of the organization."""
-        src = self.harness(org, name)
+        self.harness(org, name)                       # the source must be visible
         repo = self.repo(org, name)
         check_name(into, "harness")
         if into in RESERVED or self.records.get("harness", org, into):

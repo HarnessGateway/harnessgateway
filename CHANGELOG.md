@@ -35,5 +35,10 @@ harness package decides everything else.
   session token for the key per request), uids per organization, snapshots per session.
 - **Tracing.** Every request and response through the wire, every steer and cancel, and every
   provider call the gateway relayed, kept per session.
+- **Distribution.** One image for every role (`ghcr.io/harnessgateway/harnessgateway`), an
+  installer script, compose files for one box and a fleet, a cloud-init for workers, the
+  documentation site served at `/docs`, and `serve --dev` to run the platform without Docker
+  while developing a package. The model path accepts `harness/provider` for the package's
+  default model.
 - **The `hg` client.** Sign in with an API key; manage providers and packages (`hg harness pull`,
   `push`, `fork`, `run` to develop a package locally); ask, stream, steer, cancel; rodeos.

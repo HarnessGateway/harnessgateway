@@ -1,7 +1,7 @@
 """Layer 3: organizations, members, teams, keys, providers, and harnesses as git repositories."""
 import pytest
 
-from fakes import archive, folder
+from fakes import archive
 from harnessgateway.blobs import DirBlobs
 from harnessgateway.errors import Conflict, Invalid, NotFound
 from harnessgateway.records import SqliteRecords

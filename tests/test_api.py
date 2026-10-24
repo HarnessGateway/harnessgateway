@@ -43,7 +43,6 @@ async def owner_client(transport, email="chase@acme.test", org=None) -> tuple[ht
     """An account signs up (open sign-up gives it an organization), mints a key; a client with it."""
     anon = httpx.AsyncClient(transport=transport, base_url="http://api.test")
     me = (await anon.post("/auth/signup", json={"email": email, "password": "password1", "name": "Chase"})).json()
-    cookie = anon.cookies.get("hg_session")
     org = me["current"]["org"]
     key = (await anon.post(f"/v1/members/{me['current']['member']}/keys", json={"label": "test"})).json()["secret"]
     await anon.aclose()
@@ -319,3 +318,94 @@ def test_rodeo(platform):
         assert board[0] == {"harness": "b", "runs": 1, "wins": 1}
         assert (await client.post("/v1/rodeos", json={"entries": [{"response": ra["id"]}]})).status_code == 400
     asyncio.run(with_worker(worker, go()))
+
+
+# accounts: the console's sign-in, over the same routes
+def test_accounts_sign_up_invite_switch_and_the_cookie_on_member_routes(platform):
+    app, transport, worker, node = platform
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=transport, base_url="http://api.test") as c:
+            assert (await c.get("/auth/providers")).json() == {"signup": "open", "password": True, "mail": False, "github": False, "google": False}
+            assert (await c.get("/auth/me")).status_code == 401
+            assert (await c.post("/auth/signup", json={"email": "chase@example.com", "password": "short"})).status_code == 400
+            r = await c.post("/auth/signup", json={"email": "Chase@Example.com", "password": "correct horse", "name": "Chase"})
+            assert r.status_code == 201, r.text
+            me = r.json()
+            assert me["account"]["email"] == "chase@example.com" and me["account"]["verified"] and me["account"]["has_password"]
+            assert me["current"] == {**me["current"], "org": "chase", "member": "chase", "role": "owner"}   # an organization of its own
+            assert "hg_session" in c.cookies
+            assert (await c.post("/auth/signup", json={"email": "chase@example.com", "password": "correct horse"})).status_code == 409
+            # the cookie is a member's credential on every member route; the deployer's routes still want the key
+            assert (await c.get("/v1/me")).json()["name"] == "chase"
+            assert (await c.put("/v1/providers/prov", json={"url": "https://api.example/v1", "api": "openai-chat", "key": "sk-real"})).status_code == 200
+            assert (await c.get("/v1/fleet")).status_code == 401
+            # an owner invites an email; the account that signs up with it joins as a member, not with an organization of its own
+            assert (await c.post("/v1/invites", json={"email": "dev@example.com", "role": "member"})).status_code == 200
+            assert [i["email"] for i in (await c.get("/v1/invites")).json()["data"]] == ["dev@example.com"]
+            async with httpx.AsyncClient(transport=transport, base_url="http://api.test") as dev:
+                r = await dev.post("/auth/signup", json={"email": "dev@example.com", "password": "another horse"})
+                assert r.status_code == 201, r.text
+                assert r.json()["current"] == {**r.json()["current"], "org": "chase", "member": "dev", "role": "member"}
+                assert (await dev.get("/v1/members")).status_code == 200
+                assert (await dev.post("/v1/invites", json={"email": "x@example.com"})).status_code == 403   # a member, not an owner
+                # an organization of their own, and switching between the two
+                assert (await dev.post("/auth/orgs", json={"name": "devs"})).json()["current"]["org"] == "devs"
+                assert sorted(t["org"] for t in (await dev.get("/auth/me")).json()["orgs"]) == ["chase", "devs"]
+                assert (await dev.post("/auth/switch", json={"org": "chase"})).json()["current"]["role"] == "member"
+                assert (await dev.post("/auth/switch", json={"org": "acme"})).status_code == 404
+                assert (await dev.post("/auth/logout")).status_code == 200
+                assert (await dev.get("/auth/me")).status_code == 401
+            assert (await c.get("/v1/invites")).json()["data"] == []            # spent
+            # wrong password, then the right one; a changed password
+            assert (await c.post("/auth/login", json={"email": "chase@example.com", "password": "wrong"})).status_code == 401
+            assert (await c.post("/auth/login", json={"email": "chase@example.com", "password": "correct horse"})).status_code == 200
+            assert (await c.post("/auth/password", json={"current": "wrong", "password": "new horse 2"})).status_code == 403
+            assert (await c.post("/auth/password", json={"current": "correct horse", "password": "new horse 2"})).status_code == 200
+            assert (await c.post("/auth/login", json={"email": "chase@example.com", "password": "new horse 2"})).status_code == 200
+            assert (await c.patch("/auth/account", json={"name": "C. Dovey"})).json()["name"] == "C. Dovey"
+            # the identity providers are not configured here
+            assert (await c.get("/auth/github")).status_code == 404
+    asyncio.run(scenario())
+
+
+def test_sign_up_is_closed_but_an_invitation_opens_it(tmp_path, vault):
+    settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="closed", deployer_key="hgd_deployer")
+    app = create_app(Service(settings, vault))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://api.test") as c:
+            assert (await c.post("/auth/signup", json={"email": "a@example.com", "password": "correct horse"})).status_code == 403
+            r = await c.post("/v1/orgs", json={"name": "acme", "owner": "ops"}, headers={"Authorization": "Bearer hgd_deployer"})
+            assert r.status_code == 200, r.text
+            key = r.json()["key"]["secret"]
+            assert (await c.post("/v1/invites", json={"email": "a@example.com", "role": "owner"}, headers={"Authorization": f"Bearer {key}"})).status_code == 200
+            r = await c.post("/auth/signup", json={"email": "a@example.com", "password": "correct horse"})
+            assert r.status_code == 201 and r.json()["current"]["org"] == "acme" and r.json()["current"]["role"] == "owner"
+    asyncio.run(go())
+
+
+def test_sign_up_with_mail_verifies_first(tmp_path, vault, monkeypatch):
+    sent = []
+    from harnessgateway.api import accounts as auth_routes
+    monkeypatch.setattr(auth_routes.Mail, "send", lambda self, to, subject, text: sent.append((to, subject, text)))
+    settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="open", smtp_url="smtp://mail.test:587", mail_from="hg@test")
+    app = create_app(Service(settings, vault))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://api.test") as c:
+            r = await c.post("/auth/signup", json={"email": "a@example.com", "password": "correct horse"})
+            assert r.status_code == 200 and r.json() == {"verify": True, "email": "a@example.com"} and "hg_session" not in c.cookies
+            assert (await c.post("/auth/login", json={"email": "a@example.com", "password": "correct horse"})).status_code == 403
+            assert len(sent) == 1 and sent[0][0] == "a@example.com"
+            token = sent[0][2].split("token=")[1].split()[0]
+            r = await c.get("/auth/verify", params={"token": token})
+            assert r.status_code == 303 and r.headers["location"] == "/app" and "hg_session" in c.cookies
+            assert (await c.get("/auth/me")).json()["account"]["verified"]
+            assert (await c.get("/auth/verify", params={"token": "nope"})).status_code == 400
+            # a reset link, then a new password
+            assert (await c.post("/auth/reset", json={"email": "a@example.com"})).status_code == 200
+            token = sent[-1][2].split("#reset=")[1].split()[0]
+            assert (await c.post("/auth/reset/confirm", json={"token": token, "password": "a new horse"})).status_code == 200
+            assert (await c.post("/auth/login", json={"email": "a@example.com", "password": "a new horse"})).status_code == 200
+    asyncio.run(go())

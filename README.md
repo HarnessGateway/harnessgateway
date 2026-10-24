@@ -1,62 +1,100 @@
+<p align="center"><img src="web/picky.png" width="140" alt=""></p>
+
 # HarnessGateway
 
-The OpenAI Responses API, backed by Claude Code running on DeepSeek. One FastAPI endpoint: a
-Responses request in, Claude Code runs the turn, a Responses response out, with Claude Code's
-tool calls as the schema's own output items. Any OpenAI SDK talks to it unchanged.
+**Every coding agent, one API.** HarnessGateway speaks the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
+and nothing else. Behind it, a *harness package* maps each request onto a coding-agent CLI
+(Claude Code, Codex, Pi, Hermes, Kilo, Cline, …) running in a sandbox the platform owns, with
+your provider keys injected for the length of one turn. Switch harnesses by changing the model name.
 
-    npm install -g @anthropic-ai/claude-code
-    pip install -e .[dev]
-    export DEEPSEEK_API_KEY=…
-    uvicorn app:app --port 8000
+```python
+from openai import OpenAI
+client = OpenAI(base_url="https://hg.example.com/v1", api_key="hg_…")
+r = client.responses.create(model="codex", instructions="Keep patches small.",
+                            input="Add a --dry-run flag to bin/deploy", stream=True)
+for event in r:
+    print(event.type)        # response.output_item.added, response.output_text.delta, … response.completed
+```
 
-A request:
+## Deploy
 
-    curl -s http://127.0.0.1:8000/v1/responses -H 'content-type: application/json' \
-      -d '{"model":"claude-code","input":"Create hello.py that prints hello and run it"}'
+```bash
+curl -fsSL https://raw.githubusercontent.com/HarnessGateway/harnessgateway/main/deploy/install.sh | bash
+```
 
-The same from the SDK:
+One container, every role, the data on a volume, sandboxes through the Docker socket. Or by hand:
 
-    from openai import OpenAI
-    client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="hg_anything")
-    r = client.responses.create(model="claude-code", input="Create hello.py that prints hello and run it")
-    print(r.output_text)
-    for item in r.output: print(item.type)
-    again = client.responses.create(model="claude-code", previous_response_id=r.id, input="Now make it print it twice.")
+```bash
+docker run -d --name harnessgateway --restart unless-stopped -p 8000:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data \
+  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:7
+docker logs harnessgateway         # the first boot's keys, shown once
+```
 
-`stream: true` streams the standard events. `previous_response_id` continues the conversation in
-the same workspace. `model` is `claude-code` for the default DeepSeek model, or
-`claude-code/deepseek-reasoner` and the like.
+`deploy/compose.yml` adds TLS with Caddy (`--profile one-box`) or a fleet with Postgres, S3 and
+workers that join (`--profile ha`). The documentation is served by the platform at `/docs/`, and
+the console at `/app`.
 
-[The Responses wire](docs/responses-wire.md) explains the idea, links the official schema, maps every request
-field to the invocation of the ten most used harnesses and every response field to their output, lists the
-files a package seeds into the workspace and home for each, and sets the precedence a package follows when a
-harness offers more than one way. The procedure that produced those tables is the
-[harness-mapping skill](.agents/skills/harness-mapping/SKILL.md), for adding a harness or bumping a version.
+## Then
 
-## What comes back
+1. **Sign in** at `/app` with the owner's key from the log, or create an account when sign-up is open.
+2. **Add a provider**: an endpoint and its key (Anthropic, OpenAI, DeepSeek, any compatible).
+   The key is sealed on arrival; no sandbox ever sees it.
+3. **Fork a harness** from the catalog, or write one. A harness is a git repository the platform
+   hosts: edit it in the console and commit, or `hg harness pull`, change, `hg harness push`.
+4. **Converse**: a conversation with a harness, its items streamed, the workspace's files and the
+   trace beside it; steer it mid-run, cancel it, continue it from any client with `previous_response_id`.
+5. **Run a rodeo**: one task across several harnesses side by side; pick the winner, keep the leaderboard.
 
-Claude Code's events become the schema's output items, nothing invented:
+## The division of labour
 
-| Claude Code did | items |
+| The package owns | The platform owns |
 |---|---|
-| thought | `reasoning` |
-| ran a command (Bash) | `shell_call`, then `shell_call_output` with stdout and the exit code |
-| wrote or edited a file (Write, Edit) | `apply_patch_call`, then `apply_patch_call_output` |
-| used any other tool | `function_call`, then `function_call_output` |
-| said something | `message` with `output_text` |
+| reading the request (`request.json`, verbatim) and building the CLI invocation | the wire: validation against the SDK's schema, streaming, continuation, background, steer, cancel |
+| the CLI's install (`install.sh`), its seeds (`AGENTS.md`, MCP config, skills, settings) | managed multi-tenant sandboxing: a fresh hardened container per turn, a uid per organization, one door out; the tenant controls only the egress list |
+| mapping the CLI's output onto Responses stream events | provider keys injected per request through a gateway that swaps a session token for the key |
+| the final shape, when the events are not enough (`response.sh`) | tracing of every request, response, steer, cancel and provider exchange |
+| | organizations, teams, members, keys; harness repositories with history; workspaces that persist; rodeos |
 
-`response.output_text` is the answer; `response.output` is the whole turn in order; `usage` has
-the token counts DeepSeek reported. `metadata.session_id` is Claude Code's session, and
-`metadata.workspace` the directory it worked in.
+## The catalog
 
-## Settings
+Eleven packages ship with the platform, each built from its CLI's own help and documentation and
+run against a live provider before release: a template plus Claude Code, Codex, Pi, Oh My Pi,
+Kilo Code, DeepSeek Harness, Hermes Agent, Cline, OpenClaw and Command Code. Where a CLI cannot
+do something yet (resume headlessly, stream its events) the package says so. The research behind
+them is [the Responses wire](docs/responses-wire.md): every request field mapped to each CLI's
+invocation, every response field to its output, the seeds each reads, and the precedence a package
+follows when a CLI offers several ways.
 
-| Variable | Meaning |
-|---|---|
-| `DEEPSEEK_API_KEY` | required |
-| `DEEPSEEK_BASE_URL` | default `https://api.deepseek.com/anthropic` |
-| `HG_MODEL` | the model when the request says just `claude-code`; default `deepseek-chat` |
-| `HG_DATA_DIR` | the workspaces and Claude Code's home; default a temporary directory |
+## Write a package
 
-`pytest` runs without a key or the CLI, on recorded Claude Code events; with both present it
-also makes one real turn.
+```
+harness.json      contract, the CLI's name and version, default provider and model, egress, timeouts, what it accepts
+install.sh        puts the CLI under $HG_TOOLS, once per commit
+request.sh        reads $HG_REQUEST, runs the CLI, prints Responses stream events
+response.sh       (optional) shapes output, usage and status at the end
+seeds/workspace/  copied into the workspace once per session
+seeds/home/       copied into $HOME every turn
+```
+
+```bash
+hg harness pull my-harness ./pkg
+hg harness run ./pkg --input "Create hello.txt"      # on your machine, no sandbox, your keys
+hg harness push my-harness ./pkg -m "map tool results"
+```
+
+[Write a package](docs/packages.md) is the contract; `.agents/skills/harness-package` is the
+procedure for writing one with a coding agent, and `.agents/skills/harness-mapping` the procedure
+for researching a CLI first.
+
+## Develop the platform
+
+```bash
+uv sync --extra dev
+uv run pytest -q                          # without Docker
+uv run pytest -q -m docker                # a real sandbox
+uv run harnessgateway serve --dev         # the platform without Docker, for the console and packages
+```
+
+[Contributing and releases](docs/contributing.md) has the layers and the release flow: a
+`CHANGELOG.md` section merged to `main` is a release. Apache-2.0.

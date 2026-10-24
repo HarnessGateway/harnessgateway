@@ -2,10 +2,8 @@
 through the whole platform (install.sh on the fake node, request.sh reading request.json, map.py's
 events becoming the response), including a continuation."""
 import asyncio
-import base64
 
 import httpx
-import pytest
 
 from harnessgateway import harness
 from harnessgateway.catalog import Catalog
