@@ -208,9 +208,9 @@ class Sessions:
             s = Session(new_id("sess"), who.org, who.name, h.name, version, time.time(), h.team,
                         req.text.strip().splitlines()[0][:TITLE_MAX] if req.text.strip() else "", req.store)
         provider_name = req.provider or inherited or config.provider
-        if not provider_name:
+        if not provider_name and config.needs_provider:
             raise Invalid("no provider: name one in the request's model path (harness/provider/model) or in harness.json's defaults")
-        provider = self.providers.get(who.org, provider_name)
+        provider = self.providers.get(who.org, provider_name) if provider_name else None   # a package without provider_env needs none
         rid = new_id("resp")
         files = ""
         if req.files:
@@ -220,7 +220,7 @@ class Sessions:
             files = turn_blob(s.org, s.id, rid, "files.tgz")
             self.blobs.put(files, pack_files(req.files))
         self.blobs.put(turn_blob(s.org, s.id, rid, "request.json"), json.dumps(req.body).encode())
-        r = Turn(rid, s.id, s.org, s.member, s.harness, version, provider.name, req.model or config.model, s.turn + 1,
+        r = Turn(rid, s.id, s.org, s.member, s.harness, version, provider.name if provider else "", req.model or config.model, s.turn + 1,
                  time.time(), req.previous, req.store, dict(req.metadata), text=req.text, instructions=req.body.get("instructions"),
                  team=s.team, background=req.background, files=files)
         s.responses.append(rid)

@@ -18,24 +18,29 @@ layer or below.
 |---|---|---|---|
 | 0 | `kernel` | `execution`, `files`, `vault`, `ids`, `limits`, and `errors` beside it | nothing of ours |
 | 1 | `contract` | `package`, `wire`, `turn.sh` | what a harness package is; the Responses schema; running one turn |
-| 2 | `backends` | `records`, `blobs`, `repos`, `sandboxes`, `egress` | one Protocol per directory, one module per implementation |
-| 3 | `domain` | `orgs`, `members`, `teams`, `keys`, `providers`, `harnesses`, `nodes`, `sessions`, `rodeos`, `catalog`, `accounts` | what the platform keeps and its rules |
-| 4 | `services` | `scheduler`, `intake`, `metering`, `worker`, `gateway` | what moves between the domain and the backends |
+| 2 | `backends` | `records` (sqlite, postgres), `blobs` (dir, s3), `repos` (git), `sandboxes` (docker, process), `egress` (door), `events` (records, postgres), `kms` (local, aws), `mail` (none, smtp), `billing` (none, stripe), `identity` (github, google, oidc) | one Protocol per directory, one module per implementation |
+| 3 | `domain` | `orgs`, `members`, `teams`, `keys`, `providers`, `harnesses`, `nodes`, `sessions`, `rodeos`, `catalog`, `accounts`, `webhooks` | what the platform keeps and its rules |
+| 4 | `services` | `scheduler`, `intake`, `metering`, `dataset`, `webhooks`, `housekeeping`, `worker`, `gateway` | what moves between the domain and the backends |
 | 5 | `api`, `cli` | the routes; `config`; `__main__`; the `hg` command | HTTP, settings, the command line |
 
 `contract/wire.py` is the only module that imports the OpenAI SDK; `contract/package.py` the only one
 that knows what is in a package; `services/gateway.py` the only process where a provider's key is in
 the clear. A backend directory's `__init__` holds its Protocol; `config.Settings` names the
 implementation of each, and a managed deployment and a self-hosted one differ in nothing but those
-names. `tests/conformance/` runs one suite per protocol against every implementation.
+names. `tests/conformance/` runs one suite per protocol against every implementation (S3 and KMS against a
+moto server, Postgres when `HG_TEST_POSTGRES` is set, as CI sets it). `harnessgateway doctor` tries
+each configured backend once on a real deployment.
 
 ## Tests
 
 `tests/fakes.py` has a fake node that runs packages as processes, so the API suite exercises
 whole turns, streams, continuations, steers, cancels, `response.sh` shaping, the harness
-repository, teams and rodeos without Docker. `tests/test_docker.py` runs a real sandbox: uid,
-capabilities, the token, the door, a steer, a stop. CI runs both, on SQLite and Postgres, plus
-lint, the console's scripts and a strict docs build.
+repository, teams, rodeos, webhooks, idempotency keys and the rate ceiling without Docker.
+`tests/test_docker.py` runs a real sandbox: uid, capabilities, the token, the door, a steer, a stop.
+`tests/test_upgrade.py` boots the previous major's data directory (`tests/fixtures/`).
+`tests/test_invariants.py` checks that every promise on the [Security](security.md) page names a
+test that exists. CI runs all of it, on SQLite and Postgres, plus lint, the console's scripts and a
+strict docs build.
 
 ## Packages
 

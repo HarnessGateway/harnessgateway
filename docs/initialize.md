@@ -25,8 +25,9 @@ key (replacing the old) and, with `--org`, that organization and its owner's key
 
 ## Two ways in
 
-**Accounts.** An account is an email and a password (or a GitHub or Google identity when the
-deployer configured one), and it belongs to one or more organizations as a member. The console
+**Accounts.** An account is an email and a password (or a GitHub, Google or single-sign-on
+identity when the deployer configured one: `GET /auth/providers` says which, as `{"signup",
+"password", "mail", "identities": [...]}`), and it belongs to one or more organizations as a member. The console
 signs in with an account. Sign-up creates an account and, when sign-up is open, an organization
 of its own; when sign-up is closed, only an invited email can sign up, and it lands in the
 organization that invited it.
@@ -49,7 +50,9 @@ instead of an organization's.
 </figure>
 
 An account can belong to several organizations; the switcher at the top of the sidebar moves
-between them, and "+ new organization" creates another (when sign-up is open).
+between them, and "+ new organization" creates another (when sign-up is open). A new organization
+starts on the free plan; on a deployment that shares traces, the sign-up page says so and the
+owner can turn it off under Organization.
 
 ## Verified email and password resets
 

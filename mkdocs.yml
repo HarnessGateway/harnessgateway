@@ -59,6 +59,7 @@ nav:
       - The API: api.md
   - Packages:
       - Write a package: packages.md
+      - Any CLI: any-cli.md
       - The catalog: catalog/index.md
       - Claude Code: catalog/claude-code.md
       - Cline: catalog/cline.md
@@ -73,9 +74,9 @@ nav:
       - Template: catalog/template.md
       - The Responses wire: responses-wire.md
   - Operate it:
-      - Organizations and limits: organizations.md
+      - Organizations, plans and limits: organizations.md
       - Data, metering and trace sharing: data.md
-      - Workers and scale: workers.md
+      - Nodes and scale: workers.md
       - Configuration: configuration.md
       - Security: security.md
       - Troubleshooting: troubleshooting.md

@@ -9,15 +9,20 @@ CI.
 | 2 | A sandbox reaches only its door; the door tunnels only to the package's egress hosts and forwards provider calls to the gateway. Private, loopback, link-local and multicast addresses are refused after resolution, and the connection is made to the address that was checked. | `test_door.py`, `test_docker.py::test_a_turn` (the cloud metadata address is refused) |
 | 3 | A sandbox runs as a uid unique to its scope, the organization or the team whose harness runs, with every capability dropped, no new privileges, a read-only root, and the organization's cpu, memory and pid ceilings; under a sandboxed runtime where the node has one. Two teams of one organization are as apart as two organizations. | `test_docker.py::test_a_turn`, `test_sandboxes.py` |
 | 4 | The platform never writes through a path a sandbox can create. Every write into a workspace, home, run or tools directory goes through one helper that refuses links at every component, and every read of a sandbox's output refuses anything but a plain file. | `test_files.py`, `test_harness.py` |
-| 5 | A worker can see only the turns it was handed: its credential claims, reports and posts output; the blob URLs it receives name one object each for a short while. It holds no database, bucket or cloud credential. | `test_api.py`, `test_blobs.py` |
+| 5 | A node can see only the turns it was handed: its credential claims, reports and posts output; the blob URLs it receives name one object each for a short while. It holds no database, bucket or cloud credential. | `test_api.py`, `conformance/test_blobs.py` |
 | 6 | Reach is organization, then team, then member: a member sees their own sessions and the sessions and harnesses of the teams they are in, an owner the organization's, nobody another organization's; every miss is a 404. | `test_api.py::test_harness_repository_and_teams`, `test_sessions.py` |
-| 13 | A turn belongs to the request that made it: a client that closes a foreground request (its stream, or a blocking call it stops waiting on) stops the turn gracefully, with no endpoint called; a background turn outlives its request and stops only on `cancel`. | `test_disconnect.py`, `test_sessions.py` |
 | 7 | Every number an organization could influence has a deployer ceiling on the organization record: cpus, memory, pids, timeouts, runs at once, disk, output, upload. | `test_store.py`, `test_api.py` |
 | 8 | A package's output is validated against the Responses schema before a client sees it; a client never receives an item the SDK cannot parse. | `test_wire.py`, `test_api.py::test_response_sh_shapes` |
 | 9 | The gateway relays only the API shape's own endpoints under the provider's path, and refuses a mixed or missing credential. | `test_api.py`, the gateway's `allowed` |
-| 10 | No cloud SDK is imported anywhere but the two backend modules, and a module imports only its layer or below. | `test_layers.py` |
+| 10 | No vendor SDK is imported anywhere but the backend module that wraps it (S3, KMS, Postgres) and the wire module (the OpenAI schema), and a module imports only its layer or below. | `test_layers.py` |
 | 11 | An account's password is kept only as a salted scrypt hash; its session is a signed, HttpOnly, SameSite=Strict cookie that names one member of one organization and dies with the organization's suspension; sign-up is open to everyone only when the deployer says so, or to an invited email; an identity provider's email counts only when that provider says it is verified. | `test_api.py` (accounts) |
 | 12 | A harness commit is made against the head the editor opened; two editors cannot silently overwrite each other, and a session runs the commit it started on. | `test_gitstore.py`, `test_store.py` |
+| 13 | A turn belongs to the request that made it: a client that closes a foreground request (its stream, or a blocking call it stops waiting on) stops the turn gracefully, with no endpoint called; a background turn outlives its request and stops only on `cancel`. | `test_disconnect.py`, `test_sessions.py` |
+| 14 | Traces leave an organization only when it shares them: sessions created after sharing was turned on, of organizations that share now, never an enterprise's; the organization, member and team replaced by pseudonyms that mean nothing off this deployment; the usage record stripped to its numbers. | `test_dataset.py`, `test_api.py::test_harness_repository_and_teams` |
+| 15 | A webhook delivery is signed with the webhook's secret over the timestamp and the body, so a receiver can refuse a forgery or a replay; the secret is shown once and kept sealed. | `test_webhooks.py` |
+| 16 | A package that names no `provider_env` runs with no token and no gateway: nothing in the sandbox can reach a provider, and the turn's only reach is the package's egress list. | `test_catalog.py::test_the_shell_package_runs_any_command_without_a_provider` |
+| 17 | A request past the organization's rate ceiling is refused before anything is queued; a request refused for its own faults does not count; an `Idempotency-Key` returns its sender's first turn and never another member's. | `test_intake.py`, `test_api.py::test_refusals` |
+| 18 | A data directory written by the previous major boots unchanged: the same master key opens what it sealed, and every record reads as it was. | `test_upgrade.py` |
 
 ## How a turn is contained
 
@@ -43,10 +48,12 @@ CI.
 
 ## What the deployer can and cannot see
 
-The deployer's routes return counts and sizes: turns, sandbox seconds, provider calls, bytes
-relayed, by organization, harness and day. They never return an organization's prompts, output,
-packages, keys or files. An organization's content is its own; a deployer who wants it has the
-data directory, which is why the data directory is the thing to protect.
+The deployer's routes return counts and sizes: turns, compute, egress, storage, tokens, by
+organization, harness and day. They never return an organization's prompts, output, packages, keys
+or files, with one exception the organization controls: the [dataset](data.md) of the organizations
+that share their traces. An organization's content is its own; a deployer who wants it has the data
+directory, which is why the data directory is the thing to protect. `tests/test_invariants.py`
+checks that every row of the table above names a test that exists.
 
 ## Reporting
 

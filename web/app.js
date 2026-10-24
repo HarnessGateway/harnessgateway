@@ -75,8 +75,9 @@ function login(note, mode = "signin", resetToken = "") {
   const signedIn = async (me) => { location.hash = ""; state.account = me.account; state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member }; state.kind = me.current.role; try { state.me.teams = (await api("GET", "/v1/me")).teams; } catch {} shell(); };
   const idp = h("div", { class: "idp" },
     a.github ? h("a", { class: "btn quiet", href: "/auth/github" }, svg("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "currentColor" }, svg("path", { d: "M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z" })), "Continue with GitHub") : null,
-    a.google ? h("a", { class: "btn quiet", href: "/auth/google" }, svg("svg", { viewBox: "0 0 24 24", width: 16, height: 16 }, svg("path", { fill: "#4285F4", d: "M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.4z" }), svg("path", { fill: "#34A853", d: "M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z" }), svg("path", { fill: "#FBBC05", d: "M6.4 13.9a6 6 0 0 1 0-3.8V7.5H3.1a10 10 0 0 0 0 9z" }), svg("path", { fill: "#EA4335", d: "M12 6c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 3.1 7.5l3.3 2.6C7.2 7.8 9.4 6 12 6z" })), "Continue with Google") : null);
-  const hasIdp = a.github || a.google;
+    a.google ? h("a", { class: "btn quiet", href: "/auth/google" }, svg("svg", { viewBox: "0 0 24 24", width: 16, height: 16 }, svg("path", { fill: "#4285F4", d: "M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.4z" }), svg("path", { fill: "#34A853", d: "M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z" }), svg("path", { fill: "#FBBC05", d: "M6.4 13.9a6 6 0 0 1 0-3.8V7.5H3.1a10 10 0 0 0 0 9z" }), svg("path", { fill: "#EA4335", d: "M12 6c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 3.1 7.5l3.3 2.6C7.2 7.8 9.4 6 12 6z" })), "Continue with Google") : null,
+    ...(a.identities || []).filter(n => n !== "github" && n !== "google").map(n => h("a", { class: "btn quiet", href: `/auth/${n}` }, icon("key"), `Continue with ${n === "sso" ? "single sign-on" : n}`)));
+  const hasIdp = (a.identities || []).length > 0;
   let body;
   if (mode === "reset") {
     body = [h("h2", {}, "Set a new password"), h("p", { class: "sub" }, "Then you are signed in."), field("New password", pw),
@@ -101,7 +102,8 @@ function login(note, mode = "signin", resetToken = "") {
       } else await signedIn(await api("POST", "/auth/login", { email: email.value.trim(), password: pw.value }));
     });
     for (const el of [email, pw, name]) el.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-    body = [h("h2", {}, signup ? "Create your account" : "Welcome back"), h("p", { class: "sub" }, signup ? (open ? "An organization of your own comes with it. Invite your team after." : "Sign-up is by invitation on this platform. Use the email an owner invited.") : "Sign in to your organization."),
+    body = [h("h2", {}, signup ? "Create your account" : "Welcome back"), h("p", { class: "sub" }, signup ? (open ? "An organization of your own comes with it, on the free plan. Invite your team after." : "Sign-up is by invitation on this platform. Use the email an owner invited.") : "Sign in to your organization."),
+      signup && open && state.health.trace_sharing ? h("p", { class: "sub", style: "font-size:12px" }, "Free organizations on this deployment share their session traces, pseudonymized, to train coding agents; an owner turns that off in Organization settings. ", h("a", { href: "/docs/data/", target: "_blank" }, "What is shared")) : null,
       tabs, hasIdp ? idp : null, hasIdp ? h("div", { class: "or" }, "or with email") : null,
       h("div", { class: "stack" }, signup ? field("Name", name) : null, field("Email", email), field("Password", pw)),
       h("button", { class: "act", style: "margin-top:14px", on: { click: submit } }, signup ? "Create account" : "Sign in"),
@@ -117,11 +119,11 @@ function login(note, mode = "signin", resetToken = "") {
 
 // the shell
 const NAV = {
-  member: [["Setup", [["Providers", "plug"], ["Harnesses", "box"], ["Catalog", "grid"]]], ["Build", [["Conversations", "chat"], ["Rodeo", "lasso"], ["Sessions", "clock"]]], ["Team", [["Teams", "team"], ["Members", "users"], ["Keys", "key"], ["Account", "user"]]]],
-  deployer: [["Platform", [["Dashboard", "chart"], ["Organizations", "building"], ["Workers", "server"]]]],
+  member: [["Setup", [["Start", "bolt"], ["Providers", "plug"], ["Harnesses", "box"], ["Catalog", "grid"]]], ["Build", [["Conversations", "chat"], ["Rodeo", "lasso"], ["Sessions", "clock"]]], ["Team", [["Teams", "team"], ["Members", "users"], ["Keys", "key"], ["Usage", "chart"], ["Organization", "building"], ["Account", "user"]]]],
+  deployer: [["Platform", [["Dashboard", "chart"], ["Organizations", "building"], ["Nodes", "server"]]]],
 };
 const VIEWS = {};
-function pages() { return NAV[state.kind === "deployer" ? "deployer" : "member"].flatMap(([, items]) => items.map(([p]) => p)).filter(p => p !== "Account" || state.account); }
+function pages() { return NAV[state.kind === "deployer" ? "deployer" : "member"].flatMap(([, items]) => items.map(([p]) => p)).filter(p => (p !== "Account" || state.account) && (p !== "Organization" || isOwner())); }
 function signOut() { sessionStorage.removeItem("hg.key"); state.key = ""; if (state.account) api("POST", "/auth/logout").catch(() => {}); state.account = null; state.me = null; state.kind = ""; location.hash = ""; boot(); }
 function shell(page, args = {}) {
   const all = pages();
@@ -185,3 +187,25 @@ function itemNode(item) {
     default: return d("fn", item.type, "", h("pre", {}, JSON.stringify(item, null, 1)));
   }
 }
+
+// Start: where a new organization stands, and the next step
+VIEWS.Start = async function start() {
+  const [providers, harnesses, sessions, members, keys, org] = await Promise.all(["/v1/providers", "/v1/harnesses", "/v1/sessions", "/v1/members", "/v1/keys", "/v1/org"].map(p => api("GET", p)));
+  const steps = [
+    ["Add a provider", "a model endpoint and its key; the key is sealed on arrival and no sandbox ever sees it", providers.data.length > 0, "Providers", isOwner()],
+    ["Fork or write a harness", "a package from the catalog, or any CLI of yours; a git repository the platform hosts", harnesses.data.length > 0, "Catalog", true],
+    ["Have a conversation", "a turn in a sandbox, the workspace beside it; or call POST /v1/responses with the snippet below", sessions.data.length > 0, "Conversations", true],
+    ["Mint an API key", "any OpenAI SDK talks to this platform with it", keys.data.length > 0, "Keys", true],
+    ["Invite your team", "members, teams that own harnesses, owners who run the organization", members.data.length > 1, "Members", isOwner()],
+  ];
+  const done = steps.filter(s => s[2]).length;
+  const row = ([title, text, ok, page, may]) => h("div", { class: "row between", style: "padding:10px 0;border-bottom:1px solid var(--line)" },
+    h("div", { class: "row" }, h("span", { class: "tag " + (ok ? "ok" : "") , style: "min-width:54px;text-align:center" }, ok ? "done" : "next"), h("div", {}, h("b", {}, title), h("div", { class: "muted" }, text))),
+    may ? h("button", { class: ok ? "ghost small" : "act small", on: { click: () => shell(page) } }, ok ? "open" : "go") : h("span", { class: "muted" }, "an owner does this"));
+  const snippet = `from openai import OpenAI\nclient = OpenAI(base_url="${location.origin}/v1", api_key="hg_…")\nr = client.responses.create(model="${harnesses.data[0]?.name || "my-harness"}", input="Create hello.py that prints hello and run it")\nprint(r.status, r.output_text)`;
+  return h("div", {}, head(`Welcome, ${state.me.name}`, `${org.title || org.name} · ${org.plan} plan · ${done} of ${steps.length} steps done`),
+    h("div", { class: "grid-2" },
+      h("div", { class: "card" }, h("h2", {}, "Getting to a first turn"), ...steps.map(row)),
+      h("div", {}, h("div", { class: "card" }, h("h2", {}, "From any OpenAI SDK"), h("pre", { class: "light" }, snippet), h("p", { class: "muted" }, "The model is the harness name, or harness/provider/model. Stream, continue with previous_response_id, run in the background, steer, cancel: the Responses API, as the SDK knows it."), h("a", { href: "/docs/requests/" }, "Requests, in full →")),
+        h("div", { class: "card" }, h("h2", {}, "What this costs"), h("p", { class: "dim" }, "The platform meters the sandbox's compute, the bytes it sends out and the storage it keeps. Tokens are between you and your provider: shown, never billed here."), org.trace_sharing ? h("p", { class: "dim" }, "This organization shares its session traces, pseudonymized, to train coding agents. ", isOwner() ? h("a", { href: "#", on: { click: (e) => { e.preventDefault(); shell("Organization"); } } }, "Change that in Organization settings.") : null) : null, h("a", { href: "#", on: { click: (e) => { e.preventDefault(); shell("Usage"); } } }, "Usage →")))));
+};

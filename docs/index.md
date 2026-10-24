@@ -1,9 +1,10 @@
 # HarnessGateway
 
 HarnessGateway speaks the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
-and nothing else. Behind it, a *harness package* maps each request onto a coding-agent CLI (Claude
-Code, Codex, Pi, Hermes, Kilo, Cline, …) running in a sandbox the platform owns, with your
-provider keys injected for the length of one turn. Switch harnesses by changing the model name.
+and nothing else. Behind it, a *harness package* an organization owns maps each request onto a
+command line, usually a coding-agent CLI (Claude Code, Codex, Pi, Hermes, Kilo, Cline, …), running
+in a sandbox the platform owns, with the organization's provider keys injected for the length of
+one turn. Switch harnesses by changing the model name; wrap [any CLI](any-cli.md) the same way.
 
 ```python
 from openai import OpenAI
@@ -13,22 +14,27 @@ for event in r:
     print(event.type)
 ```
 
-## The division of labour
+## The bet
 
-**The package owns the mapping.** A package is a git repository your organization keeps on the
-platform: `harness.json`, `install.sh`, `request.sh`, an optional `response.sh`, and the *seeds*
-(files the CLI reads from the workspace and the home, such as `AGENTS.md` and an MCP config). The
-client's request is handed to `request.sh` whole, as `request.json`; the package reads what its CLI
-can use and prints Responses stream events as the CLI runs. Nothing in between invents a schema.
-Fork a package from the catalog, edit it in the console, commit; or `hg harness pull`, change it,
-`hg harness push`.
+**Harness packages are corporate assets.** How an organization runs its agents (the CLI, its
+version, the instructions, the tools, the MCP servers, the seeds) is a git repository the
+organization keeps on the platform, forked from the catalog or written from scratch, edited in the
+console, pushed from the command line, owned by a team. The platform never decides any of it.
 
-**The platform owns everything else.** The wire (validation against the SDK's own schema, streaming,
-`previous_response_id`, background turns, steering and cancel), managed multi-tenant sandboxing
-(a fresh hardened container per turn; the tenant controls only the egress list), provider keys that
-never enter a sandbox, tracing of every request and response, the organization and team hierarchy,
-conversations with a workspace view, and rodeos that run one task across several harnesses so you
-can pick the winner.
+**The platform provides the execution.** Every turn runs in a fresh hardened sandbox as a uid of
+its organization or team, with one door out, provider keys that never enter it, and a workspace that
+persists for the session. The wire is the Responses API: validated against the SDK's schema,
+streamed, continued with `previous_response_id`, run in the background, steered, cancelled, or
+stopped by closing the request. Everything is traced, metered and kept.
+
+**One product, two deployments.** The managed platform and a self-hosted one run the same image;
+they differ in the backends their environment names (SQLite or Postgres, a directory or S3, a
+master key or a KMS, no billing or a billing system) and in who the deployer is. The platform bills
+compute, egress and storage; tokens are between an organization and its provider.
+
+**Traces, when shared.** An organization on a free or team plan may share the traces of its
+sessions, pseudonymized, for the deployer to train coding agents on; an enterprise organization
+never does. [Data, metering and trace sharing](data.md) says exactly what that means.
 
 ## In this documentation
 
@@ -38,8 +44,8 @@ can pick the winner.
 | use it | [The console](console.md), [Providers](providers.md), [Harnesses](harnesses.md), [Requests](requests.md) |
 | talk to a harness, compare harnesses | [Conversations and sessions](conversations.md), [Rodeo](rodeo.md) |
 | work as a team | [Teams, members and keys](teams.md) |
-| script it | [The hg command line](cli.md), [The API](api.md) |
-| write or change a package | [Write a package](packages.md), [The catalog](catalog/index.md), [The Responses wire](responses-wire.md) |
-| operate it | [Organizations and limits](organizations.md), [Workers and scale](workers.md), [Configuration](configuration.md), [Security](security.md) |
+| script it, call it from an agent | [The hg command line](cli.md), [The API](api.md), [retries and webhooks](requests.md#for-agents-retries-and-webhooks) |
+| write or change a package, wrap a CLI | [Write a package](packages.md), [Any CLI](any-cli.md), [The catalog](catalog/index.md), [The Responses wire](responses-wire.md) |
+| operate it | [Organizations, plans and limits](organizations.md), [Nodes and scale](workers.md), [Configuration](configuration.md), [Data](data.md), [Security](security.md) |
 
 The platform is Apache-2.0, at [github.com/HarnessGateway/harnessgateway](https://github.com/HarnessGateway/harnessgateway).

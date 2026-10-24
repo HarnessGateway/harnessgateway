@@ -52,16 +52,17 @@ class Scheduler:
     def job(self, r: Turn, ceilings) -> dict[str, Any]:
         s = self.sessions.session_by_id(r.session)
         config = self.harnesses.config_at(r.org, r.harness, r.version)
-        provider = self.providers.get(r.org, r.provider)
+        provider = self.providers.get(r.org, r.provider) if r.provider else None   # none: the package runs without a gateway
         timeout = min(config.timeout_s, ceilings.run_timeout_s)
-        token = self.providers.issue_token(r.org, provider.name, s.id, r.id, provider.api, timeout + 120)
+        token = self.providers.issue_token(r.org, provider.name, s.id, r.id, provider.api, timeout + 120) if provider else ""
         home = home_blob(r.org, r.member, r.harness)
         get, put = self.blobs.presign_get, self.blobs.presign_put
         ttl = int(timeout) + 600
         return {"id": r.id, "session": s.id, "org": r.org, "team": r.team, "member": r.member, "harness": r.harness, "version": r.version,
                 "turn": r.turn, "new_session": r.turn == 1, "previous": r.previous or "", "model": r.model,
                 "store": r.store, "config": config.as_json(), "limits": ceilings.as_dict(), "timeout_s": timeout, "token": token,
-                "provider": {"name": provider.name, "api": provider.api, "path": provider.path, "url": PROVIDER_URL + provider.path},
+                "provider": {"name": provider.name, "api": provider.api, "path": provider.path, "url": PROVIDER_URL + provider.path} if provider
+                else {"name": "", "api": "", "path": "", "url": ""},
                 "gateway_url": self.gateway_url, "snapshot": s.snapshot,
                 "urls": {"folder": get(self.harnesses.blob_key(r.org, r.harness, r.version), ttl),
                          "request": get(turn_blob(r.org, s.id, r.id, "request.json"), ttl),

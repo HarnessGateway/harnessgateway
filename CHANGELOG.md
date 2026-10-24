@@ -4,6 +4,64 @@ Every release is a section here, newest first, and the newest section's heading 
 A merge to `main` that adds a section releases it: the release workflow tags that version, builds
 the wheel and the image, and publishes the section as its notes.
 
+## [8.0.0]
+
+The platform, rebuilt for production around the bet: harness packages are an organization's
+assets, the platform provides the sandboxed execution and the common wire, the managed deployment
+and a self-hosted one are the same product, and what is metered is compute, egress and storage,
+never tokens. Any CLI runs the same way a coding agent does. A 7.1 data directory boots unchanged.
+
+- **The tree is layered and every swappable part is a backend.** `kernel` (execution, files, the
+  vault, ids, limits), `contract` (the package, the wire, the turn), `backends` (one Protocol per
+  directory, one module per implementation), `domain`, `services`, `api`. `tests/test_layers.py`
+  holds the import rule; `tests/conformance/` runs one suite per protocol over every implementation.
+  New backends: events (records polling, Postgres `NOTIFY` for followers across replicas), key
+  management (a local master key, an AWS KMS envelope), mail (none, SMTP), billing (none, Stripe
+  meter events), identity (GitHub, Google, any OpenID Connect issuer). `config.Settings` names each;
+  `harnessgateway doctor` tries each one named and prints a line per backend.
+- **Metering.** A turn's usage is the compute the sandbox reserved for its wall time (`cpu_seconds`,
+  `memory_gb_seconds`), the bytes it sent out through the door and the gateway (`egress_bytes`),
+  the snapshot it wrote, and the tokens the provider counted (shown, never billed). Storage is
+  sampled daily from blob sizes. `GET /v1/usage` is the organization's view (an owner's whole, a
+  member's own and their teams'), with rows per day, harness, team, member and session and the
+  meaning of each meter; the deployer's platform-wide view is `/v1/platform/usage` and
+  `/v1/orgs/{name}/usage`. With `HG_BILLING=stripe`, every reading reaches the billing system for
+  the organization's `billing_id`.
+- **Plans.** `free`, `team` and `enterprise` bring their ceilings (`requests_per_minute` is new);
+  the deployer sets the plan and any ceiling. An enterprise organization never shares traces.
+- **Trace sharing and the dataset.** An owner turns sharing on or off for the organization; it is
+  dated, so only sessions from then on are in it, and turning it off ends it at once. With
+  `HG_TRACE_SHARING=1`, organizations that sign up on the free plan share until an owner says
+  otherwise, and the sign-up page says so. `GET /v1/dataset` exports, one JSON line per session,
+  the request, the response, the steers, the usage numbers and the provider captures verbatim, with
+  the organization, member and team replaced by pseudonyms that mean nothing off this deployment.
+  `docs/data.md` says what is kept, metered and shared.
+- **The API for agents.** `Idempotency-Key` makes a retried request return its sender's first turn
+  for a day. Past the organization's rate ceiling the answer is `429` with `Retry-After`, before
+  anything is queued; a request refused for its own faults does not count. Owners register webhooks
+  (`/v1/webhooks`) and get the signing secret once; every final response is posted to each as an
+  event signed over the timestamp and the body, retried after 1, 5 and 25 seconds, then counted
+  against the webhook. A queued turn waits three seconds for the node that holds its session's
+  trees, then goes to any live node.
+- **Any CLI.** A package whose `harness.json` has `"provider_env": {}` runs with no token and no
+  gateway; the catalog's new `shell` package runs the request's input as a script in the session's
+  workspace and answers with what it printed, with no provider registered at all. `docs/any-cli.md`.
+- **Nodes.** The machines that run turns are nodes (the `worker` role is their process); the
+  deployer's console says so. Housekeeping fails lost turns and samples storage from every `api`.
+- **The console.** A Start page with the checklist to a first turn and the API snippet; Usage with
+  every meter and its meaning; Organization settings with the plan, trace sharing and webhooks; an
+  `api` tab in a conversation that continues the very same session from code; the deployer's
+  dashboard by meter with the dataset's size, plans and trace sharing per organization, Nodes.
+  Sign-in offers any configured identity provider, single sign-on included.
+- **Deploy.** `deploy/compose.yml` defaults to Postgres, MinIO, two API replicas behind Caddy and a
+  node that joins; `--profile one-box` is the small shape. The image is `:8`.
+- **Proofs.** `tests/test_upgrade.py` boots a 7.1.0 data directory (`tests/fixtures/`);
+  `tests/test_invariants.py` checks that every promise on the Security page names a test that
+  exists; new promises cover the dataset, webhooks, provider-less packages, the ceiling and the
+  upgrade.
+- Routes moved: the deployer's `GET /v1/usage` is `GET /v1/platform/usage`. `/auth/providers`
+  gains `identities`. Everything else on the wire is as in 7.1.
+
 ## [7.1.0]
 
 - **Closing the request stops the turn.** A turn belongs to the request that made it: when a client

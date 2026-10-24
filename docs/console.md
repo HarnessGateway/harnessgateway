@@ -6,12 +6,13 @@ organization proceeds.
 
 | Section | Pages | What for |
 |---|---|---|
-| Setup | Providers, Harnesses, Catalog | the endpoints and keys; the organization's packages with an editor; the shipped packages to fork |
-| Build | Conversations, Rodeo, Sessions | talk to a harness with its workspace beside it; compare harnesses; every session with its trace |
-| Team | Teams, Members, Keys, Account | who is in the organization and what they own |
+| Setup | Start, Providers, Harnesses, Catalog | the checklist to a first turn and the API snippet; the endpoints and keys; the organization's packages with an editor; the shipped packages to fork |
+| Build | Conversations, Rodeo, Sessions | talk to a harness with its workspace beside it (and the `api` tab to continue the same session from code); compare harnesses; every session with its trace |
+| Team | Teams, Members, Keys, Usage, Organization, Account | who is in the organization and what they own; what it used, with what each meter means; the title, the plan, trace sharing and webhooks (owners) |
 
-The deployer's key opens a different console: Dashboard (usage, counts only), Organizations
-(create, suspend, limits) and Workers (the fleet).
+The deployer's key opens a different console: Dashboard (usage by meter, the dataset's size),
+Organizations (create with a plan, suspend, limits, plan, trace sharing, billing id, per-organization
+usage) and Nodes (the fleet).
 
 <figure class="shot" markdown>
 ![The catalog](assets/console/catalog.png)

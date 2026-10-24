@@ -74,6 +74,11 @@ class Config:
     def egress(self) -> tuple[str, ...]:
         return tuple(sorted({*self.install_egress, *self.run_egress}))
 
+    @property
+    def needs_provider(self) -> bool:
+        """A package that names no provider_env runs without a provider: no token, no gateway, any CLI."""
+        return bool(self.key_env or self.url_env)
+
 
 def _text(d: dict, key: str, default: str = "") -> str:
     v = d.get(key, default)

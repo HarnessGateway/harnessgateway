@@ -1,13 +1,15 @@
-# One file, two profiles, the same image.
+# One file, the same image, two shapes.
 #
+#   docker compose up -d                         the default: two api+gateway replicas behind Caddy,
+#                                                Postgres for the records, MinIO for the blobs, a node
+#                                                that joins; point HG_RECORDS / HG_BLOBS at any Postgres
+#                                                and any S3 to use managed services instead
 #   docker compose --profile one-box up -d       one box: every role in one container, SQLite and a
 #                                                blob directory on the `hg-data` volume, Caddy for TLS
-#   docker compose --profile ha up -d            many: api+gateway behind Caddy, workers that join,
-#                                                Postgres and MinIO (or point HG_RECORDS / HG_BLOBS at
-#                                                any Postgres and any S3)
 #
 # Each container that runs turns inspects itself through the socket and mounts the daemon's own
 # paths into its sandboxes, so the data lives on a named volume. Set HG_DOMAIN for Caddy's certificate.
+# `docker compose run --rm api doctor` checks every backend the environment names.
 name: harnessgateway
 
 x-env: &env
@@ -27,11 +29,19 @@ x-env: &env
   HG_GITHUB_CLIENT_SECRET: ${HG_GITHUB_CLIENT_SECRET:-}
   HG_GOOGLE_CLIENT_ID: ${HG_GOOGLE_CLIENT_ID:-}
   HG_GOOGLE_CLIENT_SECRET: ${HG_GOOGLE_CLIENT_SECRET:-}
+  HG_OIDC_ISSUER: ${HG_OIDC_ISSUER:-}
+  HG_OIDC_CLIENT_ID: ${HG_OIDC_CLIENT_ID:-}
+  HG_OIDC_CLIENT_SECRET: ${HG_OIDC_CLIENT_SECRET:-}
+  HG_OIDC_NAME: ${HG_OIDC_NAME:-sso}
+  HG_KMS: ${HG_KMS:-local}
+  HG_KMS_KEY_ID: ${HG_KMS_KEY_ID:-}
+  HG_BILLING: ${HG_BILLING:-none}
+  HG_STRIPE_KEY: ${HG_STRIPE_KEY:-}
+  HG_TRACE_SHARING: ${HG_TRACE_SHARING:-0}
 
 services:
   caddy:
     image: caddy:2.9.1
-    profiles: [one-box, ha]
     restart: unless-stopped
     ports: ["80:80", "443:443"]
     environment: {HG_DOMAIN: "${HG_DOMAIN:-localhost}"}
@@ -42,7 +52,7 @@ services:
 
   # one box
   platform:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:7}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}
     profiles: [one-box]
     restart: unless-stopped
     command: ["serve", "--role", "all"]
@@ -53,10 +63,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - hg-data:/data
 
-  # many boxes
+  # the default: a control plane over Postgres and S3, nodes that join
   api:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:7}
-    profiles: [ha]
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}
     restart: unless-stopped
     command: ["serve", "--role", "api,gateway"]
     deploy: {replicas: 2}
@@ -73,8 +82,7 @@ services:
     depends_on: [postgres, minio]
 
   worker:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:7}
-    profiles: [ha]
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}
     restart: unless-stopped
     command: ["serve", "--role", "worker"]
     environment:
@@ -89,14 +97,12 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    profiles: [ha]
     restart: unless-stopped
     environment: {POSTGRES_USER: hg, POSTGRES_PASSWORD: hg, POSTGRES_DB: hg}
     volumes: [postgres-data:/var/lib/postgresql/data]
 
   minio:
     image: minio/minio:RELEASE.2025-02-07T23-21-09Z
-    profiles: [ha]
     restart: unless-stopped
     command: server /data
     environment: {MINIO_ROOT_USER: hg, MINIO_ROOT_PASSWORD: hg-secret-change-me}

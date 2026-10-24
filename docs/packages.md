@@ -157,3 +157,12 @@ host); during a turn, `run.egress` plus, implicitly, the provider through the ga
 resolves names itself, refuses private, loopback, link-local and multicast answers, and connects
 to the address it checked. A CLI that phones home to a host not on the list simply cannot; the
 door's log is kept with the turn.
+
+## Without a provider
+
+A package whose `harness.json` has `"provider_env": {}` names no provider: the turn is issued no
+session token and no gateway, `HG_PROVIDER_URL` and `HG_PROVIDER_KEY_FILE` are empty, and nothing
+in the sandbox can reach a model provider. A request to it needs no provider in its model path and
+the organization needs none registered. This is how [any CLI](any-cli.md) that is not an agent runs,
+and how a package with its own credentials, carried in its seeds under the organization's
+responsibility, would.

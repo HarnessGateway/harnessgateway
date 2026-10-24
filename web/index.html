@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HarnessGateway</title>
-<meta name="description" content="One Responses API in front of every coding agent. Harness packages map the request onto the CLI; the platform provides the wire, the sandbox, the keys, the trace and the rodeo.">
+<meta name="description" content="One Responses API in front of every coding agent, or any CLI. Your harness packages map the request onto the command line; the platform provides the wire, the sandbox, the keys, the trace and the rodeo. Self-hosted or managed, the same product.">
 <link rel="icon" href="/web/favicon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -20,7 +20,7 @@
 <section class="hero">
   <div>
     <h1>Every coding agent, <em>one API</em>.</h1>
-    <p class="lead">HarnessGateway speaks the OpenAI Responses API and nothing else. Behind it, a harness package maps each request onto a coding-agent CLI running in a sandbox with your provider keys, your instructions and your tools. Switch harnesses by changing the model name.</p>
+    <p class="lead">HarnessGateway speaks the OpenAI Responses API and nothing else. Behind it, a harness package your organization owns maps each request onto a coding-agent CLI, or any command line, running in a sandbox with your provider keys, your instructions and your tools. Switch harnesses by changing the model name.</p>
     <div class="row">
       <a class="btn act" href="/app">Create an account</a>
       <a class="btn quiet" href="#deploy">Deploy your own</a>
@@ -47,10 +47,10 @@ for event in r: print(event.type)
 </section>
 
 <section class="band alt" id="catalog"><div>
-  <h2>Eleven packages, verified</h2>
+  <h2>Twelve packages, verified</h2>
   <p class="lead">Each catalog package was run against a live provider on the day it shipped: a first turn that writes a file, a second turn that recalls it, and a streamed turn. The checks are recorded in the package and shown in the console.</p>
   <div class="wall">
-    <span>Claude Code <i>✓</i></span><span>Codex <i>✓</i></span><span>Pi <i>✓</i></span><span>Oh My Pi <i>✓</i></span><span>Kilo Code <i>✓</i></span><span>DeepSeek Harness <i>✓</i></span><span>Hermes Agent <i>✓</i></span><span>Cline</span><span>OpenClaw</span><span>Command Code</span><span>Template <i>✓</i></span>
+    <span>Claude Code <i>✓</i></span><span>Codex <i>✓</i></span><span>Pi <i>✓</i></span><span>Oh My Pi <i>✓</i></span><span>Kilo Code <i>✓</i></span><span>DeepSeek Harness <i>✓</i></span><span>Hermes Agent <i>✓</i></span><span>Cline</span><span>OpenClaw</span><span>Command Code</span><span>Shell <i>✓</i></span><span>Template <i>✓</i></span>
   </div>
   <p class="lead" style="margin-top:18px;margin-bottom:0">Where a CLI cannot do something yet (resume a session headlessly, stream its events) the package says so, and the response carries the fallback honestly instead of pretending.</p>
 </div></section>
@@ -65,6 +65,9 @@ for event in r: print(event.type)
     <div class="feature"><b>Workspaces that persist</b><p>A conversation keeps its workspace and the CLI's state across turns. Browse the files, read the trace, steer the run with a message mid-turn, or cancel it.</p></div>
     <div class="feature"><b>Organizations and teams</b><p>Owners manage providers, members and keys. Teams own harnesses only their members use. Sessions are visible to their creator and the owners.</p></div>
     <div class="feature"><b>Packages as git</b><p>A harness is a repository the platform hosts. Commit from the editor, push from the CLI, fork from the catalog or from a teammate, read the history, export a bundle.</p></div>
+    <div class="feature"><b>Any CLI</b><p>The platform executes command lines; coding agents are the ones it ships packages for. The <code>shell</code> package runs the request as a script with no provider at all. Wrap yours the same way.</p></div>
+    <div class="feature"><b>Metered, not tokened</b><p>Compute, egress and storage are what the platform meters; tokens stay between you and your provider. Usage per organization, team, member, harness and session.</p></div>
+    <div class="feature"><b>Built for agents too</b><p>Idempotency keys for safe retries, a 429 with Retry-After at the ceiling, background turns, and signed webhooks that deliver the final response.</p></div>
   </div>
 </section>
 
@@ -78,14 +81,14 @@ for event in r: print(event.type)
 
 <section class="band" id="deploy">
   <h2>Deploy in one command</h2>
-  <p class="lead">One container, one data directory, Docker for the sandboxes. Postgres and S3-compatible storage when you want more than one node.</p>
+  <p class="lead">One container, one data directory, Docker for the sandboxes. The compose file brings Postgres, S3-compatible storage and nodes that join. The managed platform runs the same image.</p>
   <div class="term"><span class="c"># one box</span>
-docker run -d --name harnessgateway -p 8080:8080 \
-  -v /var/lib/harnessgateway:/data -v /var/run/docker.sock:/var/run/docker.sock \
-  -e HG_PUBLIC_URL=<span class="o">https://hg.example.com</span> ghcr.io/harnessgateway/harnessgateway:7
+docker run -d --name harnessgateway -p 8000:8000 \
+  -v hg:/data -v /var/run/docker.sock:/var/run/docker.sock \
+  -e HG_PUBLIC_URL=<span class="o">https://hg.example.com</span> ghcr.io/harnessgateway/harnessgateway:8
 
-<span class="c"># or with the compose files in deploy/</span>
-docker compose -f deploy/compose.yml up -d</div>
+<span class="c"># or Postgres, S3 and nodes, with the compose file in deploy/</span>
+docker compose -f deploy/compose.yml up -d && docker compose -f deploy/compose.yml run --rm api doctor</div>
   <div class="row" style="margin-top:18px">
     <a class="btn blue" href="/docs/deploy/">Deployment guide</a>
     <a class="btn quiet" href="/docs/packages/">Write a package</a>

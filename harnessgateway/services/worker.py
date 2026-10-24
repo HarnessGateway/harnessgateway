@@ -197,11 +197,12 @@ class Worker:
         await asyncio.to_thread(self._materialize, job, folder, session_dir, home, fetched)
         await self._http.post(f"/internal/turns/{rid}/started", json={})
         self._stop_timeouts[rid], self._interrupts[rid], self._sessions[rid] = config.stop_timeout_s, config.interrupt, sid
+        token = job["token"]                           # empty for a package that runs without a provider: no gateway, no door forwarder
         runtime = self.node.runtime_for(scope, limits, read_only=(folder, tools), writable=(home, rundir, state),
-                                        egress=config.run_egress, gateway_url=self.gateway_url or job["gateway_url"], token=job["token"])
-        base = getattr(runtime, "provider_base", "")   # a node without a door names the gateway itself
+                                        egress=config.run_egress, gateway_url=(self.gateway_url or job["gateway_url"]) if token else "", token=token)
+        base = getattr(runtime, "provider_base", "") if token else ""   # a node without a door names the gateway itself
         env = turn_env(job, config, workspace=workspace, home=home, rundir=rundir, state=state, folder=folder, tools=tools,
-                       provider_url=(base + job["provider"]["path"]) if base else job["provider"]["url"], token_path=str(runtime.token_path or ""))
+                       provider_url=(base + job["provider"]["path"]) if base else job["provider"]["url"], token_path=str(runtime.token_path or "") if token else "")
         spec = Spec(("bash", str(TURN_SCRIPT)), input=fetched["request"], env=env, workspace=workspace, timeout_s=job["timeout_s"])
         execution = await runtime.start(spec)
         self._executions[rid] = execution

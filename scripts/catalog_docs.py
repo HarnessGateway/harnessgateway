@@ -66,7 +66,7 @@ def main() -> None:
         marks = " ".join(f"{'✓' if checks.get(c) else '✗'} {c}" for c in CHECKS) if checks else "not verified"
         rows.append(f"| [{meta['title']}]({folder.name}.md) | `{cfg['cli']['name']}` {cfg['cli'].get('version', '')} | `{cfg['defaults'].get('provider') or '—'}` | {marks} |")
     index = ["# The catalog", "",
-             "Eleven packages ship with the platform, one per CLI, each built from that CLI's own help and documentation "
+             "Twelve packages ship with the platform, one per CLI (and one for any CLI), each built from that CLI's own help and documentation "
              "(the research is in [the Responses wire](../responses-wire.md)). Fork one into your organization from the "
              "console or with `hg harness new NAME --catalog PACKAGE`; the fork is a git repository of your own whose first "
              "commit is the catalog's package.", "",

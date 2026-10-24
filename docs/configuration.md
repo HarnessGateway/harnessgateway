@@ -25,6 +25,16 @@ Every role reads the same variables; each has a default.
 | `HG_SMTP_URL`, `HG_MAIL_FROM` | none | `smtp(s)://user:pass@host:port` and the sender; set, sign-ups verify their email and passwords can be reset by mail |
 | `HG_GITHUB_CLIENT_ID`, `HG_GITHUB_CLIENT_SECRET` | none | sign in with GitHub; the callback is `HG_PUBLIC_URL/auth/github/callback` |
 | `HG_GOOGLE_CLIENT_ID`, `HG_GOOGLE_CLIENT_SECRET` | none | sign in with Google; the callback is `HG_PUBLIC_URL/auth/google/callback` |
+| `HG_OIDC_ISSUER`, `HG_OIDC_CLIENT_ID`, `HG_OIDC_CLIENT_SECRET`, `HG_OIDC_NAME` | none, `sso` | single sign-on with any OpenID Connect issuer (Okta, Entra ID, Keycloak, Auth0, …); the callback is `HG_PUBLIC_URL/auth/<name>/callback` |
+| `HG_SANDBOX` | `docker` | `process`: turns run as plain processes with no isolation (development only; `serve --dev` sets it) |
+| `HG_KMS` | `local` | `aws`: the master key is a data key wrapped by the KMS key `HG_KMS_KEY_ID` (region and credentials from the usual AWS variables) |
+| `HG_BILLING` | `none` | `stripe`: every meter reading is sent as a meter event for the organization's `billing_id`, with `HG_STRIPE_KEY` |
+| `HG_TRACE_SHARING` | `0` | `1`: organizations that sign up on the free plan share their traces until an owner turns it off ([Data](data.md)) |
+
+Every backend is named here, and `harnessgateway doctor` tries each one the environment names and
+prints a line per backend: records, key management, blobs, events, mail, identity providers,
+billing, the sandbox runtime. A managed deployment and a self-hosted one differ in these names and
+in nothing else.
 
 The `hg` command line reads `HG_URL` and `HG_KEY`, or `~/.config/hg/config.json` written by
 `hg login`; `HG_CONFIG_FILE` moves the file. `hg harness run` reads `HG_PROVIDER_URL`,

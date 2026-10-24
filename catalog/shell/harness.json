@@ -1,0 +1,11 @@
+{
+  "contract": 7,
+  "description": "Any command line as a harness: the request's input is run as a shell script in the workspace, and what it printed is the answer. No provider, no token, no gateway: the proof that the platform executes CLIs, and coding agents are the CLIs it happens to run.",
+  "cli": {"name": "bash", "version": "5.2"},
+  "defaults": {"provider": "", "model": ""},
+  "provider_env": {},
+  "interrupt": "SIGUSR1",
+  "install": {"egress": [], "timeout_s": 60},
+  "run": {"egress": [], "timeout_s": 600, "stop_timeout_s": 10},
+  "accepts": ["input", "instructions", "previous_response_id", "metadata"]
+}

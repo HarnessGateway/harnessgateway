@@ -115,7 +115,8 @@ def create_app(service: Service) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"status": "ok", "version": VERSION, "contract": CONTRACT, "roles": list(settings.roles), "signup": settings.signup}
+        return {"status": "ok", "version": VERSION, "contract": CONTRACT, "roles": list(settings.roles), "signup": settings.signup,
+                "trace_sharing": settings.trace_sharing}
 
     app.include_router(responses.router(service))
     app.include_router(control.router(service))

@@ -1,0 +1,19 @@
+{
+ "title": "Shell",
+ "intro": "Any command line as a harness: the input is run as a shell script in the session's workspace and its output is the answer. No provider is needed. Fork it to wrap a CLI of your own, agent or not.",
+ "docs": "https://github.com/HarnessGateway/harnessgateway/blob/main/docs/any-cli.md",
+ "verified": {
+  "on": "2026-10-24",
+  "contract": 7,
+  "provider": "(none)",
+  "model": "(none)",
+  "checks": {"make": true, "recall": true, "stream": true},
+  "how": "the API suite, through a worker: a first turn writes a file, a continuation reads it, a streamed turn"
+ },
+ "notes": [
+  "provider_env is empty, so the platform issues no token and starts no gateway forwarder: the sandbox has no way out but the run egress list (empty here).",
+  "instructions run first as a setup script; a steer runs as one more script after the current one ends.",
+  "The workspace persists for the session: continue with previous_response_id and the files are there.",
+  "Add egress hosts in harness.json to let the script reach the network; add a CLI in install.sh under $HG_TOOLS."
+ ]
+}

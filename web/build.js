@@ -36,7 +36,7 @@ VIEWS.Conversations = async function conversations(main, args) {
   let paneTab = "files";
   const drawPane = async () => {
     if (!sid) return pane.replaceChildren(h("h2", {}, "Workspace"), h("p", { class: "muted" }, "The files the harness leaves after each turn appear here, with the trace of every request and response."));
-    const tabs = h("div", { class: "tabs" }, ...["files", "trace", "log"].map(t => h("button", { class: t === paneTab ? "on" : "", on: { click: () => { paneTab = t; drawPane(); } } }, t)));
+    const tabs = h("div", { class: "tabs" }, ...["files", "trace", "log", "api"].map(t => h("button", { class: t === paneTab ? "on" : "", on: { click: () => { paneTab = t; drawPane(); } } }, t)));
     pane.replaceChildren(h("div", { class: "row between" }, h("h2", {}, "Workspace"), h("a", { class: "btn ghost small", href: `/v1/sessions/${sid}/archive`, download: `${sid}.tar.gz` }, "download")), tabs);
     if (paneTab === "files") {
       const files = (await api("GET", `/v1/sessions/${sid}/files`)).data;
@@ -47,11 +47,17 @@ VIEWS.Conversations = async function conversations(main, args) {
       const trace = (await api("GET", `/v1/sessions/${sid}/trace`)).data;
       pane.append(h("div", { class: "trace" }, ...trace.map(t => h("div", { class: "t" }, h("span", { class: "muted" }, new Date(t.at * 1000).toLocaleTimeString()), tag(t.kind, { request: "blue", response: "ok", interrupt: "orange", cancel: "bad", disconnect: "bad" }[t.kind] || ""),
         h("details", {}, h("summary", { class: "mono", style: "cursor:pointer" }, t.kind === "request" ? (typeof t.body.input === "string" ? t.body.input : JSON.stringify(t.body.input)).slice(0, 80) : t.kind === "response" ? `${t.body.status} · ${(t.body.output || []).length} items` : JSON.stringify(t.body).slice(0, 80)), h("pre", { class: "light" }, JSON.stringify(t.body, null, 1)))))));
+    } else if (paneTab === "api") {
+      const s = await api("GET", `/v1/sessions/${sid}`);
+      const last = s.responses[s.responses.length - 1] || "resp_…";
+      const py = `from openai import OpenAI\nclient = OpenAI(base_url="${location.origin}/v1", api_key="hg_…")\nr = client.responses.create(model="${s.harness}", previous_response_id="${last}",\n                            input="Now add tests for it")\nprint(r.output_text)`;
+      const sh = `curl ${location.origin}/v1/responses -H "Authorization: Bearer hg_…" -H "Content-Type: application/json" \\\n  -d '{"model": "${s.harness}", "previous_response_id": "${last}", "input": "Now add tests for it", "stream": true}'`;
+      pane.append(h("p", { class: "muted" }, "Continue this very session from code: the API and this page are the same session."), h("h3", {}, "Python"), h("pre", { class: "light" }, py), h("h3", {}, "curl"), h("pre", { class: "light" }, sh), h("p", { class: "muted" }, "Session ", h("code", {}, sid), " ", copy(sid)));
     } else {
       const s = await api("GET", `/v1/sessions/${sid}`);
       const last = s.responses[s.responses.length - 1];
       const d = last ? await api("GET", `/v1/responses/${last}/detail`) : null;
-      pane.append(d ? h("div", {}, h("p", { class: "muted" }, `last turn: exit ${d.exit_code ?? "?"} · worker ${d.worker || "?"}`), h("h3", {}, "request.sh log"), h("pre", {}, d.log || "(nothing)"), h("h3", {}, "stderr"), h("pre", {}, d.stderr || "(nothing)")) : empty("no turn yet"));
+      pane.append(d ? h("div", {}, h("p", { class: "muted" }, `last turn: exit ${d.exit_code ?? "?"} · node ${d.worker || "?"}`), h("h3", {}, "request.sh log"), h("pre", {}, d.log || "(nothing)"), h("h3", {}, "stderr"), h("pre", {}, d.stderr || "(nothing)")) : empty("no turn yet"));
     }
   };
 

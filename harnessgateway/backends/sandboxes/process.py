@@ -280,12 +280,13 @@ class ProcessNode:
         # no door here: the CLI calls the gateway itself, with the session token in a file of the turn's
         rundir = next((p for p in writable if p.name == "run"), None) or (writable[-1] if writable else self.root)
         rundir.mkdir(parents=True, exist_ok=True)
-        token_file = rundir / ".token"
-        token_file.write_text(token)
-        token_file.chmod(0o600)
+        token_file = rundir / ".token" if token else None
+        if token_file:
+            token_file.write_text(token)
+            token_file.chmod(0o600)
 
         class Runtime:
-            provider_base = self.gateway_url or gateway_url   # this node's own, else the job's; the worker appends the provider's path
+            provider_base = (self.gateway_url or gateway_url) if token else ""   # this node's own, else the job's; the worker appends the provider's path
             token_path = token_file
 
             async def start(self, spec: Spec):
