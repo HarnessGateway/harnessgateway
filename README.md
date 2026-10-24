@@ -27,6 +27,9 @@ The same from the SDK:
 the same workspace. `model` is `claude-code` for the default DeepSeek model, or
 `claude-code/deepseek-reasoner` and the like.
 
+[The Responses wire](docs/responses-wire.md) explains the idea, links the official schema, and maps every request
+field to the invocation of the ten most used harnesses and every response field to their output.
+
 ## What comes back
 
 Claude Code's events become the schema's output items, nothing invented:
