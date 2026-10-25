@@ -1,4 +1,4 @@
-"""Object storage: any S3-compatible service (AWS S3 for SaaS; SeaweedFS, Garage or another S3 server self-hosted).
+"""Object storage: any S3-compatible service (AWS S3 for SaaS; RustFS or another S3 server self-hosted).
 Every object an organization keeps is recorded in the `objects` ledger with its size, which is what storage metering
 sums. Keys are always `orgs/<org>/...` for tenant data and `packages/<digest>.tgz` for shared package archives."""
 from __future__ import annotations
