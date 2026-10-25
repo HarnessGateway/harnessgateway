@@ -128,7 +128,7 @@ class Box:
 
     async def signal_group(self, pidfile: str, signal: str) -> None:
         with contextlib.suppress(DockerError):
-            await self.sh(f'p=$(cat {pidfile} 2>/dev/null) && kill -{signal} -- "-$p" 2>/dev/null; true', timeout=15)
+            await self.sh(f'p=$(cat {pidfile} 2>/dev/null) && kill -{signal} "-$p" 2>/dev/null; true', timeout=15)
 
     def counters(self) -> dict[str, int]:
         try:

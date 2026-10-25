@@ -50,7 +50,7 @@ services:
       HG_DATABASE_URL: postgresql://harnessgateway:${HG_DB_PASSWORD}@postgres:5432/harnessgateway
       HG_S3_ENDPOINT: http://s3:9000
     ports:
-      - "${HG_BIND:-127.0.0.1}:8000:8000"
+      - "${HG_BIND:-127.0.0.1}:${HG_HTTP_PORT:-8000}:8000"
     depends_on:
       postgres: {condition: service_healthy}
       s3: {condition: service_started}
