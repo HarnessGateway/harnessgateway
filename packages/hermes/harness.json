@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "name": "hermes",
+  "version": "1.0.0",
+  "description": "Nous Research's Hermes Agent 0.19.0, driven through its Agent Client Protocol mode (hermes acp, JSON-RPC over stdio) on an Anthropic Messages or OpenAI Chat Completions provider. Assistant text streams token by token; every tool call comes back as an item with its exact arguments and result, read from Hermes's own session store (terminal as shell_call, write_file and patch as apply_patch_call, MCP tools as mcp_call, the rest as function_call); provider reasoning arrives as reasoning items and token usage is reported. Turns continue the same Hermes session, instructions become part of Hermes's system prompt, approvals are off (the sandbox is the boundary), and a cancel stops Hermes and its running command cleanly.",
+  "provider": {"apis": ["anthropic", "openai"]},
+  "defaults": {"model": "deepseek-flash"},
+  "install": {"egress": ["pypi.org", "files.pythonhosted.org"], "timeout_s": 1500},
+  "run": {"egress": [], "timeout_s": 3600, "stop_grace_s": 20}
+}

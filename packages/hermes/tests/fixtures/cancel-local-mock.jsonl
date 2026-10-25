@@ -1,0 +1,6 @@
+["log","2026-10-25 20:47:39 [INFO] agent.conversation_loop: API call #1: model=mock-model provider=custom in=100 out=20 total=120 latency=0.5s"]
+["db",[{"id":2,"role":"assistant","content":"","tool_calls":"[{\"id\": \"call_1792961259278\", \"call_id\": \"call_1792961259278\", \"response_item_id\": \"fc_1792961259278\", \"type\": \"function\", \"function\": {\"name\": \"terminal\", \"arguments\": \"{\\\"command\\\": \\\"sleep 300\\\"}\"}}]"}]]
+["acp",{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"2cd317af-81dc-435b-badb-60150ad336ae","update":{"content":[{"content":{"text":"$ sleep 300","type":"text"},"type":"content"}],"kind":"execute","locations":[],"title":"terminal: sleep 300","toolCallId":"tc-843b9f1309bb","sessionUpdate":"tool_call"}}}]
+["log","2026-10-25 20:47:48 [INFO] agent.conversation_loop: Turn ended: reason=interrupted_by_user model=mock-model api_calls=1/90 budget=1/90 tool_turns=1 last_msg_role=assistant response_len=0 session=2cd317af-81dc-435b-badb-60150ad336ae"]
+["db",[{"id":3,"role":"tool","content":"{\"output\": \"[Command interrupted]\", \"exit_code\": 130, \"error\": null}","tool_call_id":"call_1792961259278","tool_name":"terminal"},{"id":4,"role":"assistant","content":"Operation interrupted."}]]
+["end",{"stopReason":"cancelled","transcript":true,"cache_write":0}]
