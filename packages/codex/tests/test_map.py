@@ -21,8 +21,9 @@ FIXTURES = PKG / "tests" / "fixtures"
 sys.path.insert(0, str(REPO / "sandbox"))          # hgkit, as in the sandbox image
 sys.path.insert(0, str(REPO))
 
-from harnessgateway.domain.wire import TurnOutput  # noqa: E402
 from hgkit import Emitter, State  # noqa: E402
+
+from harnessgateway.domain.wire import TurnOutput  # noqa: E402
 
 
 def _load(name: str, path: Path):

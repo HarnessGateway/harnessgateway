@@ -32,6 +32,8 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import contextlib
+
 from hgkit import Emitter, Request, State, input_files  # noqa: E402
 from map import THREAD_KEY, CodexMapper  # noqa: E402
 
@@ -226,10 +228,8 @@ def main() -> int:
                             start_new_session=False)
 
     def stop(signum: int, _frame: Any) -> None:     # cancel: let Codex go, then leave without a terminal event
-        try:
+        with contextlib.suppress(ProcessLookupError):
             proc.send_signal(signum)
-        except ProcessLookupError:
-            pass
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:

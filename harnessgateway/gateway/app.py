@@ -116,7 +116,8 @@ class Gateway:
         headers = {k: v for k, v in request.headers.items() if k.lower() not in AUTH_HEADERS | HOP}
         name, value = auth_header(grant.api, grant.key)
         headers[name] = value
-        headers["accept-encoding"] = request.headers.get("accept-encoding", "identity")   # relayed raw: the client decodes
+        # Relayed raw, so the client decodes; a captured exchange is asked for uncompressed, so the capture reads.
+        headers["accept-encoding"] = "identity" if grant.capture else request.headers.get("accept-encoding", "identity")
         url = grant.base_url + path + (f"?{request.url.query}" if request.url.query else "")
         started = time.time()
         upstream = await self.client.send(self.client.build_request(request.method, url, headers=headers, content=body),

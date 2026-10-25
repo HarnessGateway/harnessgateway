@@ -59,4 +59,4 @@ ignore = ["S101", "S104", "S603", "S607", "S608", "B008"]   # S104: bind address
 "tests/**" = ["S105", "S106", "S108", "B017"]
 "harnessgateway/node/**" = ["S108"]          # /tmp paths are inside the sandbox
 "skills/**" = ["S310"]                        # urlopen of the package's own provider URL
-"packages/**" = ["S310"]
+"packages/**" = ["S310", "S108"]           # /tmp paths are inside the sandbox

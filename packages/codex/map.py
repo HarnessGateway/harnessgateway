@@ -168,10 +168,7 @@ class CodexMapper:
         if self.text_item is not None and self.text_item != iid:
             self._close_text()
         seen = self.text_seen.get(iid, "")
-        if text.startswith(seen):
-            delta = text[len(seen):]
-        else:                                   # the text was rewritten: stream what is new from here on
-            delta = text if not seen else ""
+        delta = text[len(seen):] if text.startswith(seen) else ""   # rewritten text: nothing new to stream
         if delta:
             self.out.text(delta)
             self.text_item = iid
@@ -299,10 +296,7 @@ class CodexMapper:
         if self.usage is None:
             return None
         cur, base = self.usage, self.baseline
-        if base and all(cur[k] >= base.get(k, 0) for k in USAGE_FIELDS):
-            u = {k: cur[k] - base.get(k, 0) for k in USAGE_FIELDS}
-        else:
-            u = cur
+        u = {k: cur[k] - base.get(k, 0) for k in USAGE_FIELDS} if base and all(cur[k] >= base.get(k, 0) for k in USAGE_FIELDS) else cur
         return Emitter.usage(input_tokens=u["input_tokens"], output_tokens=u["output_tokens"],
                              cached=u["cached_input_tokens"], reasoning=u["reasoning_output_tokens"],
                              cache_write=u["cache_write_input_tokens"])
