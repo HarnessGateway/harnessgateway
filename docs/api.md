@@ -1,68 +1,61 @@
-# The API
+# API reference
 
-Every route takes `Authorization: Bearer <key>`: an organization member's key (`hg_…`) for the
-organization's routes, the deployer's key (`hgd_…`) for the deployer's, or an account's cookie. The
-interactive reference is at `/reference`. Bodies and responses are JSON; lists are
-`{"object": "list", "data": […]}`; errors are `{"detail": "…"}` with the status that fits (400 a
-bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 429 the ceiling).
+Base URL: `https://<platform>/v1`. Authentication: `Authorization: Bearer sk-hg-...` (an organization's API key).
+Errors use the OpenAI envelope: `{"error": {"message", "type", "param", "code"}}` with 400, 401, 403, 404, 409, 413,
+429 or 503. Any OpenAI SDK works unchanged: `OpenAI(base_url="https://<platform>/v1", api_key="sk-hg-...")`.
 
-## The Responses API
+## OpenAI-compatible
 
-| Route | Does |
+| Method and path | Notes |
 |---|---|
-| `POST /v1/responses` | a turn; the body is a Responses request ([Requests](requests.md)); `x-session-id` header on the response. Closing a foreground request stops its turn; a request on a session that is running a turn supersedes it ([Sessions](sessions.md)). An `Idempotency-Key` header makes a retry return the first turn; past the organization's rate ceiling the answer is 429 with `Retry-After` |
-| `GET /v1/responses/{id}` | the response object; `?stream=true` streams it (a running one from its start) |
-| `GET /v1/responses/{id}/detail` | plus the package's log and stderr, the worker, the timings, the raw status |
-| `GET /v1/responses/{id}/request` | the request as sent |
-| `POST /v1/responses/{id}/cancel` | stop it on purpose |
-| `GET /v1/responses/{id}/captures`, `…/captures/{name}` | the provider exchanges the gateway relayed |
+| `POST /responses` | Run a turn. `model` is `harness`, `harness/provider` or `harness/provider/model`. `stream: true` returns SSE; `background: true` returns immediately; otherwise the request waits for the end. `previous_response_id` continues the session. `store: false` discards the session after the turn. Header `Idempotency-Key` makes retries safe. A foreground turn is cancelled if the client disconnects. |
+| `GET /responses/{id}` | The response. `?stream=true&starting_after=N` replays events after sequence number N, then follows live. |
+| `POST /responses/{id}/cancel` | Stops a queued or running turn (SIGTERM, then SIGKILL after the package's grace). |
+| `DELETE /responses/{id}` | Deletes a finished response and its stored request. |
+| `GET /responses/{id}/input_items` | The request's input items. |
+| `POST /files` · `GET /files` · `GET /files/{id}` · `GET /files/{id}/content` · `DELETE /files/{id}` | Input files; reference them in `input` as `{"type": "input_file", "file_id": ...}`. The package finds them in `$HG_FILES`. |
+| `GET /containers` · `GET /containers/{id}` · `DELETE /containers/{id}` | Sessions. A container is created by a session's first response; its id is `response.metadata.session_id`. |
+| `GET /containers/{id}/files` · `GET .../files/{fid}` · `GET .../files/{fid}/content` | The workspace after the last turn (paths under `/workspace`). |
+| `POST /containers/{id}/files` (multipart `file`, optional `path`) · `DELETE .../files/{fid}` | Staged into the workspace when the session's next turn starts. |
+| `GET /models` · `GET /models/{id}` | The harness/provider combinations the organization can call. |
 
-## Sessions
+Every response carries `metadata.session_id`. When the platform (not the package) ended a turn, `metadata.hg_reason`
+says why: `cancelled`, `client_disconnected`, `timeout`, `no_terminal_event`, `invalid_output`, `output_too_large`,
+`install_failed`, `sandbox_failed`, `node_lost`, `workspace_too_large`.
 
-| Route | Does |
-|---|---|
-| `GET /v1/sessions`, `GET /v1/sessions/{id}` | the member's sessions (an owner's organization's); one with its turns |
-| `GET /v1/sessions/{id}/trace` | every request, response, cancel, disconnect and supersede |
-| `GET /v1/sessions/{id}/files`, `…/files/{path}`, `…/archive` | the workspace after the last turn |
-| `DELETE /v1/sessions/{id}` | remove it and everything it holds |
+## The organization's resources
 
-## Setup
+| Method and path | Who | Notes |
+|---|---|---|
+| `POST /signup` | anyone with an invite code | `{"invite_code", "organization", "email"}` → the organization and its first admin key (shown once). |
+| `GET /organization` | any key | The organization, its limits, and the caller's member id and role. |
+| `GET /keys` · `POST /keys` · `DELETE /keys/{id}` | admin | `POST {"name", "role": "admin"\|"member", "member_id"?, "ttl_days"?}` returns the secret once. |
+| `GET /members` · `POST /members` · `DELETE /members/{id}` | admin to change | `POST {"email", "role"}`. |
+| `GET /providers` · `PUT /providers/{name}` · `GET` · `DELETE` | admin to change | `PUT {"api": "anthropic"\|"openai", "base_url", "key"}`. The base URL is the one before `/v1`. The key is encrypted at once and never returned. |
+| `GET /catalog` | any key | The platform's built-in harnesses. |
+| `GET /harnesses` · `GET /harnesses/{name}` | any key | Installed harnesses: version, digest, provider shapes, settings (set or not, never values). |
+| `POST /harnesses` | admin | `{"builtin": name}`, `{"git": {"url", "ref", "path"}}` (any public repository: the free marketplace), or multipart `package` (a .tar.gz of the package). Re-installing upgrades; running sessions keep their version. |
+| `PATCH /harnesses/{name}` | admin | `{"settings": {"NAME": "value"\|null}, "default_provider", "default_model"}`. |
+| `DELETE /harnesses/{name}` | admin | |
+| `GET /usage?start=&end=` | any key | Metered usage and charges for the window (Unix seconds; default: this month). |
+| `GET /traces/{response_id}` | any key, observability on | The request the package received, every event, full stdout/stderr, exit code, provider exchanges. |
 
-| Route | Does |
-|---|---|
-| `PUT /v1/providers/{name}`, `GET /v1/providers`, `GET/DELETE …/{name}` | `{"url", "api", "key"}` (owners) |
-| `GET /v1/catalog`, `GET /v1/catalog/{name}`, `…/files/{path}` | the shipped packages and their files |
-| `POST /v1/harnesses/{name}` | `{"catalog": "pi"}`, `{"fork": "other"}` or `{"archive": "<base64 tar>"}` (owners) |
-| `PUT /v1/harnesses/{name}` | a tar (gzip accepted) as the next commit, or a new harness; `x-commit-message` (owners) |
-| `GET /v1/harnesses`, `GET /v1/harnesses/{name}` | the harnesses; one with its files and configuration |
-| `GET /v1/harnesses/{name}/files/{path}?at=` | a file at the head or at a commit |
-| `POST /v1/harnesses/{name}/commits` | `{"changes": {"path": "text" or null}, "message", "parent"}`: a commit against the head `parent` (owners) |
-| `GET /v1/harnesses/{name}/commits` | the history |
-| `GET /v1/harnesses/{name}/archive` | the package as a tar |
-| `DELETE /v1/harnesses/{name}` | remove it (owners) |
+## Operator (`/admin/v1`, `Authorization: Bearer $HG_OPERATOR_KEY`)
 
-## The organization
+`POST /invites {"label", "uses", "ttl_days", "limits"}` · `POST /organizations {"name", "owner_email", "limits"}` ·
+`GET /organizations` · `GET|PATCH /organizations/{id}` (`{"limits": {...}, "status": "active"|"suspended"}`) ·
+`GET /organizations/{id}/usage` · `POST /node-tokens {"org_id"?, "label", "uses", "ttl_days"}` · `GET /nodes` ·
+`POST /nodes/{id}/drain` · `DELETE /nodes/{id}` · `GET /prices`.
 
-| Route | Does |
-|---|---|
-| `GET /v1/me` | who the key is: member, organization, role, limits |
-| `GET /v1/org`, `PATCH /v1/org` | the organization; `{"title"}` (owners) |
-| `GET /v1/members`, `POST /v1/members`, `PATCH/DELETE …/{name}` | members; `{"name", "role"}`; a role change; removal (owners) |
-| `POST /v1/invites`, `GET /v1/invites`, `DELETE …/{email}` | invitations by email (owners) |
-| `POST /v1/members/{name}/keys`, `GET /v1/keys`, `DELETE /v1/keys/{id}` | mint (`{"label"}`), list, revoke |
+Organization limits (all optional; defaults in parentheses): `vcpus` (2), `memory_mb` (4096), `pids` (1024),
+`max_sandboxes` (10), `max_running_turns` (10), `turn_timeout_s` (3600), `idle_ttl_s` (300),
+`session_retention_days` (30), `workspace_mb` (4096), `storage_gb` (50), `requests_per_minute` (600),
+`monthly_charge_usd` (0 = no cap), `observability` (false), `dedicated_nodes` (false).
 
-## Accounts
+## Nodes (`/internal/v1`)
 
-`GET /auth/providers` (what sign-in offers), `POST /auth/signup`, `POST /auth/login`, `POST
-/auth/logout`, `GET /auth/me`, `POST /auth/orgs`, `POST /auth/switch`. A browser client uses
-these; a script uses a key.
+Used by the node role only: `POST /nodes/join` (join token), then with the node credential `POST /nodes/heartbeat`,
+`POST /jobs/claim`, `POST /turns/{id}/events`, `POST /turns/{id}/finish`, `POST /usage`, and signed
+`GET|PUT /blobs/{token}`.
 
-## The deployer
-
-`POST /v1/orgs`, `GET /v1/orgs`, `GET/PATCH/DELETE /v1/orgs/{name}`, `GET /v1/workers`, `DELETE
-/v1/workers/{id}`, `GET /v1/fleet`. See [Organizations and limits](organizations.md).
-
-## Nodes
-
-`/internal/*` is the nodes' side: `join`, `heartbeat`, `claim`, `turns/{id}/started`, `chunks`,
-`result`, and signed `blobs/{token}` reads and writes. A node's credential opens nothing else.
+Health: `GET /healthz` (process up), `GET /readyz` (database and storage reachable).

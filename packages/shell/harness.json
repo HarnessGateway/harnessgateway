@@ -1,0 +1,8 @@
+{
+  "contract": 1,
+  "name": "shell",
+  "version": "1.0.0",
+  "description": "A reference harness with no model: the input text runs as a bash command in the session's workspace. The command and its output come back as a shell_call, its output and a message. Useful for testing the platform and as the smallest example of the package contract.",
+  "install": {"egress": [], "timeout_s": 60},
+  "run": {"egress": [], "timeout_s": 600, "stop_grace_s": 5}
+}

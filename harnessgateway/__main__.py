@@ -1,207 +1,139 @@
-"""The command line.
+"""The `harnessgateway` command.
 
-    harnessgateway serve [--role api,gateway,worker | all] [--dev]
-        Runs the roles named in one process, as the environment configures them (HG_*); --dev runs
-        turns as plain processes without Docker, for developing packages on a laptop. The first
-        boot of an `api` makes what a fresh platform lacks and prints it once, to stderr: the deployer
-        key, and, with sign-up closed, the org HG_ORG with its owner HG_OWNER and the owner's key.
-    harnessgateway init [--org NAME --owner NAME]
-        The same by hand: a new deployer key (replacing the old), and, with --org, that org with
-        its owner and the owner's key. The master key is written to <data>/master.key unless one is there.
-    harnessgateway doctor
-        Checks every backend the environment names, one line each, and exits 1 if any fails: records,
-        key management, blobs, events, and the sandbox runtime.
+    harnessgateway serve [--role api,gateway,node]   run one or more roles in this process (all three by default)
+    harnessgateway migrate                           apply database migrations, then exit
+    harnessgateway keygen                            print fresh values for HG_SECRET_KEY and HG_OPERATOR_KEY
+    harnessgateway create-org NAME EMAIL             an organization with its owner's admin key (printed once)
+    harnessgateway invite [--uses N] [--label L]     an invite code for the pilot's sign-up (printed once)
+    harnessgateway node-token [--org ORG_ID]         a join token for a node (shared pool, or dedicated to one org)
+
+Every setting comes from the environment (HG_*); see docs/operations.md.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import os
+import json
+import logging
+import secrets
 import signal
 import sys
+from typing import Any
 
+from . import __version__
 from .config import Settings
-from .kernel.vault import Vault
 
 
-def master_key(settings: Settings) -> None:
-    """HG_MASTER_KEY or HG_MASTER_KEY_FILE from the environment, else the file under the data directory."""
-    if os.environ.get("HG_MASTER_KEY") or os.environ.get("HG_MASTER_KEY_FILE"):
-        return
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    key_file = settings.data_dir / "master.key"
-    if not key_file.exists():
-        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(Vault.generate() + "\n")
-        print(f"master key written to {key_file}", file=sys.stderr)
-    os.environ["HG_MASTER_KEY_FILE"] = str(key_file)
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        doc: dict[str, Any] = {"ts": round(record.created, 3), "level": record.levelname.lower(), "logger": record.name,
+                               "message": record.getMessage()}
+        if record.exc_info:
+            doc["exception"] = self.formatException(record.exc_info)
+        return json.dumps(doc, ensure_ascii=False)
 
 
-def init(args: argparse.Namespace) -> None:
-    from .api.app import Service
-    settings = Settings.from_env()
-    master_key(settings)
-    service = Service(settings)
-    print(f"deployer key (shown once): {service.keys.set_deployer()}")
-    if args.org:
-        t = service.orgs.create(args.org)
-        service.members.create(t.name, args.owner, "owner")
-        _, secret = service.keys.mint(t.name, args.owner, "first")
-        print(f"org {t.name} created with owner {args.owner}")
-        print(f"owner's API key (shown once): {secret}")
+def setup_logging(level: str) -> None:
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=level.upper(), handlers=[handler], force=True)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
-def doctor_checks(settings: Settings) -> list[tuple[str, str, str]]:
-    """Each backend tried once: (name, what it is, "ok" or the failure). The platform is not changed."""
-    from .api.app import Service
-    out: list[tuple[str, str, str]] = []
+async def serve(settings: Settings) -> None:
+    import uvicorn
 
-    def check(name: str, what: str, probe) -> None:
-        try:
-            note = probe()
-            out.append((name, what, "ok" + (f" ({note})" if note else "")))
-        except Exception as e:                       # the point: say which backend fails and why
-            out.append((name, what, f"FAILED: {e}"))
-
-    try:
-        service = Service(settings)
-    except Exception as e:
-        return [("service", "boot", f"FAILED: {e}")]
-    probe = f"doctor-{os.getpid()}"
-
-    def records():
-        service.records.put("doctor", "", probe, {"at": 1})
-        assert service.records.get("doctor", "", probe) == {"at": 1}, "a record did not read back"
-        service.records.delete("doctor", "", probe)
-
-    def kms():
-        assert service.vault.open(service.vault.seal("x", probe), probe) == "x", "a sealed value did not open"
-
-    def blobs():
-        key = f"doctor/{probe}"
-        service.blobs.put(key, b"x")
-        assert service.blobs.get(key) == b"x", "a blob did not read back"
-        service.blobs.delete(key)
-
-    def events():
-        service.events.append("doctor", probe, [{"seq": 1, "stream": "stdout", "text": "x"}])
-        assert len(service.events.read("doctor", probe)) == 1, "a chunk did not read back"
-        service.events.clear("doctor", probe)
-
-    def sandbox():
-        if settings.sandbox == "process":
-            return "no isolation; development only"
-        from .backends.sandboxes.docker import docker
-        code, text = asyncio.run(docker("version", "--format", "{{.Server.Version}}"))
-        if code:
-            raise RuntimeError(text.strip().splitlines()[-1] if text.strip() else "docker version failed")
-        return f"docker {text.strip()}" + (f", runtime {settings.runtime}" if settings.runtime else "")
-
-    check("records", settings.records_url.split("://")[0], records)
-    check("kms", settings.kms, kms)
-    check("blobs", settings.blobs_url.split("://")[0], blobs)
-    check("events", "postgres notify" if settings.records_url.startswith("postgres") else "polling", events)
-    check("sandbox", settings.sandbox, sandbox)
-    service.records.close()
-    return out
-
-
-def doctor(args: argparse.Namespace) -> None:
-    settings = Settings.from_env()
-    master_key(settings)
-    results = doctor_checks(settings)
-    for name, what, state in results:
-        print(f"{name:<11}{what:<24}{state}")
-    if any(state.startswith("FAILED") for _, _, state in results):
-        sys.exit(1)
-
-
-def first_boot(service, settings: Settings) -> list[str]:
-    """What a fresh platform lacks, made once: the deployer key unless one is set or stored; the first
-    org, its owner and the owner's key when sign-up is closed and there is no org. Only an `api`
-    does this: a worker's own records are not the platform's. The lines say what was made."""
-    if "api" not in settings.roles:
-        return []
-    lines = []
-    if not settings.deployer_key and not service.keys.has_deployer():
-        lines.append(f"deployer key: {service.keys.set_deployer()}")
-    if settings.signup == "closed" and not service.orgs.list():
-        t = service.orgs.create(settings.org)
-        service.members.create(t.name, settings.owner, "owner")
-        _, secret = service.keys.mint(t.name, settings.owner, "first")
-        lines += [f"org {t.name} created with owner {settings.owner}", f"{settings.owner}'s API key: {secret}"]
-    if lines:
-        print("first boot: shown once; `harnessgateway init` makes new ones\n  " + "\n  ".join(lines), file=sys.stderr, flush=True)
-    return lines
-
-
-async def run(settings: Settings, dev: bool = False) -> None:
-    from .api.app import Service, create_app
-    service = Service(settings)
-    first_boot(service, settings)
-    tasks = []
-    if "api" in settings.roles:
-        import uvicorn
-        server = uvicorn.Server(uvicorn.Config(create_app(service), host=settings.host, port=settings.port, log_level="info"))
+    servers, tasks = [], []
+    if {"api", "gateway"} & set(settings.roles):
+        from .services.platform import Platform
+        if "api" in settings.roles:
+            from .api.app import create_app
+            plat = Platform(settings)
+            await plat.db.migrate()
+            servers.append(uvicorn.Server(uvicorn.Config(create_app(plat), host=settings.host, port=settings.port,
+                                                         log_config=None, proxy_headers=True, server_header=False)))
+        if "gateway" in settings.roles:
+            from .gateway.app import create_gateway
+            servers.append(uvicorn.Server(uvicorn.Config(create_gateway(Platform(settings)), host=settings.gateway_host,
+                                                         port=settings.gateway_port, log_config=None, server_header=False)))
+    for server in servers:
+        server.install_signal_handlers = lambda: None   # type: ignore[method-assign]
         tasks.append(asyncio.create_task(server.serve()))
-    if "gateway" in settings.roles:
-        from .services.gateway import Gateway, serve as serve_gateway
-        tasks.append(asyncio.create_task(serve_gateway(Gateway(service.providers, service.records, service.blobs), settings.gateway_host, settings.gateway_port)))
-    if "worker" in settings.roles:
-        from .backends.sandboxes import open_node
-        from .backends.sandboxes.docker import owner_of
-        from .services.worker import Worker
-        if dev or settings.sandbox == "process":
-            print("DEV MODE: turns run as processes on this machine with no sandbox; only for packages you trust", file=sys.stderr, flush=True)
-            node = open_node("process", root=settings.data_dir / "worker", gateway_url=f"http://127.0.0.1:{settings.gateway_port}")
-        else:
-            node = open_node("docker", image=settings.base_image, owner=owner_of(settings.data_dir), runtime=settings.runtime, ca_file=settings.ca_file,
-                             allow_private=settings.allow_private, root=settings.data_dir / "worker",
-                             gateway_port=settings.gateway_port if "gateway" in settings.roles else 0)
-        worker = Worker(settings.control_url, node, settings.data_dir / "worker", name=settings.worker_name,
-                        slots=settings.worker_slots, version=service_version(), join_token=service.join_token, ca_file=settings.ca_file,
-                        gateway_url=os.environ.get("HG_GATEWAY_URL", "").rstrip("/"))
-        tasks.append(asyncio.create_task(worker.run()))
+    node_task = None
+    if "node" in settings.roles:
+        from .node.agent import Node
+        node_task = asyncio.create_task(Node(settings).run())
+        tasks.append(node_task)
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
-    done, _ = await asyncio.wait([*tasks, asyncio.create_task(stop.wait())], return_when=asyncio.FIRST_COMPLETED)
-    for t in tasks:
-        t.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    stopper = asyncio.create_task(stop.wait())
+    done, _ = await asyncio.wait([*tasks, stopper], return_when=asyncio.FIRST_COMPLETED)
+    for server in servers:                           # servers drain their requests; the node stops at once
+        server.should_exit = True
+    if node_task:
+        node_task.cancel()
+    await asyncio.wait(tasks, timeout=30)
     for t in done:
-        if t.exception() and not isinstance(t.exception(), asyncio.CancelledError):
-            raise t.exception()
+        if t is not stopper and not t.cancelled() and t.exception():
+            raise t.exception()                      # type: ignore[misc]
 
 
-def service_version() -> str:
-    from importlib.metadata import version
-    return version("harnessgateway")
-
-
-def serve(args: argparse.Namespace) -> None:
-    settings = Settings.from_env(args.role)
-    master_key(settings)
-    asyncio.run(run(settings, dev=args.dev))
+async def admin(command: str, args: argparse.Namespace) -> None:
+    from .services.platform import Platform
+    plat = Platform(Settings.from_env(("api",)))
+    await plat.open()
+    try:
+        if command == "migrate":
+            print(json.dumps({"applied": await plat.db.migrate()}))
+            return
+        await plat.packages.publish_builtins()
+        if command == "create-org":
+            org, key = await plat.create_org(args.name, args.email, None, "cli")
+            print(json.dumps({"organization": org, "api_key": key}, indent=2))
+        elif command == "invite":
+            print(json.dumps(await plat.tenancy.create_invite(args.label, args.uses, args.ttl_days, None, "cli"), indent=2))
+        elif command == "node-token":
+            print(json.dumps(await plat.scheduler.create_join_token(args.org, args.label, args.uses, args.ttl_days, "cli"),
+                             indent=2))
+    finally:
+        await plat.close()
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="harnessgateway", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("init", help="the master key, the deployer key, and optionally a first org")
-    p.add_argument("--org")
-    p.add_argument("--owner", default="owner")
-    p.set_defaults(run=init)
-    p = sub.add_parser("serve", help="run one or more roles")
-    p.add_argument("--role", default="all", help="api,gateway,worker or all")
-    p.add_argument("--dev", action="store_true", help="no Docker: turns run as processes here, unsandboxed (development only)")
-    p.set_defaults(run=serve)
-    p = sub.add_parser("doctor", help="check every configured backend")
-    p.set_defaults(run=doctor)
-    args = parser.parse_args(argv)
-    args.run(args)
+    ap = argparse.ArgumentParser(prog="harnessgateway", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=__version__)
+    sub = ap.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("serve")
+    p.add_argument("--role", default="api,gateway,node")
+    sub.add_parser("migrate")
+    sub.add_parser("keygen")
+    p = sub.add_parser("create-org")
+    p.add_argument("name")
+    p.add_argument("email")
+    p = sub.add_parser("invite")
+    p.add_argument("--uses", type=int, default=1)
+    p.add_argument("--label", default="")
+    p.add_argument("--ttl-days", type=int, default=30)
+    p = sub.add_parser("node-token")
+    p.add_argument("--org", default=None)
+    p.add_argument("--label", default="")
+    p.add_argument("--uses", type=int, default=1)
+    p.add_argument("--ttl-days", type=int, default=7)
+    args = ap.parse_args(argv)
+    if args.command == "keygen":
+        print(f"HG_SECRET_KEY={secrets.token_hex(32)}\nHG_OPERATOR_KEY=hgo_{secrets.token_urlsafe(32)}\n"
+              f"HG_NODE_JOIN_TOKEN=hgj_{secrets.token_urlsafe(32)}")
+        return
+    if args.command == "serve":
+        settings = Settings.from_env(tuple(r.strip() for r in args.role.split(",") if r.strip()))
+        setup_logging(settings.log_level)
+        asyncio.run(serve(settings))
+        return
+    setup_logging("warning")
+    asyncio.run(admin(args.command, args))
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()

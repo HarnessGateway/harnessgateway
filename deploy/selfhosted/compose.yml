@@ -1,0 +1,83 @@
+# HarnessGateway, self-hosted on one machine: the same platform as the managed SaaS, configured for one host.
+#
+#   1. Install Docker and gVisor on the host:           sudo ../node/install-gvisor.sh
+#   2. cp .env.example .env and fill it in:              docker run --rm harnessgateway/platform:1 keygen >> .env
+#   3. docker compose up -d
+#   4. Create your organization (prints its admin key):  docker compose exec api harnessgateway create-org acme you@acme.io
+#   5. Point any OpenAI SDK at http://<host>:8000/v1 with that key. Register a provider, then call model="claude-code".
+#
+# Services: postgres (records), s3 (objects, RustFS), api (the API and the provider gateway), node (runs sandboxes).
+# The node needs the Docker socket and a host directory mounted at the SAME path, because the sandboxes it starts are
+# sibling containers that bind-mount their session directories from the host.
+name: harnessgateway
+
+x-platform: &platform
+  image: harnessgateway/platform:${HG_VERSION:-1}
+  env_file: .env
+  restart: unless-stopped
+  networks: [harnessgateway]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD:?set POSTGRES_ROOT_PASSWORD in .env}
+      HG_DB_PASSWORD: ${HG_DB_PASSWORD:?set HG_DB_PASSWORD in .env}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-harnessgateway.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d harnessgateway"]
+      interval: 5s
+      retries: 20
+    networks: [harnessgateway]
+
+  s3:
+    image: rustfs/rustfs:1.0.4
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${HG_S3_ACCESS_KEY:?set HG_S3_ACCESS_KEY in .env}
+      RUSTFS_SECRET_KEY: ${HG_S3_SECRET_KEY:?set HG_S3_SECRET_KEY in .env}
+    volumes:
+      - objects:/data
+    networks: [harnessgateway]
+
+  api:
+    <<: *platform
+    command: ["serve", "--role", "api,gateway"]
+    environment:
+      HG_DATABASE_URL: postgresql://harnessgateway:${HG_DB_PASSWORD}@postgres:5432/harnessgateway
+      HG_S3_ENDPOINT: http://s3:9000
+    ports:
+      - "${HG_BIND:-127.0.0.1}:8000:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      s3: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 10s
+      retries: 30
+
+  node:
+    <<: *platform
+    command: ["serve", "--role", "node"]
+    user: "0:0"
+    environment:
+      HG_API_URL: http://api:8000
+      HG_GATEWAY_URL: http://api:8081
+      HG_UPLINK_NETWORK: harnessgateway
+      HG_NODE_DIR: /var/lib/harnessgateway
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/harnessgateway:/var/lib/harnessgateway
+    depends_on:
+      api: {condition: service_healthy}
+
+networks:
+  harnessgateway:
+    name: harnessgateway
+
+volumes:
+  postgres:
+  objects:

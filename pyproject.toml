@@ -1,20 +1,29 @@
 [project]
 name = "harnessgateway"
-dynamic = ["version"]                # the newest section of CHANGELOG.md
-description = "HarnessGateway: coding-agent harnesses behind the OpenAI Responses API, sandboxed, driven by the packages organizations bring."
+version = "1.0.0"
+description = "HarnessGateway: run any coding-agent harness in a platform-owned sandbox behind the OpenAI Responses API."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-dependencies = ["cryptography>=42", "fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.7", "httpx>=0.27",
-                "openai>=3.35", "psycopg[binary]>=3.1", "boto3>=1.34"]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "pydantic>=2.7,<3",
+    "openai>=1.99",
+    "psycopg[binary,pool]>=3.2,<4",
+    "boto3>=1.34,<2",
+    "cryptography>=42",
+    "httpx>=0.27,<1",
+    "python-multipart>=0.0.9",
+]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "moto[server]>=5"]
+aws = []
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 harnessgateway = "harnessgateway.__main__:main"
-hg = "harnessgateway.cli:main"
 
 [project.urls]
 Homepage = "https://harnessgateway.ai"
@@ -24,20 +33,29 @@ Source = "https://github.com/HarnessGateway/harnessgateway"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.version]
-path = "CHANGELOG.md"
-pattern = '^## \[(?P<version>[^\]]+)\]'
-
 [tool.hatch.build.targets.wheel]
 packages = ["harnessgateway"]
-artifacts = ["harnessgateway/docs"]        # the built documentation site is ignored by git but ships
 
 [tool.hatch.build.targets.wheel.force-include]
-catalog = "harnessgateway/catalog"
-# The documentation site is built into harnessgateway/docs by `mkdocs build` (see mkdocs.yml) and
-# ships in the wheel from there; the API serves it at /docs.
+packages = "harnessgateway/builtin"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not docker'"
-markers = ["docker: needs a running Docker daemon"]
+markers = [
+    "integration: needs Postgres, S3 and Docker (run with HG_TEST_STACK=1)",
+    "live: calls real model providers (run with HG_TEST_LIVE=1)",
+]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
+ignore = ["S101", "S104", "S603", "S607", "S608", "B008"]   # S104: bind addresses are settings
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "B017"]
+"harnessgateway/node/**" = ["S108"]          # /tmp paths are inside the sandbox
+"skills/**" = ["S310"]                        # urlopen of the package's own provider URL
+"packages/**" = ["S310"]

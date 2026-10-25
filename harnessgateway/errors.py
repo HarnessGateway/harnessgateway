@@ -1,18 +1,50 @@
-"""Layer 0: refusals, by kind. Every layer raises these for what a caller asked wrong; a front end decides
-what each means on its wire (over HTTP: 400, 404, 409 and 429). Anything else that goes wrong is a bug."""
+"""Refusals, by kind. Every layer raises these for what a caller asked wrong; the HTTP layer maps each kind to one
+status code and the OpenAI error envelope. Anything else that escapes is a bug and becomes a 500."""
+from __future__ import annotations
 
 
-class Invalid(ValueError):
-    """The request can't be carried out as given."""
+class Refusal(Exception):
+    status = 400
+    type = "invalid_request_error"
+
+    def __init__(self, message: str, *, code: str | None = None, param: str | None = None):
+        super().__init__(message)
+        self.message, self.code, self.param = message, code, param
 
 
-class NotFound(LookupError):
-    """It names something that doesn't exist."""
+class Invalid(Refusal):
+    status = 400
 
 
-class Conflict(Exception):
-    """It collides with something already in progress."""
+class Unauthenticated(Refusal):
+    status = 401
+    type = "authentication_error"
 
 
-class TooMany(Exception):
-    """A ceiling on how often or how much was reached; the same request later may pass."""
+class Forbidden(Refusal):
+    status = 403
+    type = "permission_error"
+
+
+class NotFound(Refusal):
+    status = 404
+    type = "not_found_error"
+
+
+class Conflict(Refusal):
+    status = 409
+    type = "conflict_error"
+
+
+class TooLarge(Refusal):
+    status = 413
+
+
+class QuotaExceeded(Refusal):
+    status = 429
+    type = "rate_limit_error"
+
+
+class Unavailable(Refusal):
+    status = 503
+    type = "service_unavailable"

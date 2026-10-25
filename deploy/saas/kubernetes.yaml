@@ -1,0 +1,67 @@
+# The control plane on Kubernetes: api and gateway Deployments. Nodes run on VMs (see cloud-init.yaml), not in the
+# cluster: they need the host's Docker daemon with gVisor. Secrets come from a Secret named harnessgateway.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: harnessgateway}
+data:
+  HG_SIGNUP: invite
+  HG_S3_BUCKET: harnessgateway-prod
+  HG_S3_REGION: us-east-1
+  HG_LOG_LEVEL: info
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: harnessgateway-api}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: harnessgateway-api}}
+  template:
+    metadata: {labels: {app: harnessgateway-api}}
+    spec:
+      serviceAccountName: harnessgateway-api        # IAM: s3 on the bucket, kms:Encrypt on HG_KMS_KEY_ID
+      securityContext: {runAsNonRoot: true, runAsUser: 10002}
+      containers:
+        - name: api
+          image: harnessgateway/platform:1
+          args: ["serve", "--role", "api"]
+          envFrom: [{configMapRef: {name: harnessgateway}}, {secretRef: {name: harnessgateway}}]
+          ports: [{containerPort: 8000}]
+          readinessProbe: {httpGet: {path: /readyz, port: 8000}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 20}
+          resources: {requests: {cpu: 500m, memory: 512Mi}, limits: {memory: 2Gi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: harnessgateway-gateway}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: harnessgateway-gateway}}
+  template:
+    metadata: {labels: {app: harnessgateway-gateway}}
+    spec:
+      serviceAccountName: harnessgateway-gateway    # IAM: kms:Decrypt on HG_KMS_KEY_ID, s3:PutObject for captures
+      securityContext: {runAsNonRoot: true, runAsUser: 10002}
+      containers:
+        - name: gateway
+          image: harnessgateway/platform:1
+          args: ["serve", "--role", "gateway"]
+          envFrom: [{configMapRef: {name: harnessgateway}}, {secretRef: {name: harnessgateway}}]
+          ports: [{containerPort: 8081}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8081}, periodSeconds: 10}
+          resources: {requests: {cpu: 500m, memory: 256Mi}, limits: {memory: 1Gi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: harnessgateway-api}
+spec: {selector: {app: harnessgateway-api}, ports: [{port: 80, targetPort: 8000}]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harnessgateway-gateway
+  annotations: {service.beta.kubernetes.io/aws-load-balancer-internal: "true"}
+spec: {type: LoadBalancer, selector: {app: harnessgateway-gateway}, ports: [{port: 443, targetPort: 8081}]}

@@ -1,0 +1,17 @@
+#cloud-config
+# A node VM for the shared pool. Fill in the control plane URLs and the shared join token (from your secret store).
+write_files:
+  - path: /opt/harnessgateway/node.env
+    permissions: "0600"
+    content: |
+      HG_API_URL=https://api.example.com
+      HG_GATEWAY_URL=https://gateway.internal.example.com
+      HG_NODE_JOIN_TOKEN=__FROM_SECRET_STORE__
+      HG_NODE_SLOTS=8
+      HG_RUNTIME=runsc
+      HG_NODE_DIR=/var/lib/harnessgateway
+runcmd:
+  - [sh, -c, "curl -fsSL https://raw.githubusercontent.com/HarnessGateway/harnessgateway/main/deploy/node/install-gvisor.sh -o /opt/harnessgateway/install-gvisor.sh"]
+  - [sh, -c, "curl -fsSL https://raw.githubusercontent.com/HarnessGateway/harnessgateway/main/deploy/node/run-node.sh -o /opt/harnessgateway/run-node.sh"]
+  - [bash, /opt/harnessgateway/install-gvisor.sh]
+  - [bash, /opt/harnessgateway/run-node.sh]

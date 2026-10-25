@@ -1,105 +1,52 @@
-<p align="center"><img src="docs/assets/picky.png" width="140" alt=""></p>
-
 # HarnessGateway
 
-**Every coding agent, one API.** HarnessGateway speaks the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
-and nothing else. Behind it, a *harness package* your organization owns maps each request onto a
-command line, usually a coding-agent CLI (Claude Code, Codex, Pi, Hermes, Kilo, Cline, …), running
-in a sandbox the platform owns, with your provider keys swapped in for one request at a time.
-Switch harnesses by changing the model name; wrap [any CLI](docs/any-cli.md) the same way. The
-managed platform and a self-hosted one are the same image.
+Run any coding-agent harness (Claude Code, Codex, Hermes, Pi, or your own) in a platform-owned gVisor sandbox, behind
+the **OpenAI Responses API**. One platform serves managed multi-tenant SaaS, self-hosted and hybrid deployments.
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="https://hg.example.com/v1", api_key="hg_…")
-r = client.responses.create(model="codex", instructions="Keep patches small.",
-                            input="Add a --dry-run flag to bin/deploy", stream=True)
-for event in r:
-    print(event.type)        # response.output_item.added, response.output_text.delta, … response.completed
+
+client = OpenAI(base_url="https://api.harnessgateway.ai/v1", api_key="sk-hg-...")
+first = client.responses.create(model="claude-code/anthropic/claude-sonnet-4-5",
+                                input="Add a /health endpoint to app.py and run the tests.")
+print(first.output_text)
+follow_up = client.responses.create(model="claude-code", previous_response_id=first.id,
+                                    input="Now add a test for it.")
 ```
 
-## Deploy
+## How it works
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/HarnessGateway/harnessgateway/main/deploy/install.sh | bash
-```
+- **No schema of our own.** The client's Responses request goes, verbatim, to a **harness package**; the package runs
+  its CLI and prints Responses events, which the platform validates and streams back. The package decides how its
+  harness uses every field: it is the organization's operational IP.
+- **The platform owns the sandbox.** Each session gets a gVisor sandbox with its own workspace, home and state, kept
+  between turns. Outbound traffic only reaches the package's allowed hosts; provider keys never enter the sandbox (a
+  gateway swaps a per-turn token for the organization's key).
+- **Bring your own providers.** Organizations register their Anthropic- or OpenAI-shaped endpoints and pay them
+  directly. The platform bills only the compute, network and storage its sessions use, at unit cost times the markup.
+- **Packages are open.** Built-in packages ship with the platform; organizations upload their own or install any public
+  git repository (the free marketplace). The [Harness Package Builder skill](skills/harness-package-builder/SKILL.md)
+  teaches an agent (or a person) to build one.
 
-One container, every role, the data on a volume, sandboxes through the Docker socket. Or by hand:
+## Built-in harnesses
 
-```bash
-docker run -d --name harnessgateway --restart unless-stopped -p 8000:8000 \
-  -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data \
-  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:10
-docker logs harnessgateway         # the first boot's keys, shown once
-```
+| Harness | Package | Provider shapes |
+|---|---|---|
+| Claude Code | `packages/claude-code` | anthropic |
+| OpenAI Codex | `packages/codex` | openai (Responses) |
+| Hermes Agent | `packages/hermes` | see its README |
+| Pi | `packages/pi` | anthropic, openai |
+| shell (reference, no model) | `packages/shell` | none |
 
-`deploy/compose.yml` is the shape that grows: Postgres, S3 (MinIO), two API replicas behind Caddy
-and nodes that join; `--profile one-box` is the same behind TLS in one container.
-`harnessgateway doctor` checks every backend. The documentation is served by the platform at
-`/docs/`, the OpenAPI reference at `/reference`.
+## Run it
 
-## Then
+- Self-hosted on one machine: [`deploy/selfhosted`](deploy/selfhosted/README.md)
+- Managed SaaS and hybrid: [`deploy/saas`](deploy/saas/README.md)
+- Development: `uv venv && uv pip install -e '.[dev]' && pytest tests/unit`
 
-1. **Sign in**: `hg login URL KEY` with the owner's key from the log.
-2. **Add a provider**: `hg providers put NAME --url U --api A --key K`, an endpoint and its key
-   (Anthropic, OpenAI, DeepSeek, any compatible). The key is sealed on arrival; no sandbox ever sees it.
-3. **Add a harness**: `hg harness new NAME --catalog PACKAGE`, or push one of your own. A harness is
-   a git repository the platform hosts: `hg harness pull`, change, `hg harness push`.
-4. **Ask**: `hg ask NAME "…" --stream`, or any OpenAI SDK. The workspace persists across turns;
-   continue with `previous_response_id`. A request sent while the session runs a turn stops that
-   turn and runs the new request on the same workspace, like a coding agent's web view.
+## Documentation
 
-## The division of labour
+[Architecture](docs/architecture.md) · [API](docs/api.md) · [Package contract](docs/package-contract.md) ·
+[Operations](docs/operations.md) · [Billing](docs/billing.md) · [Security](docs/security.md)
 
-| The package owns | The platform owns |
-|---|---|
-| reading the request (`request.json`, verbatim) and building the CLI invocation | the wire: validation against the SDK's schema, streaming, continuation, background, cancel, one turn at a time per session |
-| the CLI's install (`install.sh`), its seeds (`AGENTS.md`, MCP config, skills, settings) | multi-tenant sandboxing: a fresh hardened container per turn, a uid per organization, one door out; the tenant controls only the egress list |
-| mapping the CLI's output onto Responses stream events | provider keys swapped in per request through a gateway that trades a session token for the key |
-| the final shape, when the events are not enough (`response.sh`) | tracing of every request, response, cancel and provider exchange |
-| | organizations, members, keys; harness repositories with history; sessions whose workspaces persist |
-
-## The catalog
-
-Twelve packages ship with the platform, each built from its CLI's own help and documentation and
-run against a live provider before release: a template, a `shell` package that runs any command
-line with no provider at all, and Claude Code, Codex, Pi, Oh My Pi, Kilo Code, DeepSeek Harness,
-Hermes Agent, Cline, OpenClaw and Command Code. Where a CLI cannot do something yet (resume
-headlessly, stream its events) the package says so. The research behind them is [the Responses
-wire](docs/responses-wire.md): every request field mapped to each CLI's invocation, every response
-field to its output, the seeds each reads, and the precedence a package follows when a CLI offers
-several ways.
-
-## Write a package
-
-```
-harness.json      contract, the CLI's name and version, default provider and model, egress, timeouts, what it accepts
-install.sh        puts the CLI under $HG_TOOLS, once per commit
-request.sh        reads $HG_REQUEST, runs the CLI, prints Responses stream events
-response.sh       (optional) shapes output, usage and status at the end
-seeds/workspace/  copied into the workspace once per session
-seeds/home/       copied into $HOME every turn
-```
-
-```bash
-hg harness pull my-harness ./pkg
-hg harness run ./pkg --input "Create hello.txt"      # on your machine, no sandbox, your keys
-hg harness push my-harness ./pkg -m "map tool results"
-```
-
-[Write a package](docs/packages.md) is the contract; `.agents/skills/harness-package` is the
-procedure for writing one with a coding agent, and `.agents/skills/harness-mapping` the procedure
-for researching a CLI first.
-
-## Develop the platform
-
-```bash
-uv sync --extra dev
-uv run pytest -q                          # without Docker
-uv run pytest -q -m docker                # a real sandbox
-uv run harnessgateway serve --dev         # the platform without Docker, for packages
-```
-
-[Contributing and releases](docs/contributing.md) has the layers (kernel, contract, backends,
-domain, services, api), the conformance suites every backend passes, and the release flow: a
-`CHANGELOG.md` section merged to `main` is a release. Apache-2.0.
+Licensed under the Apache License 2.0.

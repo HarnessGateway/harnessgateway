@@ -1,46 +1,65 @@
-# Every pull request and every push to main: the suite on both backends (SQLite and a directory;
-# Postgres and a local S3 through moto), the Docker tests against a real daemon, the layer rule,
-# lint, and the documentation site built strictly.
 name: ci
 on:
-  push:
-    branches: [main]
+  push: {branches: [main, rebuild]}
   pull_request:
+
 jobs:
-  tests:
+  check:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.12 && uv pip install -e '.[dev]'
+      - run: .venv/bin/ruff check harnessgateway sandbox/hgkit skills tests packages
+      - run: .venv/bin/pytest tests/unit -q
+      - name: package mapper tests
+        run: for t in packages/*/tests; do [ -d "$t" ] && .venv/bin/pytest "$t" -q; done; true
+
+  integration:
+    needs: check
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
-        env: {POSTGRES_USER: hg, POSTGRES_PASSWORD: hg, POSTGRES_DB: hg}
+        env: {POSTGRES_PASSWORD: root}
         ports: ["5432:5432"]
-        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
-    env:
-      HG_TEST_POSTGRES: postgresql://hg:hg@localhost:5432/hg
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --python ${{ matrix.python }} --extra dev pytest -q
-  docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: docker pull -q python:3.12-slim
-      - run: uv run --extra dev pytest -q -m docker
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uvx ruff check --select F,E9 --target-version py312 .
-      - run: for d in catalog/*/; do bash -n "$d/install.sh" && bash -n "$d/request.sh"; done
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uvx --from mkdocs-material mkdocs build --strict
+      - name: gVisor
+        run: sudo deploy/node/install-gvisor.sh
+      - name: images
+        run: |
+          docker build -t harnessgateway/platform:1 .
+          docker build -t harnessgateway/sandbox:1 sandbox/
+      - name: object storage
+        run: docker run -d --name s3 -p 9000:9000 -e RUSTFS_ACCESS_KEY=ci -e RUSTFS_SECRET_KEY=cisecret123 rustfs/rustfs:1.0.4
+      - name: database role
+        run: |
+          PGPASSWORD=root psql -h 127.0.0.1 -U postgres -c "CREATE ROLE hg LOGIN PASSWORD 'hg' NOSUPERUSER NOBYPASSRLS" \
+            -c "CREATE DATABASE hg OWNER hg"
+      - name: stack
+        run: |
+          uv venv --python 3.12 && uv pip install -e '.[dev]'
+          cat > ci.env <<EOF
+          HG_DATABASE_URL=postgresql://hg:hg@127.0.0.1:5432/hg
+          HG_SECRET_KEY=$(openssl rand -hex 32)
+          HG_OPERATOR_KEY=hgo_ci
+          HG_NODE_JOIN_TOKEN=hgj_$(openssl rand -hex 24)
+          HG_S3_ENDPOINT=http://127.0.0.1:9000
+          HG_S3_BUCKET=ci
+          HG_S3_ACCESS_KEY=ci
+          HG_S3_SECRET_KEY=cisecret123
+          HG_API_URL=http://127.0.0.1:8000
+          HG_GATEWAY_URL=http://172.17.0.1:8081
+          HG_NODE_DIR=/tmp/hg-node
+          EOF
+          set -a; . ./ci.env; set +a
+          nohup .venv/bin/harnessgateway serve --role api,gateway > api.log 2>&1 &
+          until curl -sf http://127.0.0.1:8000/readyz; do sleep 1; done
+          sudo -E env "PATH=$PATH" nohup .venv/bin/harnessgateway serve --role node > node.log 2>&1 &
+      - name: integration tests
+        run: HG_TEST_API=http://127.0.0.1:8000 HG_TEST_OPERATOR_KEY=hgo_ci HG_TEST_DATABASE_URL=postgresql://hg:hg@127.0.0.1:5432/hg .venv/bin/pytest tests/integration -v
+      - if: failure()
+        run: tail -200 api.log node.log
