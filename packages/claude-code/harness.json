@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "name": "claude-code",
+  "version": "1.0.0",
+  "description": "Anthropic's Claude Code CLI (@anthropic-ai/claude-code 2.1.310), run headless (claude -p --output-format stream-json --include-partial-messages) with permissions skipped inside the sandbox, on any Anthropic Messages-shaped provider (the default is DeepSeek's Anthropic-compatible endpoint with deepseek-flash). The request's input becomes the prompt, instructions are appended to the system prompt, reasoning.effort, text.format json_schema, MCP tools and max_tool_calls map to the CLI's own flags, and turns after the first resume the CLI's session. Assistant text streams token by token; thinking becomes reasoning items, Bash runs become shell_call items, Write/Edit/MultiEdit become apply_patch_call items, MCP tools become mcp_call items and every other tool a function_call, each with its output; token usage is reported on the final response.",
+  "provider": {"apis": ["anthropic"]},
+  "defaults": {"model": "deepseek-flash"},
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "timeout_s": 3600, "stop_grace_s": 10}
+}
