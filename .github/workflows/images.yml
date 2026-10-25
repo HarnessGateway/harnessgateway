@@ -50,7 +50,7 @@ jobs:
     env:
       IMAGE: harnessgateway/${{ matrix.image }}:scan
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: build
         run: docker build --pull -t "$IMAGE" "${{ matrix.context }}"
