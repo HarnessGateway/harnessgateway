@@ -20,6 +20,13 @@ platform itself.
   refusing private addresses. The sandbox has no DNS. Provider calls go through the door to the gateway.
 - Packages are verified against their digest on the node; archives are refused if they hold links, devices or paths
   outside the root.
+- **Images**: the sandbox and platform images are built on Chainguard's Wolfi base, pinned by digest. Neither keeps a
+  package manager, BusyBox, `su`/`sudo` or any setuid or setgid file; the platform image has no `/bin/sh` (its bash
+  only syntax-checks package scripts), and the sandbox's one shell is bash. Every change to what goes into either
+  image, and a weekly schedule, runs `.github/workflows/images.yml`: the build, a hardening check (non-root user, no
+  setuid/setgid, no package manager or privilege tool) and a Trivy scan that fails on any fixable HIGH or CRITICAL
+  vulnerability, with the full report and a CycloneDX SBOM kept per run. Accepted risks are listed in `.trivyignore`, each with a reason and an expiry. The
+  tools a package installs are cached per sandbox image, so a rebuilt image reinstalls them.
 
 ## Credentials
 

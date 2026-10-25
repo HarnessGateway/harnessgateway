@@ -16,8 +16,7 @@ Call it as `pi/<provider>/<model>`. Provider shapes: `anthropic` and `openai` (`
 | `tests/` | recorded Pi streams from real turns (`fixtures/*.jsonl`) and `test_map.py` (offline) |
 
 `--ignore-scripts`: the only dependency install scripts in 1.4.0's tree are protobufjs's `postinstall` (a version
-warning) and @google/genai's no-op `preinstall` (1.3.0 needed npm's allow-scripts flags for the same two; npm 10 in the
-sandbox image has no such flags, and neither script is needed).
+warning) and @google/genai's no-op `preinstall`, and neither is needed.
 
 ## Provider
 

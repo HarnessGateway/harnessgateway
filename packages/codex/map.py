@@ -254,7 +254,7 @@ class CodexMapper:
                                "name": str(item.get("tool") or ""),
                                "arguments": args if isinstance(args, str) else json.dumps(args or {}, ensure_ascii=False),
                                "status": "failed" if message else "completed", "output": output}
-        if message:   # the SDK's McpCall.error is an object (hgkit's Emitter.mcp passes a string, which it refuses)
+        if message:   # the SDK's McpCall.error is an object
             mcp["error"] = {"type": "mcp_tool_execution_error", "content": [{"type": "text", "text": message}]}
         self.out.item(mcp)
 

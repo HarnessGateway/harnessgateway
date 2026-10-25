@@ -78,6 +78,7 @@ class Running:
 class Node:
     def __init__(self, settings: Settings):
         self.s = settings
+        self.sandbox_id = ""                              # the sandbox image's id, read at start
         self.dir = settings.node_dir
         self.client = ControlClient(settings.api_url, self.dir / "node.json")
         self.sessions: dict[str, Warm] = {}
@@ -109,6 +110,8 @@ class Node:
             if (await docker("image", "inspect", image, timeout=60)).code != 0:
                 log.info("pulling %s", image)
                 (await docker("pull", image, timeout=1800)).check(f"pull {image}")
+        self.sandbox_id = (await docker("image", "inspect", "-f", "{{.Id}}", self.s.sandbox_image,
+                                        timeout=60)).check("sandbox image").out.decode().strip()
 
     async def _heartbeats(self) -> None:
         while True:
@@ -214,15 +217,17 @@ class Node:
         return folder
 
     @staticmethod
-    def tools_key(package_dir: Path, manifest: dict[str, Any]) -> str:
-        """The tools layer depends on install.sh and the install section alone (install.sh is self-contained), so
-        package versions that change only request.sh or seeds share one install."""
-        h = hashlib.sha256((package_dir / "install.sh").read_bytes())
+    def tools_key(package_dir: Path, manifest: dict[str, Any], sandbox_id: str) -> str:
+        """The tools layer depends on install.sh, the install section (install.sh is self-contained) and the sandbox
+        image it was built in (its runtimes and libc), so package versions that change only request.sh or seeds share
+        one install, and a new sandbox image installs afresh."""
+        h = hashlib.sha256(sandbox_id.encode())
+        h.update((package_dir / "install.sh").read_bytes())
         h.update(json.dumps(manifest["install"], sort_keys=True).encode())
         return h.hexdigest()
 
     async def _tools(self, job: dict[str, Any], package_dir: Path) -> Path:
-        digest = self.tools_key(package_dir, job["package"]["manifest"])
+        digest = self.tools_key(package_dir, job["package"]["manifest"], self.sandbox_id)
         tools = self.dir / "tools" / digest
         async with self.lock(f"tools:{digest}"):
             if tools.is_dir():

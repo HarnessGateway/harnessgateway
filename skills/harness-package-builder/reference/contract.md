@@ -74,8 +74,13 @@ digest it started on; installing a new version affects new sessions only.
 Provider paths the gateway relays: `anthropic`: `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models`;
 `openai`: `/v1/chat/completions`, `/v1/completions`, `/v1/responses...`, `/v1/embeddings`, `/v1/models`.
 
-The sandbox image provides bash, coreutils, git, curl, jq, ripgrep, python3 (3.11, venv, pip), node 22 (npm) and the
-hgkit library. The root filesystem is read-only; write only to the workspace, `$HOME`, `$HG_STATE` and `/tmp`.
+The sandbox image (Wolfi, glibc) provides bash (also `/bin/sh`), coreutils, findutils, grep, sed, gawk, diffutils,
+patch, tar, gzip, xz, unzip, file, procps, setsid, which, flock, git, curl, jq, ripgrep, python3 (3.12, venv, pip), node 24 LTS (npm 12) and
+the hgkit library. It has no package manager, BusyBox, sudo or setuid files: whatever else your harness needs,
+`install.sh` installs into `$HG_TOOLS`. npm 12 runs no dependency install scripts unless allowed, so name the ones you
+need (`npm install --allow-scripts=<package> ...`) or pass `--ignore-scripts`. The root filesystem is read-only; write
+only to the workspace, `$HOME`, `$HG_STATE` and `/tmp`. The tools a package installs are cached per sandbox image, so a
+new image reinstalls them.
 
 ## Output
 
