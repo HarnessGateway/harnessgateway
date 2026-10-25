@@ -401,7 +401,8 @@ class Delivery:
                 await conclude(tx, self.blobs, turn, Status.FAILED, reason=Reason.INVALID_OUTPUT,
                                message=turn["hg_message"] or "", **kwargs)
             elif turn["cancel"] and (outcome == "stopped" or turn["terminal"] is None):
-                await conclude(tx, self.blobs, turn, Status.CANCELLED, reason=Reason(turn["cancel"]), **kwargs)
+                await conclude(tx, self.blobs, turn, Status.CANCELLED, reason=Reason(turn["cancel"]),
+                               output=await self._items(tx, turn, wire.TurnOutput()), **kwargs)
             elif outcome == "failed":
                 reason = Reason(report.get("reason") or Reason.SANDBOX_FAILED)
                 await conclude(tx, self.blobs, turn, Status.FAILED, reason=reason,
@@ -409,18 +410,25 @@ class Delivery:
             elif turn["terminal"] is not None:
                 await self._from_terminal(tx, turn, **kwargs)
             elif outcome == "timed_out":
-                await conclude(tx, self.blobs, turn, Status.INCOMPLETE, reason=Reason.TIMEOUT, **kwargs)
+                await conclude(tx, self.blobs, turn, Status.INCOMPLETE, reason=Reason.TIMEOUT,
+                               output=await self._items(tx, turn, wire.TurnOutput()), **kwargs)
             else:
                 last = " | ".join(stderr.strip().splitlines()[-3:])
                 await conclude(tx, self.blobs, turn, Status.FAILED, reason=Reason.NO_TERMINAL_EVENT,
                                message=f"request.sh exited {code} without a terminal event"
                                        + (f"; stderr: {last[-1000:]}" if last else ""), **kwargs)
 
-    async def _from_terminal(self, tx: Tx, turn: dict[str, Any], **kwargs: Any) -> None:
-        out = wire.TurnOutput(terminal=wire.Terminal(turn["terminal"]["status"], turn["terminal"]["response"]))
+    @staticmethod
+    async def _items(tx: Tx, turn: dict[str, Any], out: wire.TurnOutput) -> list[dict[str, Any]]:
+        """The items the package finished, in order (each was validated when it arrived)."""
         for r in await tx.all("SELECT data FROM turn_events WHERE turn_id = %s AND data->>'type' = "
                               "'response.output_item.done' ORDER BY seq", turn["id"]):
             out.add_item(r["data"]["item"])
+        return [out.items[k] for k in out.order]
+
+    async def _from_terminal(self, tx: Tx, turn: dict[str, Any], **kwargs: Any) -> None:
+        out = wire.TurnOutput(terminal=wire.Terminal(turn["terminal"]["status"], turn["terminal"]["response"]))
+        await self._items(tx, turn, out)
         try:
             status, output, usage, error, incomplete, meta = out.outcome()
         except wire.HarnessOutputError as e:

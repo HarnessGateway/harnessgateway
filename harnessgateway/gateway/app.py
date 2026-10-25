@@ -74,6 +74,7 @@ class Gateway:
         self.plat = plat
         self._grants: dict[str, tuple[float, Grant | None]] = {}
         self._checked: dict[str, float] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(connect=15, read=900, write=60, pool=30), trust_env=True,
                                         follow_redirects=False, http2=False)
 
@@ -129,12 +130,18 @@ class Gateway:
                         captured.extend(chunk[:CAPTURE_BODY_MAX - len(captured)])
                     yield chunk
             finally:
+                if grant.capture:                         # its own task: a client that hangs up cancels this one
+                    self._spawn(self.capture(grant, request.method, path, upstream.status_code, body, bytes(captured),
+                                             started))
                 await upstream.aclose()
-                if grant.capture:
-                    await self.capture(grant, request.method, path, upstream.status_code, body, bytes(captured), started)
 
         out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in HOP}
         return StreamingResponse(relay(), status_code=upstream.status_code, headers=out_headers)
+
+    def _spawn(self, work: Any) -> None:
+        task = asyncio.get_running_loop().create_task(work)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def capture(self, grant: Grant, method: str, path: str, status: int, request: bytes, response: bytes,
                       started: float) -> None:
@@ -159,6 +166,8 @@ def create_gateway(plat: Platform) -> FastAPI:
         try:
             yield
         finally:
+            if gw._tasks:
+                await asyncio.wait(gw._tasks, timeout=10)  # captures in flight
             await gw.client.aclose()
             await plat.close()
 

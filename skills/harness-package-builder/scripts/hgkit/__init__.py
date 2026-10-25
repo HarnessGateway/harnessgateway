@@ -221,8 +221,9 @@ class Emitter:
 
     def mcp(self, server: str, name: str, arguments: Any, output: str | None = None, error: str | None = None) -> None:
         args = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
+        failure = {"type": "mcp_tool_execution_error", "content": [{"type": "text", "text": error}]} if error else None
         self.item({"type": "mcp_call", "server_label": server, "name": name, "arguments": args,
-                   "status": "failed" if error else "completed", "output": output, "error": error})
+                   "status": "failed" if error else "completed", "output": output, "error": failure})
 
     # the end ────────────────────────────────────────────────────────────────────────────────────────────────────────
     @staticmethod

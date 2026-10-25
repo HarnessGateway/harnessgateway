@@ -64,6 +64,7 @@ class Settings:
     node_name: str = field(default_factory=socket.gethostname)
     node_dir: Path = Path("/var/lib/harnessgateway")
     node_slots: int = 4
+    node_warm_max: int = 16
     sandbox_image: str = "harnessgateway/sandbox:1"
     platform_image: str = "harnessgateway/platform:1"
     runtime: str = "runsc"
@@ -115,6 +116,7 @@ class Settings:
             api_url=get("HG_API_URL").rstrip("/"), node_join_token=get("HG_NODE_JOIN_TOKEN"),
             node_name=get("HG_NODE_NAME") or socket.gethostname(),
             node_dir=Path(get("HG_NODE_DIR", "/var/lib/harnessgateway")), node_slots=integer("HG_NODE_SLOTS", 4),
+            node_warm_max=integer("HG_NODE_WARM_MAX", 4 * integer("HG_NODE_SLOTS", 4)),
             sandbox_image=get("HG_SANDBOX_IMAGE", "harnessgateway/sandbox:1"),
             platform_image=get("HG_PLATFORM_IMAGE", "harnessgateway/platform:1"),
             runtime=get("HG_RUNTIME", "runsc"), insecure_runtime=get("HG_INSECURE_RUNTIME") in ("1", "true", "yes"),
@@ -150,5 +152,7 @@ class Settings:
                                   "is for development only")
             if self.node_slots < 1:
                 raise ConfigError("HG_NODE_SLOTS is at least 1")
+            if self.node_warm_max < self.node_slots:
+                raise ConfigError("HG_NODE_WARM_MAX (session boxes kept warm) is at least HG_NODE_SLOTS")
             if self.ca_file is not None and not self.ca_file.is_file():
                 raise ConfigError(f"HG_CA_FILE {self.ca_file} is not a file")

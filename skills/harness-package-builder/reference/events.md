@@ -26,7 +26,7 @@ Each is an `output_item.added` + `output_item.done` pair (hgkit `out.item(...)` 
 | thinking | `{"type":"reasoning","id":..,"summary":[{"type":"summary_text","text":..}]}` | `out.reasoning(text)` |
 | shell command | `shell_call` `{"id","call_id","status":"completed","action":{"commands":[cmd]}}` then `shell_call_output` `{"id","call_id","status":"completed","output":[{"stdout","stderr","outcome":{"type":"exit","exit_code":0}}]}` | `out.shell(cmd, stdout=.., stderr=.., exit_code=0)` |
 | file write / edit / delete | `apply_patch_call` `{"id","call_id","status":"completed","operation":{"type":"create_file"\|"update_file"\|"delete_file","path",("diff")}}` then `apply_patch_call_output` `{"id","call_id","status":"completed"\|"failed","output"}` | `out.patch("update_file", path, diff)` |
-| MCP tool | `mcp_call` `{"id","server_label","name","arguments":"{...}","status":"completed"\|"failed","output","error"}` | `out.mcp(server, name, args, output=..)` |
+| MCP tool | `mcp_call` `{"id","server_label","name","arguments":"{...}","status":"completed"\|"failed","output","error"}`; `error` is an object such as `{"type":"mcp_tool_execution_error","content":[...]}`, never a string | `out.mcp(server, name, args, output=..)` or `error=".."` |
 | any other tool | `function_call` `{"call_id","name","arguments":"{...}","status":"completed"}` then `function_call_output` `{"id","call_id","output","status"}` | `out.function(name, args, output)` |
 | web search | `web_search_call` `{"id","status":"completed","action":{"type":"search","query":..}}` | `out.item({...})` |
 

@@ -30,6 +30,7 @@ harnessgateway node-token [--org ORG_ID]         a node join token (shared, or d
 | `HG_GATEWAY_URL` | node | How sandboxes' egress doors reach the gateway (from the node's uplink network). |
 | `HG_NODE_DIR` | node | Host directory for sessions, packages and tools (`/var/lib/harnessgateway`). When the node runs in a container, mount it at the same path. |
 | `HG_NODE_SLOTS` | node | Concurrent turns on this node (4). |
+| `HG_NODE_WARM_MAX` | node | Session boxes kept warm between turns (4 x slots); the longest idle is closed to make room. Each holds a Docker network, so the host needs small address pools (`install-gvisor.sh` sets them). |
 | `HG_NODE_NAME` | node | Defaults to the hostname. |
 | `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE` | node | `harnessgateway/sandbox:1`, `harnessgateway/platform:1` (the door runs from the platform image). |
 | `HG_RUNTIME` | node | `runsc` (required). Anything else needs `HG_INSECURE_RUNTIME=1` and is for development only. |

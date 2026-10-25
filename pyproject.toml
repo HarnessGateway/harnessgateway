@@ -10,7 +10,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.30,<1",
     "pydantic>=2.7,<3",
-    "openai>=1.99",
+    "openai==3.37.0",                # the Responses schema packages are validated against
     "psycopg[binary,pool]>=3.2,<4",
     "boto3>=1.34,<2",
     "cryptography>=42",
@@ -40,7 +40,8 @@ packages = ["harnessgateway"]
 packages = "harnessgateway/builtin"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages"]
+addopts = "--import-mode=importlib"           # every package has its own tests/test_map.py
 markers = [
     "integration: needs Postgres, S3 and Docker (run with HG_TEST_STACK=1)",
     "live: calls real model providers (run with HG_TEST_LIVE=1)",

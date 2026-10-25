@@ -53,6 +53,15 @@ class BoxSpec:
     tmp_mb: int = 1024
 
 
+# Everything but PID 1 (tini), the keeper (`sleep infinity`, tini's child) and this shell.
+KILL_ALL = r"""for d in /proc/[0-9]*; do
+  p=${d#/proc/}
+  [ "$p" = 1 ] || [ "$p" = $$ ] && continue
+  ppid=$(sed 's/.*) //' "$d/stat" 2>/dev/null | cut -d' ' -f2)
+  [ "$ppid" = 1 ] && [ "$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" = "sleep infinity " ] && continue
+  kill -KILL "$p" 2>/dev/null
+done; true"""
+
 class Box:
     def __init__(self, spec: BoxSpec, settings: Settings, door_dir: Path):
         self.spec, self.settings, self.door_dir = spec, settings, door_dir
@@ -126,9 +135,15 @@ class Box:
     async def exec(self, command: list[str], env: dict[str, str]) -> Exec:
         return await Exec.start(self.container, command, user=f"{UID}:{UID}", workdir="/workspace", env=env)
 
-    async def signal_group(self, pidfile: str, signal: str) -> None:
+    async def terminate(self, pidfile: str) -> None:
+        """SIGTERM to the turn's process group, so the package can stop its harness its own way."""
         with contextlib.suppress(DockerError):
-            await self.sh(f'p=$(cat {pidfile} 2>/dev/null) && kill -{signal} "-$p" 2>/dev/null; true', timeout=15)
+            await self.sh(f'p=$(cat {pidfile} 2>/dev/null) && kill -TERM "-$p" 2>/dev/null; true', timeout=15)
+
+    async def kill_all(self) -> None:
+        """SIGKILL to every process in the box, whatever group a harness moved them to, but its init and keeper."""
+        with contextlib.suppress(DockerError):
+            await self.sh(KILL_ALL, timeout=15)
 
     def counters(self) -> dict[str, int]:
         try:

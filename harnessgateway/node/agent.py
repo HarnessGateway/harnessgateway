@@ -179,6 +179,14 @@ class Node:
             log.exception("reporting usage failed; keeping it for the next report")
             self.pending_usage = rows + self.pending_usage
 
+    async def _make_room(self) -> None:
+        """Keep at most HG_NODE_WARM_MAX boxes: each holds a network and memory, so the longest idle goes first."""
+        while len(self.sessions) >= self.s.node_warm_max:
+            idle = [w for w in self.sessions.values() if not w.busy]
+            if not idle:
+                return
+            await self._close(min(idle, key=lambda w: w.idle_since))
+
     async def _close(self, warm: Warm) -> None:
         if self.sessions.get(warm.session_id) is not warm:
             return
@@ -272,6 +280,7 @@ class Node:
             return warm
         if warm:
             await self._close(warm)
+        await self._make_room()
         root = fresh_dir(self.dir / "sessions" / sid)
         dirs = {name: fresh_dir(root / name, owner=UID, mode=0o700) for name in ("workspace", "home", "state")}
         fresh_dir(root / "run")
@@ -445,11 +454,11 @@ class Node:
         return report
 
     async def _stop(self, warm: Warm, ex, grace: int) -> None:
-        await warm.box.signal_group(PIDFILE, "TERM")
+        await warm.box.terminate(PIDFILE)
         try:
             await asyncio.wait_for(ex.wait(), grace)
         except TimeoutError:
-            await warm.box.signal_group(PIDFILE, "KILL")
+            await warm.box.kill_all()
             ex.kill()
 
     async def _checkpoint(self, job: dict[str, Any], warm: Warm) -> dict[str, Any]:

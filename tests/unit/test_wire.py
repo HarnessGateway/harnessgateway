@@ -75,6 +75,24 @@ def test_invalid_events_are_refused():
         t2.line(json.dumps({"type": "response.output_item.done", "output_index": 0, "item": {}}))
 
 
+def test_failed_mcp_calls_validate():
+    lines = emitted(lambda out: (out.mcp("srv", "tool", {}, error="boom"), out.completed()))
+    t = wire.TurnOutput()
+    for x in lines:
+        t.line(x)
+    (item,) = t.outcome()[1]
+    assert item["status"] == "failed" and item["error"]["type"] == "mcp_tool_execution_error"
+
+
+def test_invalid_items_name_their_own_type():
+    t = wire.TurnOutput()
+    item = {"type": "mcp_call", "id": "m", "server_label": "s", "name": "n", "arguments": "{}", "error": "boom"}
+    with pytest.raises(wire.HarnessOutputError, match=r"item \(mcp_call\)\.error"):
+        t.line(json.dumps({"type": "response.output_item.done", "output_index": 0, "item": item}))
+    with pytest.raises(wire.HarnessOutputError, match="not a Responses output item type"):
+        t.line(json.dumps({"type": "response.output_item.done", "output_index": 0, "item": {"type": "nope"}}))
+
+
 def test_envelope_events_from_packages_are_dropped():
     t = wire.TurnOutput()
     assert t.line(json.dumps({"type": "response.created", "response": {}})) == ("envelope", "response.created")

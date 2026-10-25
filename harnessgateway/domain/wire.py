@@ -35,16 +35,17 @@ _RESPONSE_ECHO = ("instructions", "temperature", "top_p", "tools", "tool_choice"
 _SDK_ERROR_CODES = frozenset(typing.get_args(R.response_error.ResponseError.model_fields["code"].annotation))
 
 
-def _event_models() -> dict[str, type[BaseModel]]:
-    union = typing.get_args(R.ResponseStreamEvent)[0]
+def _by_type(annotated_union: Any) -> dict[str, type[BaseModel]]:
+    """{type literal: model} for one of the SDK's discriminated unions."""
     out: dict[str, type[BaseModel]] = {}
-    for model in typing.get_args(union):
-        (literal,) = typing.get_args(model.model_fields["type"].annotation)
-        out[literal] = model
+    for model in typing.get_args(typing.get_args(annotated_union)[0]):
+        for literal in typing.get_args(model.model_fields["type"].annotation):
+            out[literal] = model
     return out
 
 
-EVENT_MODELS = _event_models()
+EVENT_MODELS = _by_type(R.ResponseStreamEvent)
+ITEM_MODELS = _by_type(R.ResponseOutputItem)
 
 
 class HarnessOutputError(Exception):
@@ -55,6 +56,18 @@ def _first(e: ValidationError) -> str:
     err = e.errors()[0]
     where = ".".join(str(p) for p in err.get("loc", ()))
     return f"{where or 'value'}: {err.get('msg', 'invalid')}"
+
+
+def check_item(item: Any, where: str) -> None:
+    """An output item against the SDK model its own `type` names, so a refusal names the field that is wrong."""
+    kind = item.get("type") if isinstance(item, dict) else None
+    model = ITEM_MODELS.get(kind) if isinstance(kind, str) else None
+    if model is None:
+        raise HarnessOutputError(f"{where}: {kind!r} is not a Responses output item type")
+    try:
+        model.model_validate(item)
+    except ValidationError as e:
+        raise HarnessOutputError(f"{where} ({kind}).{_first(e)}") from None
 
 
 # ── in ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -171,6 +184,8 @@ class TurnOutput:
         model = EVENT_MODELS.get(kind)
         if model is None:
             raise HarnessOutputError(f"{kind} is not a Responses stream event")
+        if isinstance(event.get("item"), dict):
+            check_item(event["item"], f"{kind}: item")
         try:
             model.model_validate({**event, "sequence_number": 0})
         except ValidationError as e:
@@ -194,6 +209,8 @@ class TurnOutput:
         r = self.terminal.response
         output = r.get("output") if isinstance(r.get("output"), list) and r.get("output") else \
             [self.items[k] for k in self.order]
+        for i, item in enumerate(output):
+            check_item(item, f"output.{i}")
         try:
             output = [i.model_dump(mode="json", exclude_none=True) for i in ITEMS.validate_python(output)]
         except ValidationError as e:
