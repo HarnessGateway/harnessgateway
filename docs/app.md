@@ -2,8 +2,8 @@
 
 The app at `/app` is one page over the same routes any client uses; nothing it does is unavailable
 to the [API](api.md) or the [command line](cli.md). It is the way a coding agent's web view works:
-sign in, add a provider, add a harness, start a session with the harness of your choice, type,
-press Enter.
+sign in, Setup (add a provider, add a harness), Sessions (every session, and a new one with the
+harness of your choice), type, press Enter.
 
 ## Sign in
 
@@ -14,8 +14,7 @@ organizations switches between them at the top of the sidebar.
 
 ## Providers and harnesses
 
-The setup page (the sidebar's "Providers and harnesses", and where a new organization lands) has
-two lists. A **provider** is a model endpoint and its key: name, API shape, URL, key; the key is
+Setup, in the sidebar (and where a new organization lands), has two lists. A **provider** is a model endpoint and its key: name, API shape, URL, key; the key is
 sealed on arrival and swapped in at the gateway per request, so no sandbox ever sees it
 ([Providers](providers.md)). A **harness** is a package that runs a CLI: pick one from the catalog
 and give it a name, or upload a package archive of your own ([Harnesses](harnesses.md)). Owners add
@@ -27,10 +26,18 @@ and remove both; members see them.
 
 ## Sessions
 
+Sessions, in the sidebar, lists every session the member can see (an owner sees the
+organization's), newest first, with its harness, its turns and whether it is running; open one to
+continue it.
+
+<figure class="shot" markdown>
+![Sessions](assets/console/sessions.png)
+</figure>
+
 "+ New session" opens the composer with a harness to choose (and a provider and model when the
 package has no default or you want another). Type and press Enter; Shift+Enter is a new line. The
 items stream in as the harness produces them: commands with their output, patches, reasoning,
-messages. The session appears in the sidebar with its title (the first line you typed) and reopens
+messages. The session appears in the list with its title (the first line you typed) and reopens
 from there, including one still running from another client: the stream resumes from its start.
 
 <figure class="shot" markdown>

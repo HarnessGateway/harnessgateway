@@ -4,6 +4,13 @@ Every release is a section here, newest first, and the newest section's heading 
 A merge to `main` that adds a section releases it: the release workflow tags that version, builds
 the wheel and the image, and publishes the section as its notes.
 
+## [9.0.1]
+
+- The app's sidebar is Setup and Sessions. Sessions lists every session the member can see (an
+  owner sees the organization's), newest first, with "+ New session"; opening one is the
+  conversation, with a way back to the list. A turn stopped for the next message says so where it
+  was in the thread, and the page follows the newest message.
+
 ## [9.0.0]
 
 The platform, pared down to the multi-tenant platform for organizations: the same product managed

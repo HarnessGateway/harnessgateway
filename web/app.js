@@ -89,30 +89,41 @@ function login(note, mode = "signin") {
 
 function signOut() { sessionStorage.removeItem("hg.key"); state.key = ""; if (state.account) api("POST", "/auth/logout").catch(() => {}); state.account = null; state.me = null; state.sid = ""; state.previous = ""; boot(); }
 
-// the app: the sessions on the left, the conversation (or the setup) on the right
+// the app: Setup and Sessions on the left; a session is the conversation
 async function load() {
   [state.harnesses, state.providers, state.sessions] = (await Promise.all(["/v1/harnesses", "/v1/providers", "/v1/sessions"].map(p => api("GET", p)))).map(x => x.data);
 }
-async function app(view = "chat", sid = state.sid) {
+async function app(view = "sessions", sid = "") {
   state.view = view;
   state.sid = sid;
   try { await load(); } catch (e) { return $("#root").replaceChildren(fail(e)); }
-  if (!state.harnesses.length && view === "chat" && !sid) state.view = "setup";    // nothing to talk to yet: set up first
+  if (!state.harnesses.length && view !== "setup") state.view = "setup";    // nothing to talk to yet: set up first
+  const nav = (name, label) => h("button", { class: "item" + (state.view === name || (name === "sessions" && state.view === "chat") ? " on" : ""), on: { click: () => app(name) } }, label);
   const side = h("aside", { class: "side" },
     h("a", { class: "brand", href: "/" }, h("span", { class: "wordmark" }, "Harness", h("em", {}, "Gateway"))),
-    state.account && state.orgs.length > 1 ? h("div", { class: "tenant" }, h("select", { on: { change: async (e) => { try { const me = await api("POST", "/auth/switch", { org: e.target.value }); state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member }; app("chat", ""); } catch (err) { $("#root").prepend(fail(err)); } } } },
+    state.account && state.orgs.length > 1 ? h("div", { class: "tenant" }, h("select", { on: { change: async (e) => { try { const me = await api("POST", "/auth/switch", { org: e.target.value }); state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member }; app("sessions"); } catch (err) { $("#root").prepend(fail(err)); } } } },
       ...state.orgs.map(t => h("option", { value: t.org, selected: t.org === state.me.org }, `${t.title || t.org} · ${t.role}`)))) : null,
-    h("button", { class: "act", style: "justify-content:center;margin:6px 0 10px", on: { click: () => app("chat", "") } }, "+ New session"),
-    h("div", { class: "sessions" }, ...state.sessions.map(s => h("button", { class: "item" + (s.id === sid && state.view === "chat" ? " on" : ""), on: { click: () => app("chat", s.id) } },
-      h("span", { class: "t" }, s.title || "(untitled)"), h("span", { class: "muted" }, `${s.harness} · ${s.responses.length} turn${s.responses.length === 1 ? "" : "s"} · ${ago(s.created_at)}`, s.status === "running" ? " · running" : "")))),
+    h("nav", { class: "nav" }, nav("setup", "Setup"), nav("sessions", "Sessions")),
     h("div", { class: "foot" },
-      h("button", { class: "item" + (state.view === "setup" ? " on" : ""), on: { click: () => app("setup") } }, "Providers and harnesses"),
       h("a", { class: "item", href: "/docs/" }, "Docs"),
       h("button", { class: "item", on: { click: signOut } }, "Sign out"),
       h("div", { class: "who" }, h("b", {}, state.me.name), ` · ${state.me.org_title || state.me.org} · ${state.me.role} · v${state.health.version}`)));
   const main = h("main", { class: "main" }, h("p", { class: "muted" }, "loading…"));
   $("#root").replaceChildren(h("div", { class: "app" }, side, main));
-  Promise.resolve(state.view === "setup" ? setup() : chat(sid)).then(node => main.replaceChildren(node)).catch(e => main.replaceChildren(fail(e)));
+  const page = state.view === "setup" ? setup() : state.view === "chat" ? chat(sid) : sessionsPage();
+  Promise.resolve(page).then(node => main.replaceChildren(node)).catch(e => main.replaceChildren(fail(e)));
+}
+
+// every session the member can see, newest first; open one, or start one
+function sessionsPage() {
+  const rows = state.sessions.map(s => h("button", { class: "session", on: { click: () => app("chat", s.id) } },
+    h("div", { class: "t" }, s.title || "(untitled)"),
+    h("div", { class: "row" }, tag(s.harness, "blue"), isOwner() ? h("span", { class: "muted" }, s.member) : null, s.status === "running" ? tag("running", "run") : null,
+      h("span", { class: "muted" }, `${s.responses.length} turn${s.responses.length === 1 ? "" : "s"} · ${ago(s.created_at)}`))));
+  return h("div", {},
+    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Sessions"), h("p", {}, "A session is a conversation with one harness in one workspace. Open one to continue it, or start a new one.")),
+      h("button", { class: "act", on: { click: () => app("chat", "") } }, "+ New session")),
+    rows.length ? h("div", { class: "sessions" }, ...rows) : empty("No sessions yet. Start one."));
 }
 
 // the text of a response's messages
@@ -181,9 +192,8 @@ async function chat(sid) {
     state.live++;
     try { await consume(await api("GET", `/v1/responses/${r.id}?stream=true`, null, true), live); }
     catch (e) { note.replaceChildren(fail(e)); }
-    finally { state.live--; refreshList(); }
+    finally { state.live--; }
   };
-  const refreshList = async () => { try { state.sessions = (await api("GET", "/v1/sessions")).data; const list = $(".sessions"); if (list) list.replaceChildren(...state.sessions.map(s => h("button", { class: "item" + (s.id === state.sid ? " on" : ""), on: { click: () => app("chat", s.id) } }, h("span", { class: "t" }, s.title || "(untitled)"), h("span", { class: "muted" }, `${s.harness} · ${s.responses.length} turn${s.responses.length === 1 ? "" : "s"} · ${ago(s.created_at)}`, s.status === "running" ? " · running" : "")))); } catch { /* the list is a convenience */ } };
 
   const submit = async () => {
     const text = box.value.trim(); if (!text) return;
@@ -202,7 +212,7 @@ async function chat(sid) {
       state.sid = res.headers.get("x-session-id") || state.sid;
       await consume(res, live);
     } catch (e) { live.remove(); note.replaceChildren(fail(e)); if (!state.previous) harnessSel.disabled = false; }
-    finally { state.live--; refreshList(); }
+    finally { state.live--; }
   };
   box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
 
@@ -214,7 +224,7 @@ async function chat(sid) {
     setTimeout(scroll, 0);
   }
   return h("div", { class: "convo" },
-    h("div", { class: "convo-head" }, h("div", { style: "min-width:0" }, title, h("p", { class: "muted" }, sid ? `${session.harness} · session ${sid}` : "A session is a conversation with one harness in one workspace. Each message is a Responses request.")),
+    h("div", { class: "convo-head" }, h("div", { style: "min-width:0" }, h("a", { href: "#", class: "muted", on: { click: (e) => { e.preventDefault(); app("sessions"); } } }, "← Sessions"), title, h("p", { class: "muted" }, sid ? `${session.harness} · session ${sid}` : "Each message is a Responses request; the workspace persists across turns.")),
       h("div", { class: "row" }, field("Harness", harnessSel), field("Provider", providerSel), field("Model", modelIn))),
     thread,
     h("div", { class: "composer" }, box, note, h("p", { class: "muted", style: "margin:4px 0 0" }, "Enter sends. A message sent while a turn runs stops that turn and runs the new message on the workspace it left.")));
@@ -247,7 +257,7 @@ async function setup() {
         const r = await api("PUT", `/v1/harnesses/${name}`, await file.files[0].arrayBuffer(), true);
         if (!r.ok) throw new Error((await r.json()).detail || r.status);
       } else await api("POST", `/v1/harnesses/${name}`, { catalog: source.value });
-      app("chat", "");
+      app("sessions");
     } catch (e) { out.replaceChildren(fail(e)); }
   };
   const harnessRows = state.harnesses.map(hn => h("tr", {}, h("td", {}, h("b", {}, hn.name)), h("td", {}, `${hn.cli?.name || ""} ${hn.cli?.version || ""}`), h("td", {}, hn.defaults?.provider ? tag(hn.defaults.provider, "blue") : h("span", { class: "muted" }, "named in the request")), h("td", {}, hn.description),
