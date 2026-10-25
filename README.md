@@ -32,10 +32,10 @@ follow_up = client.responses.create(model="claude-code", previous_response_id=fi
 
 | Harness | Package | Provider shapes |
 |---|---|---|
-| Claude Code | `packages/claude-code` | anthropic |
-| OpenAI Codex | `packages/codex` | openai (Responses) |
-| Hermes Agent | `packages/hermes` | see its README |
-| Pi | `packages/pi` | anthropic, openai |
+| Claude Code 2.1.310 | `packages/claude-code` | anthropic |
+| OpenAI Codex 0.164.0 | `packages/codex` | openai (Responses API) |
+| Hermes Agent 0.19.0 | `packages/hermes` | anthropic, openai (chat completions) |
+| Pi 1.4.0 | `packages/pi` | anthropic, openai (Responses or chat completions) |
 | shell (reference, no model) | `packages/shell` | none |
 
 ## Run it
