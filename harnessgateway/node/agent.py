@@ -390,13 +390,16 @@ class Node:
         pending: list[str] = []
         batch, total = 0, 0
         err_tail = bytearray()
+        sending = asyncio.Lock()                        # the reader and the ticker both flush: one batch at a time
 
         async def flush() -> None:
             nonlocal pending, batch
-            if pending:
-                lines, pending = pending, []
-                reply = await self.client.events(rid, batch, lines)
-                batch += 1
+            async with sending:
+                if not pending:
+                    return
+                lines, pending, number = pending, [], batch
+                batch += 1                              # numbered before sending, so no two batches share a number
+                reply = await self.client.events(rid, number, lines)
                 if reply.get("stop") and not state.stop.is_set():
                     state.reason = Reason.INVALID_OUTPUT
                     state.stop.set()

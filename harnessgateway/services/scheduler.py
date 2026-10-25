@@ -75,10 +75,12 @@ class Scheduler:
 
     async def authenticate(self, secret: str) -> NodeIdentity:
         async with self.db.platform() as tx:
-            row = await tx.one("SELECT id, org_id FROM nodes WHERE digest = %s AND status <> 'removed'",
+            row = await tx.one("SELECT id, org_id, status FROM nodes WHERE digest = %s",
                                ids.digest(secret or "", self.pepper))
         if not row:
-            raise Unauthenticated("unknown node credential")
+            raise Unauthenticated("unknown node credential")      # the node may join again with its join token
+        if row["status"] == "removed":
+            raise Forbidden("this node was removed by the operator")
         return NodeIdentity(row["id"], row["org_id"])
 
     # ── heartbeat ──────────────────────────────────────────────────────────────────────────────────────────────────

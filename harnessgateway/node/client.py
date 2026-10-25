@@ -22,26 +22,27 @@ class ControlClient:
         self.node_id = ""
 
     async def join(self, join_token: str, name: str, slots: int) -> str:
-        """The saved credential, or a new one from the join token. The control plane may still be starting."""
+        """The saved credential while the control plane still knows it, else a new one from the join token (a control
+        plane reinstalled from scratch forgets its nodes). The control plane may still be starting."""
         if self.state_file.is_file():
             saved = json.loads(self.state_file.read_text())
             self.http.headers["Authorization"] = f"Bearer {saved['credential']}"
             self.node_id = saved["id"]
-            return self.node_id
+            r = await self._reach("POST", "/internal/v1/nodes/heartbeat",
+                                  {"running": [], "sandboxes": [], "slots": slots, "version": __version__})
+            if r.status_code == 403:
+                raise SystemExit(f"the control plane refused this node: {r.text[:200]}")
+            if r.status_code != 401:
+                return self.node_id
+            log.warning("the control plane no longer knows node %s: joining again", self.node_id)
+            self.state_file.unlink()
         if not join_token:
-            raise SystemExit("configuration error: no saved node credential and no HG_NODE_JOIN_TOKEN")
-        for attempt in range(60):
-            try:
-                r = await self.http.post("/internal/v1/nodes/join", json={"name": name, "slots": slots, "version": __version__},
-                                         headers={"Authorization": f"Bearer {join_token}"})
-                if r.status_code == 403:
-                    raise SystemExit(f"the control plane refused the join token: {r.text[:200]}")
-                r.raise_for_status()
-                break
-            except httpx.HTTPError as e:
-                if attempt == 59:
-                    raise SystemExit(f"could not reach the control plane at {self.api_url}: {e}") from None
-                await asyncio.sleep(2)
+            raise SystemExit("configuration error: no valid node credential and no HG_NODE_JOIN_TOKEN")
+        r = await self._reach("POST", "/internal/v1/nodes/join", {"name": name, "slots": slots, "version": __version__},
+                              headers={"Authorization": f"Bearer {join_token}"})
+        if r.status_code in (401, 403):
+            raise SystemExit(f"the control plane refused the join token: {r.text[:200]}")
+        r.raise_for_status()
         doc = r.json()
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         self.state_file.write_text(json.dumps({"id": doc["id"], "credential": doc["credential"]}))
@@ -49,6 +50,19 @@ class ControlClient:
         self.http.headers["Authorization"] = f"Bearer {doc['credential']}"
         self.node_id = doc["id"]
         return self.node_id
+
+    async def _reach(self, method: str, path: str, body: Any, headers: dict[str, str] | None = None) -> httpx.Response:
+        """One request, retried for up to two minutes while the control plane is unreachable or starting."""
+        for attempt in range(60):
+            try:
+                r = await self.http.request(method, path, json=body, headers=headers)
+                if r.status_code < 500:
+                    return r
+            except httpx.HTTPError as e:
+                if attempt == 59:
+                    raise SystemExit(f"could not reach the control plane at {self.api_url}: {e}") from None
+            await asyncio.sleep(2)
+        return r
 
     async def call(self, method: str, path: str, body: Any = None, *, attempts: int = 1) -> httpx.Response:
         for attempt in range(attempts):
