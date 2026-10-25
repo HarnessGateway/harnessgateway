@@ -23,7 +23,7 @@ from typing import Any, Sequence
 
 import httpx
 
-from ..backends.sandboxes import InstallFailed, Node, path_with, scope_of
+from ..backends.sandboxes import InstallFailed, Node, path_with
 from ..backends.sandboxes.docker import TURN_SCRIPT
 from ..contract import package as harness
 from ..kernel.limits import Limits
@@ -42,7 +42,7 @@ def turn_env(job: dict[str, Any], config: harness.Config, *, workspace: Path, ho
     env = {"HG_WORKSPACE": str(workspace), "HOME": str(home), "HG_DIR": str(rundir), "HG_STATE": str(state),
            "HG_FILES": str(rundir / "files"), "HG_REQUEST": str(rundir / "request.json"),
            "HG_SESSION": job["session"], "HG_RESPONSE": job["id"], "HG_TURN": str(job["turn"]), "HG_PREVIOUS": job.get("previous", ""),
-           "HG_MODEL": job["model"], "HG_HARNESS_DIR": str(folder), "HG_TOOLS": str(tools), "HG_INTERRUPT": config.interrupt,
+           "HG_MODEL": job["model"], "HG_HARNESS_DIR": str(folder), "HG_TOOLS": str(tools),
            "PATH": path_with(tools), "HG_PROVIDER_URL": provider_url, "HG_PROVIDER_API": job["provider"]["api"],
            "HG_PROVIDER_KEY_FILE": token_path, "HG_CONTRACT": str(harness.CONTRACT)}
     for name, value in ((config.key_env, job["token"]), (config.url_env, provider_url)):
@@ -63,11 +63,8 @@ class Worker:
         self._http = httpx.AsyncClient(base_url=self.control_url, timeout=60, verify=verify, transport=transport)
         self._blob_http = httpx.AsyncClient(timeout=600, verify=verify, transport=transport)
         self._turns: dict[str, asyncio.Task] = {}
-        self._seen: dict[str, int] = {}              # interrupts delivered, per turn
         self._executions: dict[str, Execution] = {}
         self._stop_timeouts: dict[str, float] = {}
-        self._interrupts: dict[str, str] = {}
-        self._sessions: dict[str, str] = {}
         self._image_id = ""
         self.stopping = False
 
@@ -134,19 +131,8 @@ class Worker:
 
     async def _obey(self, rid: str, command: dict[str, Any]) -> None:
         ex = self._executions.get(rid)
-        if ex is None:
-            return
-        if command.get("cancel"):
-            ex.stop(self._stop_timeouts.get(rid, 20))
-        for steer in command.get("interrupts", []):
-            if steer["seq"] > self._seen.get(rid, 0):
-                self._seen[rid] = steer["seq"]
-                rundir = self.cache / "sessions" / self._sessions[rid] / "run"
-                try:
-                    files.write(rundir, "interrupt", steer["text"].encode())
-                except Invalid:
-                    continue
-                await ex.interrupt(self._interrupts[rid])
+        if ex is not None and command.get("cancel"):
+            ex.stop(self._stop_timeouts.get(rid, 20))        # the package's stop signal, then its grace
 
     # one turn
     async def _turn(self, job: dict[str, Any]) -> None:
@@ -162,10 +148,9 @@ class Worker:
         except Exception as e:
             report = {"outcome": "failed", "error": f"{type(e).__name__}: {e}"[:2000]}
         finally:
-            report["seconds"] = round(time.monotonic() - began, 3)   # milliseconds: the meter keeps them
+            report["seconds"] = round(time.monotonic() - began, 3)
             self._executions.pop(rid, None)
-            for d in (self._stop_timeouts, self._interrupts, self._sessions, self._seen):
-                d.pop(rid, None)
+            self._stop_timeouts.pop(rid, None)
             for attempt in range(5):
                 try:
                     r = await self._http.post(f"/internal/turns/{rid}/result", json=report)
@@ -177,7 +162,7 @@ class Worker:
 
     async def _run(self, job: dict[str, Any]) -> dict[str, Any]:
         rid, sid, org = job["id"], job["session"], job["org"]
-        scope = scope_of(org, job.get("team", ""))     # the sandbox's uid: the team's, when the harness is a team's
+        scope = org                                    # the sandbox's uid is the organization's
         config = harness.load_config_dict(job["config"])
         limits = Limits.from_dict(job["limits"])
         urls = job["urls"]
@@ -196,7 +181,7 @@ class Worker:
             fetched["files"] = await self._get(urls["files"])
         await asyncio.to_thread(self._materialize, job, folder, session_dir, home, fetched)
         await self._http.post(f"/internal/turns/{rid}/started", json={})
-        self._stop_timeouts[rid], self._interrupts[rid], self._sessions[rid] = config.stop_timeout_s, config.interrupt, sid
+        self._stop_timeouts[rid] = config.stop_timeout_s
         token = job["token"]                           # empty for a package that runs without a provider: no gateway, no door forwarder
         runtime = self.node.runtime_for(scope, limits, read_only=(folder, tools), writable=(home, rundir, state),
                                         egress=config.run_egress, gateway_url=(self.gateway_url or job["gateway_url"]) if token else "", token=token)
@@ -241,7 +226,6 @@ class Worker:
             restore(fetched["home"], home)
         for p in (workspace, state, rundir, home):
             p.mkdir(parents=True, exist_ok=True)
-        files.unlink(rundir, "interrupt")
         shutil.rmtree(rundir / "files", ignore_errors=True)
         (rundir / "files").mkdir()
         if job["new_session"] and (seed := harness.seed(folder, "workspace")):

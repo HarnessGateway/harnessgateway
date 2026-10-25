@@ -338,10 +338,10 @@ documents that continuity is the directory, not an id.
 
 ### Interrupt and steer
 
-Every one of the ten writes its session to disk as it runs, so a cancelled request loses
-nothing: the platform sends SIGINT, the response ends with `status: incomplete` and the session
-id in `metadata`, and the next request with `previous_response_id` continues. That is the one
-steering model the wire offers, because it works on all ten.
+Every one of the ten writes its session to disk as it runs, so a stopped request loses nothing:
+the platform sends the stop signal, the response ends `cancelled` with the session id in
+`metadata`, and the next request with `previous_response_id` continues. That is the one steering
+model the platform offers (a new request supersedes the running turn), because it works on all ten.
 
 Live steering, a new instruction injected while the agent is still working, needs a long-lived
 process with a command channel, and about half have one: Pi and Oh My Pi in `--mode rpc`
@@ -351,8 +351,8 @@ over `--input-format stream-json`, Cline and DeepSeek Harness in ACP mode, Codex
 server and Kilo Code through its own server (both still to be verified at the pinned versions).
 OpenClaw and Command Code interrupt and resume only. Four of the ten ship an Agent Client
 Protocol mode (Hermes, Cline, Oh My Pi, DeepSeek Harness), which is the candidate for a single
-steering adapter if the platform later offers live steering behind the same cancel-and-continue
-contract.
+steering adapter if the platform ever offered live steering behind the same stop-and-continue
+contract; it does not.
 
 ### Guardrails
 

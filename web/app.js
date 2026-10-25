@@ -1,20 +1,17 @@
-// The HarnessGateway console: sign in with an account (email and password, GitHub, Google) or an API
-// key, then the organization's providers, harnesses (git packages with an editor), the catalog,
-// conversations with a workspace pane, rodeos, sessions, teams, members, keys; the deployer's
-// dashboard, organizations and workers. Every action is a call to the same routes any client uses.
-// No framework, no build step. app.js: helpers, boot, sign-in, the shell. The views are in
-// setup.js (providers, catalog, harnesses), build.js (conversations, rodeo, sessions) and team.js.
+// The HarnessGateway app: one page. Sign in, add a provider, add a harness, start a session with the
+// harness of your choice, type, press Enter. A message sent while a turn runs supersedes it: the
+// running turn is stopped and the new message runs on the workspace it left, the way a coding
+// agent's web view takes the next message. Every action is a call to the same routes any client
+// uses. No framework, no build step.
 const $ = (s) => document.querySelector(s);
-const state = { health: null, auth: null, key: sessionStorage.getItem("hg.key") || "", me: null, account: null, orgs: [], kind: "", page: "", args: {}, window: 30 };
-const h = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "on") for (const [ev, fn] of Object.entries(v)) e.addEventListener(ev, fn); else if (k === "html") e.innerHTML = v; else if (v !== false && v != null) e.setAttribute(k, v); } for (const k of kids.flat()) if (k != null && k !== false) e.append(k instanceof Node ? k : document.createTextNode(k)); return e; };
-const svg = (tag, attrs = {}, ...kids) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) { if (k === "on") for (const [ev, fn] of Object.entries(v)) e.addEventListener(ev, fn); else e.setAttribute(k, v); } for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : document.createTextNode(k)); return e; };
-const ICONS = { bolt: "M13 2L4 14h7l-1 8 9-12h-7l1-8z", lasso: "M15 7a5 5 0 1 1-10 0 5 5 0 0 1 10 0zM13 11c2 2 3 5 4 9M17 20l3-1", clock: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2", plug: "M9 2v6M15 2v6M5 8h14l-1 5a6 6 0 0 1-12 0L5 8zM12 19v3", box: "M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8", grid: "M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z", users: "M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM21 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8", user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", key: "M21 2l-2 2M15.5 7.5l3 3L22 6l-3-3zM15.5 7.5L9 14a5 5 0 1 0 1 1l6.5-6.5", chart: "M3 3v18h18M7 14v4M12 9v9M17 5v13", building: "M3 21h18M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2", server: "M3 5h18v6H3zM3 13h18v6H3zM7 8h.01M7 16h.01", book: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z", logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9", file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zM14 2v6h6", chat: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z", team: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" };
-const icon = (name) => svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round" }, svg("path", { d: ICONS[name] || ICONS.box }));
+const state = { health: null, auth: null, key: sessionStorage.getItem("hg.key") || "", me: null, account: null, orgs: [],
+                harnesses: [], providers: [], sessions: [], sid: "", view: "chat", previous: "", live: 0 };
+const h = (tag, attrs = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) { if (k === "on") for (const [ev, fn] of Object.entries(v)) e.addEventListener(ev, fn); else if (v !== false && v != null) e.setAttribute(k, v); } for (const k of kids.flat()) if (k != null && k !== false) e.append(k instanceof Node ? k : document.createTextNode(k)); return e; };
 
 async function api(method, path, body, raw) {
   const headers = state.key ? { Authorization: "Bearer " + state.key } : {};
   let payload = body;
-  if (body && !(body instanceof Blob) && !(body instanceof FormData) && !(body instanceof ArrayBuffer)) { headers["content-type"] = "application/json"; payload = JSON.stringify(body); }
+  if (body && !(body instanceof Blob) && !(body instanceof ArrayBuffer)) { headers["content-type"] = "application/json"; payload = JSON.stringify(body); }
   const r = await fetch(path, { method, headers, body: payload });
   if (raw) return r;
   const text = await r.text();
@@ -24,150 +21,100 @@ async function api(method, path, body, raw) {
 }
 const fail = (e) => h("div", { class: "err" }, String(e.message || e));
 const tag = (text, cls = "") => h("span", { class: "tag " + cls }, text);
-const statusTag = (s) => tag(s, { completed: "ok", failed: "bad", cancelled: "bad", incomplete: "bad", in_progress: "run", queued: "run", running: "run", idle: "", active: "ok", suspended: "bad", alive: "ok", lost: "bad" }[s] || "");
-const when = (t) => t ? new Date(t * 1000).toLocaleString() : "";
 const ago = (t) => { const s = Math.max(0, Date.now() / 1000 - t); return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : s < 86400 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " d ago"; };
-const num = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(Math.round(n * 10) / 10);
-const hours = (s) => s >= 3600 ? (s / 3600).toFixed(1) + " h" : s >= 60 ? Math.round(s / 60) + " min" : Math.round(s) + " s";
-const bytes = (b) => b >= 1 << 30 ? (b / (1 << 30)).toFixed(1) + " GB" : b >= 1 << 20 ? (b / (1 << 20)).toFixed(1) + " MB" : b >= 1024 ? Math.round(b / 1024) + " KB" : b + " B";
 const field = (label, input) => h("div", { class: "field" }, h("label", {}, label), input);
-const copy = (text) => h("button", { class: "ghost small", on: { click: async (e) => { try { await navigator.clipboard.writeText(text); e.target.textContent = "copied"; } catch { e.target.textContent = "select it"; } } } }, "copy");
+const option = (value, label, selected) => h("option", { value, selected: selected || false }, label || value);
 const empty = (text) => h("div", { class: "empty" }, text);
-const isOwner = () => state.kind === "owner";
-const head = (title, text, ...right) => h("div", { class: "page-head" }, h("div", {}, h("h1", {}, title), text ? h("p", {}, text) : null), right.length ? h("div", { class: "row" }, ...right) : null);
-// a confirmation that lives in the page (the viewer shows no dialogs)
-function confirmBtn(label, cls, onConfirm) {
-  const b = h("button", { class: cls }, label);
+const isOwner = () => state.me?.role === "owner";
+// a confirmation that lives in the page (the browser's dialogs are not used)
+function confirmBtn(label, onConfirm) {
+  const b = h("button", { class: "ghost small" }, label);
   let armed = false;
   b.addEventListener("click", async () => { if (!armed) { armed = true; b.textContent = "sure? " + label; b.classList.add("danger"); setTimeout(() => { armed = false; b.textContent = label; b.classList.remove("danger"); }, 3000); return; } b.disabled = true; try { await onConfirm(); } catch (e) { b.after(fail(e)); b.disabled = false; } });
   return b;
 }
-const option = (value, label, selected) => h("option", { value, selected: selected || false }, label || value);
 
 // boot: who is here
 async function boot() {
   state.health = await (await fetch("/healthz")).json();
   state.auth = await (await fetch("/auth/providers")).json();
-  document.title = "HarnessGateway";
-  if (location.hash.startsWith("#reset=")) return login(null, "reset", location.hash.slice(7));
   if (state.key) {
-    try {
-      if (state.key.startsWith("hgd_")) { await api("GET", "/v1/fleet"); state.kind = "deployer"; state.me = { name: "deployer" }; }
-      else { state.me = await api("GET", "/v1/me"); state.kind = state.me.role; }
-      return shell();
-    } catch (e) { sessionStorage.removeItem("hg.key"); state.key = ""; return login(fail(e)); }
+    try { state.me = await api("GET", "/v1/me"); return app(); }
+    catch (e) { sessionStorage.removeItem("hg.key"); state.key = ""; return login(fail(e)); }
   }
   try {
     const me = await api("GET", "/auth/me");
-    state.account = me.account; state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member, teams: (await api("GET", "/v1/me")).teams }; state.kind = me.current.role;
-    return shell();
+    state.account = me.account; state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member };
+    return app();
   } catch { /* not signed in */ }
-  const error = location.hash.startsWith("#error=") ? { "sign-up-closed": "Sign-up is by invitation on this platform. Ask an owner for one.", "sign-in-cancelled": "The sign-in was cancelled." }[location.hash.slice(7)] : "";
-  login(error ? h("div", { class: "notice warn" }, error) : null, location.hash === "#signup" ? "signup" : "signin");
+  login(null, location.hash === "#signup" ? "signup" : "signin");
 }
 
-// sign in, sign up, reset
-function login(note, mode = "signin", resetToken = "") {
-  const a = state.auth, open = a.signup === "open";
-  const email = h("input", { type: "email", placeholder: "you@company.com", autocomplete: "email" }), pw = h("input", { type: "password", placeholder: mode === "signup" ? "at least 8 characters" : "password", autocomplete: mode === "signup" ? "new-password" : "current-password" }), name = h("input", { placeholder: "your name" }), out = h("div");
-  const keyIn = h("input", { placeholder: "hg_… or the deployer key hgd_…", type: "password" });
+// sign in, create an account, or use a key
+function login(note, mode = "signin") {
+  const open = state.auth.signup === "open";
+  const email = h("input", { type: "email", placeholder: "you@company.com", autocomplete: "email" });
+  const pw = h("input", { type: "password", placeholder: mode === "signup" ? "at least 8 characters" : "password", autocomplete: mode === "signup" ? "new-password" : "current-password" });
+  const name = h("input", { placeholder: "your name" }), out = h("div");
+  const keyIn = h("input", { placeholder: "hg_…", type: "password" });
   const go = async (fn) => { out.replaceChildren(); try { await fn(); } catch (e) { out.replaceChildren(fail(e)); } };
-  const signedIn = async (me) => { location.hash = ""; state.account = me.account; state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member }; state.kind = me.current.role; try { state.me.teams = (await api("GET", "/v1/me")).teams; } catch {} shell(); };
-  const idp = h("div", { class: "idp" },
-    a.github ? h("a", { class: "btn quiet", href: "/auth/github" }, svg("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "currentColor" }, svg("path", { d: "M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z" })), "Continue with GitHub") : null,
-    a.google ? h("a", { class: "btn quiet", href: "/auth/google" }, svg("svg", { viewBox: "0 0 24 24", width: 16, height: 16 }, svg("path", { fill: "#4285F4", d: "M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.4z" }), svg("path", { fill: "#34A853", d: "M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z" }), svg("path", { fill: "#FBBC05", d: "M6.4 13.9a6 6 0 0 1 0-3.8V7.5H3.1a10 10 0 0 0 0 9z" }), svg("path", { fill: "#EA4335", d: "M12 6c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 3.1 7.5l3.3 2.6C7.2 7.8 9.4 6 12 6z" })), "Continue with Google") : null,
-    ...(a.identities || []).filter(n => n !== "github" && n !== "google").map(n => h("a", { class: "btn quiet", href: `/auth/${n}` }, icon("key"), `Continue with ${n === "sso" ? "single sign-on" : n}`)));
-  const hasIdp = (a.identities || []).length > 0;
+  const signedIn = (me) => { location.hash = ""; state.account = me.account; state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member }; app(); };
+  const useKey = () => { state.key = keyIn.value.trim(); sessionStorage.setItem("hg.key", state.key); boot(); };
   let body;
-  if (mode === "reset") {
-    body = [h("h2", {}, "Set a new password"), h("p", { class: "sub" }, "Then you are signed in."), field("New password", pw),
-      h("button", { class: "act", style: "margin-top:12px", on: { click: () => go(async () => signedIn(await api("POST", "/auth/reset/confirm", { token: resetToken, password: pw.value }))) } }, "Save and sign in")];
-  } else if (mode === "forgot") {
-    body = [h("h2", {}, "Reset your password"), h("p", { class: "sub" }, "We email you a link that is good for an hour."), field("Email", email),
-      h("button", { class: "act", style: "margin-top:12px", on: { click: () => go(async () => { await api("POST", "/auth/reset", { email: email.value.trim() }); out.replaceChildren(h("div", { class: "notice ok" }, "If an account exists for that email, the link is on its way.")); }) } }, "Send the link"),
-      h("div", { class: "links" }, h("a", { href: "#", on: { click: (e) => { e.preventDefault(); login(null, "signin"); } } }, "← Back to sign in"))];
-  } else if (mode === "key") {
-    body = [h("h2", {}, "Sign in with an API key"), h("p", { class: "sub" }, "A member's key opens their organization; the deployer's key opens the platform."), field("API key", keyIn),
-      h("button", { class: "act", style: "margin-top:12px", on: { click: () => { state.key = keyIn.value.trim(); sessionStorage.setItem("hg.key", state.key); boot(); } } }, "Sign in"),
+  if (mode === "key") {
+    body = [h("h2", {}, "Sign in with an API key"), h("p", { class: "sub" }, "A member's key opens their organization."), field("API key", keyIn),
+      h("button", { class: "act", style: "margin-top:12px", on: { click: useKey } }, "Sign in"),
       h("div", { class: "links" }, h("a", { href: "#", on: { click: (e) => { e.preventDefault(); login(null, "signin"); } } }, "← Sign in with an account"))];
-    keyIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { state.key = keyIn.value.trim(); sessionStorage.setItem("hg.key", state.key); boot(); } });
+    keyIn.addEventListener("keydown", (e) => { if (e.key === "Enter") useKey(); });
   } else {
     const signup = mode === "signup";
     const tabs = h("div", { class: "tabs" }, h("button", { class: signup ? "" : "on", on: { click: () => login(null, "signin") } }, "Sign in"), h("button", { class: signup ? "on" : "", on: { click: () => login(null, "signup") } }, "Create account"));
-    const submit = () => go(async () => {
-      if (signup) {
-        const r = await api("POST", "/auth/signup", { email: email.value.trim(), password: pw.value, name: name.value.trim() });
-        if (r.verify) return out.replaceChildren(h("div", { class: "notice ok" }, `Check your email. We sent a verification link to ${r.email}.`), h("p", { style: "margin-top:10px" }, h("button", { class: "ghost small", on: { click: () => api("POST", "/auth/resend", { email: r.email }) } }, "Send it again")));
-        await signedIn(r);
-      } else await signedIn(await api("POST", "/auth/login", { email: email.value.trim(), password: pw.value }));
-    });
+    const submit = () => go(async () => signedIn(signup
+      ? await api("POST", "/auth/signup", { email: email.value.trim(), password: pw.value, name: name.value.trim() })
+      : await api("POST", "/auth/login", { email: email.value.trim(), password: pw.value })));
     for (const el of [email, pw, name]) el.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-    body = [h("h2", {}, signup ? "Create your account" : "Welcome back"), h("p", { class: "sub" }, signup ? (open ? "An organization of your own comes with it, on the free plan. Invite your team after." : "Sign-up is by invitation on this platform. Use the email an owner invited.") : "Sign in to your organization."),
-      signup && open && state.health.trace_sharing ? h("p", { class: "sub", style: "font-size:12px" }, "Free organizations on this deployment share their session traces, pseudonymized, to train coding agents; an owner turns that off in Organization settings. ", h("a", { href: "/docs/data/", target: "_blank" }, "What is shared")) : null,
-      tabs, hasIdp ? idp : null, hasIdp ? h("div", { class: "or" }, "or with email") : null,
-      h("div", { class: "stack" }, signup ? field("Name", name) : null, field("Email", email), field("Password", pw)),
+    body = [h("h2", {}, signup ? "Create your account" : "Welcome back"),
+      h("p", { class: "sub" }, signup ? (open ? "An organization of your own comes with it." : "Sign-up is by invitation on this platform. Use the email an owner invited.") : "Sign in to your organization."),
+      tabs, h("div", { class: "stack" }, signup ? field("Name", name) : null, field("Email", email), field("Password", pw)),
       h("button", { class: "act", style: "margin-top:14px", on: { click: submit } }, signup ? "Create account" : "Sign in"),
-      h("div", { class: "links" }, a.mail && !signup ? h("a", { href: "#", on: { click: (e) => { e.preventDefault(); login(null, "forgot"); } } }, "Forgot your password?") : h("span"), h("a", { href: "#", on: { click: (e) => { e.preventDefault(); login(null, "key"); } } }, "Use an API key instead"))];
+      h("div", { class: "links" }, h("span"), h("a", { href: "#", on: { click: (e) => { e.preventDefault(); login(null, "key"); } } }, "Use an API key instead"))];
   }
   $("#root").replaceChildren(h("div", { class: "auth" },
     h("div", { class: "side-art" },
       h("a", { class: "brand", href: "/" }, h("span", { class: "wordmark" }, "Harness", h("em", {}, "Gateway"))),
-      h("div", {}, h("h1", {}, "Your harnesses.", h("br"), "One wire. ", h("em", {}, "Sandboxed.")), h("p", {}, "The OpenAI Responses API in, your harness package in the middle, the Responses API out. Bring your providers; fork a package from the catalog or write your own; the platform runs every turn in a sandbox it owns and keeps the complete record."), h("img", { class: "mascot", src: "/web/picky.png", alt: "" })),
-      h("div", { class: "muted", style: "color:#8FA3C6" }, state.health.signup === "open" ? "harnessgateway.ai" : "self-hosted", " · v", state.health.version, " · ", h("a", { href: "/docs/", style: "color:#B7C6E0" }, "Docs"))),
+      h("div", {}, h("h1", {}, "Your harnesses.", h("br"), "One wire. ", h("em", {}, "Sandboxed.")), h("p", {}, "The OpenAI Responses API in, your harness package in the middle, the Responses API out. Add a provider, add a harness, start a session. The platform runs every turn in a sandbox it owns and keeps the record."), h("img", { class: "mascot", src: "/web/picky.png", alt: "" })),
+      h("div", { class: "muted", style: "color:#8FA3C6" }, "v", state.health.version, " · ", h("a", { href: "/docs/", style: "color:#B7C6E0" }, "Docs"))),
     h("div", { class: "form" }, h("div", {}, note, ...body, out))));
 }
 
-// the shell
-const NAV = {
-  member: [["Setup", [["Start", "bolt"], ["Providers", "plug"], ["Harnesses", "box"], ["Catalog", "grid"]]], ["Build", [["Conversations", "chat"], ["Rodeo", "lasso"], ["Sessions", "clock"]]], ["Team", [["Teams", "team"], ["Members", "users"], ["Keys", "key"], ["Usage", "chart"], ["Organization", "building"], ["Account", "user"]]]],
-  deployer: [["Platform", [["Dashboard", "chart"], ["Organizations", "building"], ["Nodes", "server"]]]],
-};
-const VIEWS = {};
-function pages() { return NAV[state.kind === "deployer" ? "deployer" : "member"].flatMap(([, items]) => items.map(([p]) => p)).filter(p => (p !== "Account" || state.account) && (p !== "Organization" || isOwner())); }
-function signOut() { sessionStorage.removeItem("hg.key"); state.key = ""; if (state.account) api("POST", "/auth/logout").catch(() => {}); state.account = null; state.me = null; state.kind = ""; location.hash = ""; boot(); }
-function shell(page, args = {}) {
-  const all = pages();
-  state.page = all.includes(page || state.page) ? (page || state.page) : all[0];
-  state.args = args;
-  const groups = NAV[state.kind === "deployer" ? "deployer" : "member"];
-  const item = (p, ic) => h("button", { class: "item" + (p === state.page ? " on" : ""), on: { click: () => shell(p) } }, icon(ic), p);
-  const switcher = state.account ? h("div", { class: "tenant" }, h("select", { on: { change: async (e) => { if (e.target.value === "+") { e.target.value = state.me.org; return shell("Account"); } try { const me = await api("POST", "/auth/switch", { org: e.target.value }); state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member, teams: [] }; state.kind = me.current.role; try { state.me.teams = (await api("GET", "/v1/me")).teams; } catch {} shell(state.page); } catch (err) { $("#root").prepend(fail(err)); } } } },
-    ...state.orgs.map(t => h("option", { value: t.org, selected: t.org === state.me.org }, `${t.org} · ${t.role}`)), h("option", { value: "+" }, "+ new organization"))) : null;
-  const side = h("aside", { class: "side" }, h("a", { class: "brand", href: "/" }, h("span", { class: "wordmark" }, "Harness", h("em", {}, "Gateway"))), switcher,
-    ...groups.flatMap(([g, items]) => [h("div", { class: "group" }, g), ...items.filter(([p]) => all.includes(p)).map(([p, ic]) => item(p, ic))]),
-    h("div", { class: "foot" }, h("div", {}, h("b", {}, state.me?.name || ""), state.me?.org ? ` · ${state.me.org}` : ""), h("div", {}, state.kind, " · v", state.health.version),
-      h("a", { href: "/docs/", class: "item", style: "padding:6px 0" }, icon("book"), "Docs"), h("button", { class: "item", style: "padding:6px 0", on: { click: signOut } }, icon("logout"), "Sign out")));
-  const top = h("div", { class: "topbar" }, h("b", {}, "HarnessGateway"), ...all.map(p => h("button", { class: p === state.page ? "on" : "", on: { click: () => shell(p) } }, p)));
-  const main = h("main", { class: "page" }, h("p", { class: "muted" }, "loading…"));
-  $("#root").replaceChildren(h("div", { class: "shell" }, side, h("div", { style: "min-width:0" }, top, main)));
-  const view = VIEWS[state.page];
-  Promise.resolve(view ? view(main, args) : null).then((node) => { if (node) main.replaceChildren(node); }).catch((e) => main.replaceChildren(fail(e)));
+function signOut() { sessionStorage.removeItem("hg.key"); state.key = ""; if (state.account) api("POST", "/auth/logout").catch(() => {}); state.account = null; state.me = null; state.sid = ""; state.previous = ""; boot(); }
+
+// the app: the sessions on the left, the conversation (or the setup) on the right
+async function load() {
+  [state.harnesses, state.providers, state.sessions] = (await Promise.all(["/v1/harnesses", "/v1/providers", "/v1/sessions"].map(p => api("GET", p)))).map(x => x.data);
+}
+async function app(view = "chat", sid = state.sid) {
+  state.view = view;
+  state.sid = sid;
+  try { await load(); } catch (e) { return $("#root").replaceChildren(fail(e)); }
+  if (!state.harnesses.length && view === "chat" && !sid) state.view = "setup";    // nothing to talk to yet: set up first
+  const side = h("aside", { class: "side" },
+    h("a", { class: "brand", href: "/" }, h("span", { class: "wordmark" }, "Harness", h("em", {}, "Gateway"))),
+    state.account && state.orgs.length > 1 ? h("div", { class: "tenant" }, h("select", { on: { change: async (e) => { try { const me = await api("POST", "/auth/switch", { org: e.target.value }); state.orgs = me.orgs; state.me = { ...me.current, name: me.current.member }; app("chat", ""); } catch (err) { $("#root").prepend(fail(err)); } } } },
+      ...state.orgs.map(t => h("option", { value: t.org, selected: t.org === state.me.org }, `${t.title || t.org} · ${t.role}`)))) : null,
+    h("button", { class: "act", style: "justify-content:center;margin:6px 0 10px", on: { click: () => app("chat", "") } }, "+ New session"),
+    h("div", { class: "sessions" }, ...state.sessions.map(s => h("button", { class: "item" + (s.id === sid && state.view === "chat" ? " on" : ""), on: { click: () => app("chat", s.id) } },
+      h("span", { class: "t" }, s.title || "(untitled)"), h("span", { class: "muted" }, `${s.harness} · ${s.responses.length} turn${s.responses.length === 1 ? "" : "s"} · ${ago(s.created_at)}`, s.status === "running" ? " · running" : "")))),
+    h("div", { class: "foot" },
+      h("button", { class: "item" + (state.view === "setup" ? " on" : ""), on: { click: () => app("setup") } }, "Providers and harnesses"),
+      h("a", { class: "item", href: "/docs/" }, "Docs"),
+      h("button", { class: "item", on: { click: signOut } }, "Sign out"),
+      h("div", { class: "who" }, h("b", {}, state.me.name), ` · ${state.me.org_title || state.me.org} · ${state.me.role} · v${state.health.version}`)));
+  const main = h("main", { class: "main" }, h("p", { class: "muted" }, "loading…"));
+  $("#root").replaceChildren(h("div", { class: "app" }, side, main));
+  Promise.resolve(state.view === "setup" ? setup() : chat(sid)).then(node => main.replaceChildren(node)).catch(e => main.replaceChildren(fail(e)));
 }
 
-// the live stream of one turn: POST /v1/responses with stream: true, each event to `onEvent`;
-// resolves with the final response object
-async function streamTurn(body, onEvent) {
-  const r = await api("POST", "/v1/responses", { ...body, stream: true }, true);
-  if (!r.ok) { const t = await r.text(); let d; try { d = JSON.parse(t).detail; } catch { d = t; } throw new Error(typeof d === "string" ? d : JSON.stringify(d)); }
-  const sid = r.headers.get("x-session-id");
-  const reader = r.body.getReader(), dec = new TextDecoder();
-  let buf = "", final = null;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let i;
-    while ((i = buf.indexOf("\n\n")) >= 0) {
-      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
-      const line = chunk.split("\n").find(l => l.startsWith("data: "));
-      if (!line) continue;
-      const e = JSON.parse(line.slice(6));
-      if (e.type.startsWith("response.") && e.response && ["completed", "failed", "incomplete", "cancelled"].includes(e.response.status)) final = e.response;
-      onEvent(e, sid);
-    }
-  }
-  return final;
-}
 // the text of a response's messages
 const outputText = (r) => (r.output || []).filter(i => i.type === "message").flatMap(i => i.content || []).map(c => c.text || "").join("");
 // one output item, drawn
@@ -187,25 +134,132 @@ function itemNode(item) {
     default: return d("fn", item.type, "", h("pre", {}, JSON.stringify(item, null, 1)));
   }
 }
+const endNote = (r) => r.status === "completed" ? null : h("div", { class: "notice " + (r.metadata?.incomplete_reason === "superseded" ? "" : "warn") },
+  r.metadata?.incomplete_reason === "superseded" ? "stopped for the next message" : r.metadata?.incomplete_reason === "client_disconnected" ? "stopped: the request was closed" : r.status + (r.error ? `: ${r.error.message}` : ""));
 
-// Start: where a new organization stands, and the next step
-VIEWS.Start = async function start() {
-  const [providers, harnesses, sessions, members, keys, org] = await Promise.all(["/v1/providers", "/v1/harnesses", "/v1/sessions", "/v1/members", "/v1/keys", "/v1/org"].map(p => api("GET", p)));
-  const steps = [
-    ["Add a provider", "a model endpoint and its key; the key is sealed on arrival and no sandbox ever sees it", providers.data.length > 0, "Providers", isOwner()],
-    ["Fork or write a harness", "a package from the catalog, or any CLI of yours; a git repository the platform hosts", harnesses.data.length > 0, "Catalog", true],
-    ["Have a conversation", "a turn in a sandbox, the workspace beside it; or call POST /v1/responses with the snippet below", sessions.data.length > 0, "Conversations", true],
-    ["Mint an API key", "any OpenAI SDK talks to this platform with it", keys.data.length > 0, "Keys", true],
-    ["Invite your team", "members, teams that own harnesses, owners who run the organization", members.data.length > 1, "Members", isOwner()],
-  ];
-  const done = steps.filter(s => s[2]).length;
-  const row = ([title, text, ok, page, may]) => h("div", { class: "row between", style: "padding:10px 0;border-bottom:1px solid var(--line)" },
-    h("div", { class: "row" }, h("span", { class: "tag " + (ok ? "ok" : "") , style: "min-width:54px;text-align:center" }, ok ? "done" : "next"), h("div", {}, h("b", {}, title), h("div", { class: "muted" }, text))),
-    may ? h("button", { class: ok ? "ghost small" : "act small", on: { click: () => shell(page) } }, ok ? "open" : "go") : h("span", { class: "muted" }, "an owner does this"));
-  const snippet = `from openai import OpenAI\nclient = OpenAI(base_url="${location.origin}/v1", api_key="hg_…")\nr = client.responses.create(model="${harnesses.data[0]?.name || "my-harness"}", input="Create hello.py that prints hello and run it")\nprint(r.status, r.output_text)`;
-  return h("div", {}, head(`Welcome, ${state.me.name}`, `${org.title || org.name} · ${org.plan} plan · ${done} of ${steps.length} steps done`),
-    h("div", { class: "grid-2" },
-      h("div", { class: "card" }, h("h2", {}, "Getting to a first turn"), ...steps.map(row)),
-      h("div", {}, h("div", { class: "card" }, h("h2", {}, "From any OpenAI SDK"), h("pre", { class: "light" }, snippet), h("p", { class: "muted" }, "The model is the harness name, or harness/provider/model. Stream, continue with previous_response_id, run in the background, steer, cancel: the Responses API, as the SDK knows it."), h("a", { href: "/docs/requests/" }, "Requests, in full →")),
-        h("div", { class: "card" }, h("h2", {}, "What this costs"), h("p", { class: "dim" }, "The platform meters the sandbox's compute, the bytes it sends out and the storage it keeps. Tokens are between you and your provider: shown, never billed here."), org.trace_sharing ? h("p", { class: "dim" }, "This organization shares its session traces, pseudonymized, to train coding agents. ", isOwner() ? h("a", { href: "#", on: { click: (e) => { e.preventDefault(); shell("Organization"); } } }, "Change that in Organization settings.") : null) : null, h("a", { href: "#", on: { click: (e) => { e.preventDefault(); shell("Usage"); } } }, "Usage →")))));
-};
+// a session: the thread, and the composer; Enter sends
+async function chat(sid) {
+  const pick = (name) => state.harnesses.find(x => x.name === name) || {};
+  const harnessSel = h("select", {}, ...state.harnesses.map(x => option(x.name, x.name)));
+  const providerSel = h("select", {}, option("", "package default"), ...state.providers.map(p => option(p.name)));
+  const modelIn = h("input", { placeholder: "model (default)", style: "width:150px" });
+  const defaults = () => { const d = pick(harnessSel.value).defaults || {}; providerSel.value = d.provider || (state.providers[0]?.name || ""); modelIn.placeholder = d.model ? `model (${d.model})` : "model (default)"; };
+  harnessSel.addEventListener("change", defaults); defaults();
+  const thread = h("div", { class: "thread" });
+  const box = h("textarea", { placeholder: state.harnesses.length ? "Type a message and press Enter. Shift+Enter for a new line." : "Add a harness first.", rows: 2, disabled: !state.harnesses.length });
+  const note = h("div");
+  const title = h("h1", {}, "New session");
+  const scroll = () => { window.scrollTo(0, document.documentElement.scrollHeight); };
+  const userBubble = (text) => thread.append(h("div", { class: "bubble user" }, text));
+  const renderResponse = (r) => { for (const item of r.output || []) thread.append(itemNode(item)); const n = endNote(r); if (n) thread.append(n); };
+  let session = null;
+  state.previous = "";
+
+  // one turn's stream, live, into a bubble that fills as text arrives
+  const consume = async (res, live) => {
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "", text = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = chunk.split("\n").find(l => l.startsWith("data: ")); if (!line) continue;
+        const e = JSON.parse(line.slice(6));
+        if (e.type === "response.created" && e.response) { state.previous = e.response.id; state.sid = e.response.metadata?.session_id || state.sid; }
+        if (e.type === "response.output_text.delta") { text += e.delta; live.textContent = text; scroll(); }
+        else if (e.type === "response.output_item.done" && e.item.type !== "message") { live.before(itemNode(e.item)); scroll(); }
+        else if (e.type === "response.output_item.done" && e.item.type === "message") { live.before(itemNode(e.item)); text = ""; live.textContent = ""; }
+        else if (e.response && ["completed", "failed", "incomplete", "cancelled"].includes(e.response.status)) {
+          const n = endNote(e.response); if (n) live.replaceWith(n); else live.remove(); scroll();   // the note sits where this turn was
+        }
+      }
+    }
+    live.remove();
+  };
+  const follow = async (r) => {
+    const live = h("div", { class: "bubble assistant streaming" }, h("span", { class: "cursor" })); thread.append(live); scroll();
+    state.live++;
+    try { await consume(await api("GET", `/v1/responses/${r.id}?stream=true`, null, true), live); }
+    catch (e) { note.replaceChildren(fail(e)); }
+    finally { state.live--; refreshList(); }
+  };
+  const refreshList = async () => { try { state.sessions = (await api("GET", "/v1/sessions")).data; const list = $(".sessions"); if (list) list.replaceChildren(...state.sessions.map(s => h("button", { class: "item" + (s.id === state.sid ? " on" : ""), on: { click: () => app("chat", s.id) } }, h("span", { class: "t" }, s.title || "(untitled)"), h("span", { class: "muted" }, `${s.harness} · ${s.responses.length} turn${s.responses.length === 1 ? "" : "s"} · ${ago(s.created_at)}`, s.status === "running" ? " · running" : "")))); } catch { /* the list is a convenience */ } };
+
+  const submit = async () => {
+    const text = box.value.trim(); if (!text) return;
+    note.replaceChildren(); box.value = "";
+    const model = [harnessSel.value, providerSel.value, modelIn.value.trim()].filter(Boolean).join("/");
+    const body = { model, input: text, stream: true };
+    if (state.previous) body.previous_response_id = state.previous;         // a running turn is superseded by this one
+    userBubble(text);
+    const live = h("div", { class: "bubble assistant streaming" }, h("span", { class: "cursor" })); thread.append(live); scroll();
+    harnessSel.disabled = true;
+    if (title.textContent === "New session") title.textContent = text.split("\n")[0].slice(0, 120);
+    state.live++;
+    try {
+      const res = await api("POST", "/v1/responses", body, true);
+      if (!res.ok) { const t = await res.text(); let d; try { d = JSON.parse(t).detail; } catch { d = t; } throw new Error(typeof d === "string" ? d : JSON.stringify(d)); }
+      state.sid = res.headers.get("x-session-id") || state.sid;
+      await consume(res, live);
+    } catch (e) { live.remove(); note.replaceChildren(fail(e)); if (!state.previous) harnessSel.disabled = false; }
+    finally { state.live--; refreshList(); }
+  };
+  box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } });
+
+  if (sid) {
+    session = await api("GET", `/v1/sessions/${sid}`);
+    title.textContent = session.title || "(untitled)";
+    harnessSel.value = session.harness; harnessSel.disabled = true; defaults();
+    for (const r of session.turns) { userBubble(r.text || ""); state.previous = r.id; if (["queued", "in_progress"].includes(r.status)) follow(r); else renderResponse(r); }
+    setTimeout(scroll, 0);
+  }
+  return h("div", { class: "convo" },
+    h("div", { class: "convo-head" }, h("div", { style: "min-width:0" }, title, h("p", { class: "muted" }, sid ? `${session.harness} · session ${sid}` : "A session is a conversation with one harness in one workspace. Each message is a Responses request.")),
+      h("div", { class: "row" }, field("Harness", harnessSel), field("Provider", providerSel), field("Model", modelIn))),
+    thread,
+    h("div", { class: "composer" }, box, note, h("p", { class: "muted", style: "margin:4px 0 0" }, "Enter sends. A message sent while a turn runs stops that turn and runs the new message on the workspace it left.")));
+}
+
+// setup: providers and harnesses
+async function setup() {
+  const owner = isOwner();
+  const out = h("div");
+  // providers
+  const pname = h("input", { placeholder: "deepseek", pattern: "[a-z0-9][a-z0-9._-]*" }), url = h("input", { placeholder: "https://api.deepseek.com/anthropic" }), key = h("input", { type: "password", placeholder: "the provider's API key (sealed on arrival)" });
+  const apiSel = h("select", {}, option("anthropic-messages", "Anthropic Messages (Claude Code, Pi, Hermes, Kilo, DeepSeek Harness…)"), option("openai-chat", "OpenAI chat completions (Cline, OpenAI-compatible CLIs)"), option("openai-responses", "OpenAI Responses (Codex)"), option("none", "no key: an open endpoint"));
+  const saveProvider = async () => { out.replaceChildren(); try { await api("PUT", `/v1/providers/${pname.value.trim()}`, { url: url.value.trim(), api: apiSel.value, key: key.value }); app("setup"); } catch (e) { out.replaceChildren(fail(e)); } };
+  const providerRows = state.providers.map(p => h("tr", {}, h("td", {}, h("b", {}, p.name)), h("td", {}, tag(p.api, "blue")), h("td", { class: "mono" }, p.url),
+    h("td", {}, owner ? h("div", { class: "row end" }, confirmBtn("delete", async () => { await api("DELETE", `/v1/providers/${p.name}`); app("setup"); })) : null)));
+  // harnesses
+  const cat = await api("GET", "/v1/catalog");
+  const hname = h("input", { placeholder: "claude-code", pattern: "[a-z0-9][a-z0-9._-]*" });
+  const source = h("select", {}, ...cat.data.map(p => option(p.name, `${p.title || p.name} · ${p.cli.name} ${p.cli.version}`.trim())), option("upload", "a package archive (.tar.gz) from your machine"));
+  const file = h("input", { type: "file", accept: ".tar,.tgz,.tar.gz,application/gzip,application/x-tar", hidden: true });
+  const intro = h("p", { class: "muted" });
+  const describe = () => { const p = cat.data.find(x => x.name === source.value); intro.textContent = p ? p.intro : "The archive is the package: harness.json, install.sh, request.sh and whatever else it needs."; file.hidden = source.value !== "upload"; if (p && !hname.value) hname.placeholder = p.name === "template" ? "my-harness" : p.name; };
+  source.addEventListener("change", describe); describe();
+  const addHarness = async () => {
+    out.replaceChildren();
+    const name = hname.value.trim() || hname.placeholder;
+    try {
+      if (source.value === "upload") {
+        if (!file.files[0]) throw new Error("choose the package archive");
+        const r = await api("PUT", `/v1/harnesses/${name}`, await file.files[0].arrayBuffer(), true);
+        if (!r.ok) throw new Error((await r.json()).detail || r.status);
+      } else await api("POST", `/v1/harnesses/${name}`, { catalog: source.value });
+      app("chat", "");
+    } catch (e) { out.replaceChildren(fail(e)); }
+  };
+  const harnessRows = state.harnesses.map(hn => h("tr", {}, h("td", {}, h("b", {}, hn.name)), h("td", {}, `${hn.cli?.name || ""} ${hn.cli?.version || ""}`), h("td", {}, hn.defaults?.provider ? tag(hn.defaults.provider, "blue") : h("span", { class: "muted" }, "named in the request")), h("td", {}, hn.description),
+    h("td", {}, h("div", { class: "row end" }, h("a", { class: "btn ghost small", href: `/v1/harnesses/${hn.name}/archive`, download: `${hn.name}.tar.gz` }, "export"), owner ? confirmBtn("delete", async () => { await api("DELETE", `/v1/harnesses/${hn.name}`); app("setup"); }) : null))));
+  return h("div", { class: "setup" },
+    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Providers and harnesses"), h("p", {}, "A provider is a model endpoint and its key; the key is sealed on arrival and swapped in at the gateway per request, so no sandbox ever sees it. A harness is a package that runs a CLI: fork one from the catalog or upload your own."))),
+    h("div", { class: "card" }, h("h2", {}, "Providers"), h("div", { class: "table-wrap" }, providerRows.length ? h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "API shape"), h("th", {}, "URL"), h("th"))), h("tbody", {}, ...providerRows)) : empty("No providers yet. Add the endpoint a harness should call.")),
+      owner ? h("div", { style: "margin-top:14px" }, h("h3", {}, "Add or replace a provider"), h("div", { class: "grid-2" }, field("Name", pname), field("API shape", apiSel), field("URL (https)", url), field("Key", key)), h("div", { class: "row end", style: "margin-top:10px" }, h("button", { class: "act", on: { click: saveProvider } }, "Save provider"))) : h("p", { class: "muted" }, "An owner adds providers.")),
+    h("div", { class: "card" }, h("h2", {}, "Harnesses"), h("div", { class: "table-wrap" }, harnessRows.length ? h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "CLI"), h("th", {}, "Provider"), h("th", {}, "Description"), h("th"))), h("tbody", {}, ...harnessRows)) : empty("No harnesses yet. Add one from the catalog to start.")),
+      owner ? h("div", { style: "margin-top:14px" }, h("h3", {}, "Add a harness"), h("div", { class: "grid-2" }, field("From", source), field("Name", hname)), file, intro, h("div", { class: "row end", style: "margin-top:10px" }, h("button", { class: "act", on: { click: addHarness } }, "Add harness"))) : h("p", { class: "muted" }, "An owner adds harnesses."),
+      h("p", { class: "muted", style: "margin-top:12px" }, "From the command line: ", h("code", {}, "hg harness pull NAME ./pkg"), ", edit, ", h("code", {}, "hg harness push NAME ./pkg"), ". ", h("a", { href: "/docs/packages/" }, "The package contract"))),
+    out,
+    h("div", { class: "card flat" }, h("h3", {}, "From any OpenAI SDK"), h("pre", { class: "light" }, `from openai import OpenAI\nclient = OpenAI(base_url="${location.origin}/v1", api_key="hg_…")\nr = client.responses.create(model="${state.harnesses[0]?.name || "my-harness"}", input="Create hello.py that prints hello and run it")\nprint(r.status, r.output_text)`),
+      h("p", { class: "muted" }, "The model is the harness name, or harness/provider/model. A key comes from ", h("code", {}, "POST /v1/members/{name}/keys"), " or ", h("code", {}, "hg keys new"), "; ", h("a", { href: "/docs/api/" }, "the API"), ".")));
+}

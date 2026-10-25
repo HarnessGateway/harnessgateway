@@ -1,7 +1,7 @@
-"""Layer 5, the control plane's side: a turn is queued, claimed by a worker with its job, streamed,
-ended; a session continues from its snapshot and inherits its provider; reach is organization, team,
-member; cancel, steer and a client's disconnect as commands; a lost worker fails its turn and frees the
-session; store:false keeps no snapshot."""
+"""Layer 4, the control plane's side: a turn is queued, claimed by a worker with its job, streamed,
+ended; a session continues from its snapshot and inherits its provider; reach is organization, then
+member; cancel and a client's disconnect as commands; a new request on a running session supersedes
+the running turn; a lost worker fails its turn and frees the session; store:false keeps no snapshot."""
 import io
 import json
 import tarfile
@@ -52,17 +52,17 @@ def test_queue_claim_run_end(d):
     sessions, scheduler, store = d.sessions, d.scheduler, d
     r = ask(d, input=[{"role": "user", "content": [{"type": "input_text", "text": "hello"}, {"type": "input_file", "filename": "notes/a.txt", "file_data": "A"}]}],
             text=None, instructions="be brief")
-    assert r.status == "queued" and r.turn == 1 and r.files.endswith("files.tgz") and r.team == "" and not r.background
+    assert r.status == "queued" and r.turn == 1 and r.files.endswith("files.tgz") and not r.background
     w = worker(d)
     job = scheduler.claim(w)
     assert job and job["id"] == r.id and job["token"].startswith("sk-hg-") and job["provider"]["url"] == "http://hg-provider:8080/v1"
     assert job["urls"]["folder"].startswith("http://api.test/internal/blobs/") and job["urls"]["snapshot"] == "" and job["urls"]["files"] and job["urls"]["request"]
-    assert job["config"]["run"]["egress"] == ["git.example"] and job["limits"]["max_runs"] == 1 and job["timeout_s"] == 60 and job["new_session"] and job["team"] == ""
+    assert job["config"]["run"]["egress"] == ["git.example"] and job["limits"]["max_runs"] == 1 and job["timeout_s"] == 60 and job["new_session"]
     assert store.providers.resolve_token(job["token"])["response"] == r.id
     assert scheduler.claim(w) is None                      # max_runs 1: nothing else while this runs
     scheduler.started(w, r.id)
     scheduler.chunks_in(w, r.id, [{"seq": 1, "stream": "stdout", "text": "log li"}, {"seq": 2, "stream": "stdout", "text": "ne\n" + MSG + "\n"}])
-    assert scheduler.commands(w, [r.id]) == {r.id: {"cancel": False, "interrupts": []}}
+    assert scheduler.commands(w, [r.id]) == {r.id: {"cancel": False}}
     assert [i["type"] for i in sessions.live_items(sessions.turn(store.members.get("acme", "dev"), r.id))] == ["message"]
     done = finish(d, w, r.id)
     dev = store.members.get("acme", "dev")
@@ -72,8 +72,6 @@ def test_queue_claim_run_end(d):
     assert s.responses == [r.id] and not s.running and s.snapshot_key.endswith("snapshot.tgz") and s.snapshot == r.id and s.title == "hello"
     assert [t["kind"] for t in sessions.trace(dev, s.id)] == ["request", "response"]
     assert json.loads(sessions.blobs.get(f"tenants/acme/sessions/{s.id}/turns/{r.id}/request.json"))["instructions"] == "be brief"
-    usage = d.records.get("usage", "acme", r.id)
-    assert usage["seconds"] == 1.5 and usage["input_tokens"] == 2 and usage["member"] == "dev"
     with pytest.raises(Conflict):
         finish(d, worker(d, "other"), r.id)   # another worker cannot end it
 
@@ -90,8 +88,6 @@ def test_continue_inherits_overrides_and_reach(d):
     assert r2.session == r1.session and r2.turn == 2 and (r2.provider, r2.model) == ("other", "m1")   # the provider is inherited, the model is the package's
     job = scheduler.claim(w)
     assert job["urls"]["snapshot"] and job["snapshot"] == r1.id and not job["new_session"] and job["token"].startswith("sk-ant-api03-hg-")
-    with pytest.raises(Conflict):
-        ask(d, "busy", previous_response_id=r1.id)
     finish(d, w, r2.id)
     chase, dev = store.members.get("acme", "chase"), store.members.get("acme", "dev")
     assert [x.id for x in sessions.turns_of(dev, r1.session)] == [r1.id, r2.id]
@@ -104,48 +100,64 @@ def test_continue_inherits_overrides_and_reach(d):
         with pytest.raises(NotFound):
             sessions.turn(who, r1.id)
         assert sessions.list(who) == []
-    assert sessions.turn(chase, r1.id).id == r1.id
+    assert sessions.turn(chase, r1.id).id == r1.id                        # an owner sees the organization's
     with pytest.raises(NotFound):
         ask(d, previous_response_id="resp_" + "0" * 32)
     store.harnesses.create_from_archive("acme", "other", archive(), "chase")
     with pytest.raises(Invalid, match="runs cc, not other"):
         ask(d, "x", model="other", previous_response_id=r1.id)
-    # a team's harness: its sessions are the team's
-    store.teams.put("acme", "platform", ["dev", "peer"])
-    store.members.create("acme", "outsider", "member")
-    store.harnesses.create_from_archive("acme", "tc", archive(), "chase", team="platform")
-    t = ask(d, "team work", model="tc")
-    assert t.team == "platform"
-    peer, outsider = store.members.get("acme", "peer"), store.members.get("acme", "outsider")
-    assert sessions.turn(peer, t.id).id == t.id and [s.id for s in sessions.list(peer)] == [t.session]
-    with pytest.raises(NotFound):
-        sessions.turn(outsider, t.id)
-    with pytest.raises(NotFound):
-        ask(d, "no", member="outsider", model="tc")             # not even the harness
-    assert scheduler.claim(w)["team"] == "platform"
 
 
-def test_cancel_interrupt_disconnect_and_lost_worker(d):
+def test_a_new_request_supersedes_the_running_turn(d):
+    """The web view's rule: typing while the agent works stops it and runs the new message next."""
+    sessions, scheduler = d.sessions, d.scheduler
+    dev = d.members.get("acme", "dev")
+    w = worker(d)
+    first = ask(d, "start")
+    scheduler.claim(w)
+    scheduler.started(w, first.id)
+    second = ask(d, "no, do this instead", previous_response_id=first.id)
+    s = sessions.session(dev, first.session)
+    assert s.responses == [first.id, second.id] and s.running == first.id and second.status == "queued" and second.turn == 2
+    assert sessions.turn(dev, first.id).cancel and sessions.turn(dev, first.id).stop_reason == "superseded"
+    assert scheduler.commands(w, [first.id]) == {first.id: {"cancel": True}}     # the node is told to stop it
+    assert scheduler.claim(w) is None                                            # the second waits for the first to end
+    finish(d, w, first.id, outcome="stopped", exit_code=0)
+    stopped = sessions.turn(dev, first.id)
+    assert stopped.status == "cancelled" and stopped.incomplete == {"reason": "superseded"}
+    assert sessions.response_object(stopped)["metadata"]["incomplete_reason"] == "superseded"
+    assert sessions.session(dev, first.session).running == second.id           # the session is the second's now
+    job = scheduler.claim(w)
+    assert job and job["id"] == second.id and job["snapshot"] == first.id and not job["new_session"]   # on the workspace the first left
+    # a third request while the second is still queued (the node has not claimed it yet): the queued one ends at once
+    scheduler.started(w, second.id)
+    finish(d, w, second.id)
+    third = ask(d, "three", previous_response_id=second.id)
+    fourth = ask(d, "four", previous_response_id=third.id)
+    assert sessions.turn(dev, third.id).status == "cancelled" and sessions.turn(dev, third.id).stop_reason == "superseded"
+    assert sessions.session(dev, first.session).running == fourth.id and scheduler.claim(w)["id"] == fourth.id
+    finish(d, w, fourth.id)
+    assert [t["kind"] for t in sessions.trace(dev, first.session)] == ["request", "supersede", "request", "response", "response",
+                                                                        "request", "supersede", "request", "response"]   # a queued turn superseded leaves no response
+    assert not sessions.session(dev, first.session).running
+
+
+def test_cancel_disconnect_and_lost_worker(d):
     sessions, scheduler, store = d.sessions, d.scheduler, d
     dev = store.members.get("acme", "dev")
     r = ask(d)
     assert sessions.cancel(dev, r.id).status == "cancelled"         # queued: ends at once
     assert not sessions.session(dev, r.session).running
     r = ask(d, "wait")
-    with pytest.raises(Conflict, match="not running"):
-        sessions.interrupt(dev, r.session, "turn")                     # queued: nothing to steer yet
     w = worker(d)
     scheduler.claim(w)
     scheduler.started(w, r.id)
-    sessions.interrupt(dev, r.session, "turn left")
-    with pytest.raises(Invalid):
-        sessions.interrupt(dev, r.session, "   ")
     sessions.cancel(dev, r.id)
-    assert scheduler.commands(w, [r.id])[r.id] == {"cancel": True, "interrupts": [{"seq": 1, "text": "turn left"}]}
+    assert scheduler.commands(w, [r.id])[r.id] == {"cancel": True}
     finish(d, w, r.id, outcome="stopped", exit_code=0)
     got = sessions.turn(dev, r.id)
     assert got.status == "cancelled" and got.incomplete == {"reason": "cancelled"}
-    assert [t["kind"] for t in sessions.trace(dev, r.session)] == ["request", "interrupt", "cancel", "response"]
+    assert [t["kind"] for t in sessions.trace(dev, r.session)] == ["request", "cancel", "response"]
     # the client went away: a foreground turn is stopped and says so; a background one is not
     r = ask(d, "gone")
     scheduler.claim(w)

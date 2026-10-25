@@ -11,8 +11,8 @@
 #                the response is assembled from the stream events request.sh printed.
 #
 # A stop (SIGTERM) is passed to request.sh's whole process group; response.sh still runs, within the
-# stop's grace. The steer signal ($HG_INTERRUPT) is delivered to request.sh alone, never to the CLI
-# it runs, so a package handles a steer in one trap and nothing it starts has to.
+# stop's grace. A stop is how a turn ends early: on a cancel, when the client that asked for it is
+# gone, or when a new request on the session supersedes it.
 set -u
 cd "$HG_WORKSPACE"
 export HG_STDOUT="$HG_DIR/stdout" HG_STDERR="$HG_DIR/stderr"
@@ -25,10 +25,9 @@ tee -a "$HG_STDERR" < "$HG_DIR/.err" >&2 & err=$!
 outcome=exited
 bash "$HG_HARNESS_DIR/request.sh" < "$HG_REQUEST" > "$HG_DIR/.out" 2> "$HG_DIR/.err" & pid=$!
 trap 'outcome=cancelled; kill -TERM -- "-$pid" 2>/dev/null' TERM
-trap 'kill -s "$HG_INTERRUPT" "$pid" 2>/dev/null' "$HG_INTERRUPT"
 while :; do wait "$pid"; rc=$?; kill -0 "$pid" 2>/dev/null || break; done
 wait "$out" "$err" 2>/dev/null
-trap - TERM "$HG_INTERRUPT"
+trap - TERM
 rm -f "$HG_DIR/.out" "$HG_DIR/.err"
 export HG_EXIT=$rc HG_OUTCOME=$outcome
 if [ -f "$HG_HARNESS_DIR/response.sh" ]; then

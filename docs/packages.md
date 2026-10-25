@@ -2,7 +2,7 @@
 
 A harness package is what turns a Responses request into a CLI run and the CLI's output into a
 Responses response. It is a directory, kept as a git repository on the platform, holding five
-things. This page is the contract (version 7); [the Responses wire](responses-wire.md) is the
+things. This page is the contract (version 8; a contract-7 package still runs); [the Responses wire](responses-wire.md) is the
 research behind the catalog's packages, and the [harness-package skill](https://github.com/HarnessGateway/harnessgateway/blob/main/.agents/skills/harness-package/SKILL.md)
 is the procedure for writing one with a coding agent.
 
@@ -25,12 +25,11 @@ package is at most 10,000 files and 256 MB.
 
 ```json
 {
-  "contract": 7,
+  "contract": 8,
   "description": "Codex in exec mode on any Responses provider.",
   "cli": {"name": "codex", "version": "0.163.0"},
   "defaults": {"provider": "openai", "model": "gpt-5.4-mini"},
   "provider_env": {"key": "OPENAI_API_KEY", "url": "OPENAI_BASE_URL"},
-  "interrupt": "SIGUSR1",
   "install": {"egress": ["registry.npmjs.org"], "timeout_s": 900},
   "run": {"egress": [], "timeout_s": 3600, "stop_timeout_s": 20},
   "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "tools", "metadata"]
@@ -39,12 +38,11 @@ package is at most 10,000 files and 256 MB.
 
 | Key | Meaning |
 |---|---|
-| `contract` | 7 |
+| `contract` | 8 (a package that says 7 still loads; its `interrupt`, the steer signal 8 dropped, is ignored) |
 | `description` | shown in lists |
 | `cli` | the CLI's name and pinned version, shown in lists |
 | `defaults` | the provider and model when the request's `model` is a bare harness name; either may be empty (then the request must name one) |
 | `provider_env` | the names of the environment variables the CLI reads its key and base URL from; the platform sets them to the session token and the gateway's address, alongside `HG_PROVIDER_KEY_FILE` and `HG_PROVIDER_URL` |
-| `interrupt` | the signal a steer delivers to `request.sh`: `SIGUSR1`, `SIGUSR2`, `SIGINT` or `SIGHUP` (`SIGTERM` is a stop) |
 | `install.egress`, `run.egress` | the hosts the door lets `install.sh` and `request.sh` reach; the provider's host is implied for the run. Everything else is refused, private addresses always |
 | `install.timeout_s`, `run.timeout_s`, `run.stop_timeout_s` | ceilings, within the organization's limits |
 | `accepts` | the request fields the package honours, from `input`, `instructions`, `previous_response_id`, `reasoning.effort`, `reasoning.summary`, `text.format`, `text.verbosity`, `tools`, `max_tool_calls`, `max_output_tokens`, `store`, `truncation`, `service_tier`, `metadata`, `temperature`, `top_p`; documentation for the client, not enforcement |
@@ -60,14 +58,14 @@ package is at most 10,000 files and 256 MB.
 | `HOME` | the member's home for this package, seeded from `seeds/home`, kept between turns |
 | `HG_STATE` | a directory kept with the session: put the CLI's resume handle here |
 | `HG_FILES` | the request's `input_file` and `input_image` parts, decoded, by filename |
-| `HG_DIR` | scratch for this turn; `$HG_DIR/interrupt` holds a steer's text when the signal arrives |
+| `HG_DIR` | scratch for this turn |
 | `HG_SESSION`, `HG_RESPONSE`, `HG_TURN`, `HG_PREVIOUS` | the session id, this response's id, the turn number (1, 2, …), the `previous_response_id` or empty |
 | `HG_MODEL` | the model segment of the request's path, or the package default, or empty |
 | `HG_PROVIDER_URL`, `HG_PROVIDER_KEY_FILE`, `HG_PROVIDER_API` | the gateway's address, the file holding the session token, the provider's API shape |
 | the `provider_env` names | the same address and token |
 | `HG_HARNESS_DIR` | the package's files, read-only |
 | `HG_TOOLS` | what `install.sh` installed; `$HG_TOOLS/bin` is on `PATH` |
-| `HG_INTERRUPT`, `HG_CONTRACT` | the steer signal's name; 7 |
+| `HG_CONTRACT` | 8 |
 
 The sandbox is the platform's base image (Debian, Python 3.12, Node 22, git, curl, jq, ripgrep)
 as the organization's own uid with no capabilities and a read-only root; the writable places are
@@ -109,19 +107,20 @@ object; the platform takes from it:
 | `usage` | the usage |
 | `status` | `completed`, `failed` or `incomplete`; default from the exit code |
 | `error` | `{"code", "message"}`; a code outside `server_error`, `rate_limit_exceeded`, `invalid_prompt` is kept as `metadata.error_code` and the code becomes `server_error` |
-| `incomplete_details` | `{"reason"}`; a reason outside `max_output_tokens`, `max_messages`, `content_filter`, `steered` moves to `metadata.incomplete_reason` |
+| `incomplete_details` | `{"reason"}`; a reason outside `max_output_tokens`, `max_messages`, `content_filter` moves to `metadata.incomplete_reason` |
 | `metadata` | string values added to the response's metadata |
 
 Its exit code is the status when `status` is absent. Use it when the CLI reports usage or a result
 only at the end (a usage file, a JSON envelope), or to turn the CLI's own failure into `failed`.
 
-## Steering
+## Stopping
 
-A steer writes the text to `$HG_DIR/interrupt` and sends `request.sh` the `interrupt` signal, to
-that process alone, never to the CLI it started. `trap` it and decide: a CLI with a way to inject
-a message mid-run uses it; the rest let the running invocation finish and run the steer as a
-second invocation of the same CLI session, as the catalog's packages do. A stop is `SIGTERM` to
-the whole process group, then `stop_timeout_s` of grace.
+A stop is `SIGTERM` to `request.sh`'s whole process group, then `stop_timeout_s` of grace, then
+`response.sh` with `HG_OUTCOME=cancelled`. It happens on a cancel, when the client that asked for
+the turn is gone, and when a new request on the session supersedes the turn; the next turn then
+runs on the workspace and state this one left, so a package that keeps its CLI's resume handle in
+`$HG_STATE` as it runs loses nothing. There is no mid-run message: the next message is the next
+turn.
 
 ## Precedence
 
@@ -147,8 +146,7 @@ and your keys: set `HG_PROVIDER_URL`, `HG_PROVIDER_KEY` and `HG_PROVIDER_API` an
 `provider_env` names are filled from them. `--state` keeps the workspace, the home, the tools and the
 CLI's state between runs; each run is the next turn, and a request file with `previous_response_id`
 (the previous run's id, `resp_0…1` for the first) exercises continuation. The platform's `serve --dev` runs whole
-sessions the same way, without Docker. Then push, fork a catalog package into the console and
-compare in a rodeo.
+sessions the same way, without Docker. Then push, and start a session with it in the app.
 
 ## Egress
 

@@ -4,7 +4,7 @@ The platform runs command lines in sandboxes and speaks the Responses API about 
 agents are the command lines it happens to ship packages for; nothing in it knows what an agent is.
 A package is the adapter between one CLI and the wire, and the platform is the same for every
 package: the request arrives verbatim, the package runs the CLI in a sandbox the platform owns, the
-events the package prints become the response, and everything about it is traced, metered and kept.
+events the package prints become the response, and everything about it is traced and kept.
 
 ## The schema, on both sides
 
@@ -53,12 +53,12 @@ Fork `shell` or `template` and change three things:
 2. **`request.sh`**: read the fields you want from `$HG_REQUEST` with `jq`, run the CLI in
    `$HG_WORKSPACE`, pipe its output through a mapper that prints Responses events. Keep the CLI's
    resume handle in `$HG_STATE` so `previous_response_id` continues it.
-3. **`harness.json`**: the CLI's name and version, `accepts`, the egress lists, the timeouts, the
-   steer signal, and `provider_env` if the CLI calls a model provider (the platform then puts the
+3. **`harness.json`**: the CLI's name and version, `accepts`, the egress lists, the timeouts, and
+   `provider_env` if the CLI calls a model provider (the platform then puts the
    gateway's address and a session token in those variables; the real key never enters the sandbox).
 
-Every package gets the same sandbox: a fresh container per turn as a uid unique to the organization
-or the team, a read-only root, no capabilities, the organization's cpu, memory and pid ceilings, one
-door out to the listed hosts, a workspace and a home that persist for the session, and a trace of
-every request, response, steer and provider exchange. What the package is for is the package's
+Every package gets the same sandbox: a fresh container per turn as a uid unique to the organization,
+a read-only root, no capabilities, the organization's cpu, memory and pid ceilings, one door out to
+the listed hosts, a workspace and a home that persist for the session, and a trace of every request,
+response and provider exchange. What the package is for is the package's
 business.

@@ -1,4 +1,4 @@
-"""Layer 1: the harness package, contract 7. The only module that knows what is in one.
+"""Layer 1: the harness package, contract 8. The only module that knows what is in one.
 
 A package is a directory (kept as a git repository, moved as a tar) and holds:
 - `harness.json`: what the platform needs to launch it, and nothing about the CLI's behaviour;
@@ -32,13 +32,13 @@ from typing import Any
 from ..errors import Invalid
 from ..kernel import files
 
-CONTRACT = 7
+CONTRACT = 8
+ACCEPTED = (7, CONTRACT)                             # a contract-7 package still runs; its `interrupt` (the steer signal 8 dropped) is ignored
 REQUIRED = ("harness.json", "install.sh", "request.sh")
 SCRIPTS = ("install.sh", "request.sh", "response.sh")
 SEEDS = ("workspace", "home")
-SIGNALS = ("SIGINT", "SIGHUP", "SIGUSR1", "SIGUSR2")   # SIGTERM is a stop; it cannot also be a steer
 MAX_FILES, MAX_BYTES = 10_000, 256 * 1024 * 1024
-KEYS = {"contract", "description", "cli", "defaults", "provider_env", "interrupt", "install", "run", "accepts"}
+KEYS = {"contract", "description", "cli", "defaults", "provider_env", "install", "run", "accepts"}
 FIELDS = ("input", "instructions", "previous_response_id", "reasoning.effort", "reasoning.summary", "text.format",
           "text.verbosity", "tools", "max_tool_calls", "max_output_tokens", "store", "truncation", "service_tier",
           "metadata", "temperature", "top_p")
@@ -54,7 +54,6 @@ class Config:
     model: str = ""
     key_env: str = ""
     url_env: str = ""
-    interrupt: str = "SIGUSR1"
     install_egress: tuple[str, ...] = ()
     install_timeout_s: float = 900
     run_egress: tuple[str, ...] = ()
@@ -65,7 +64,7 @@ class Config:
     def as_json(self) -> dict[str, Any]:
         return {"contract": CONTRACT, "description": self.description, "cli": {"name": self.cli, "version": self.version},
                 "defaults": {"provider": self.provider, "model": self.model},
-                "provider_env": {"key": self.key_env, "url": self.url_env}, "interrupt": self.interrupt,
+                "provider_env": {"key": self.key_env, "url": self.url_env},
                 "install": {"egress": list(self.install_egress), "timeout_s": self.install_timeout_s},
                 "run": {"egress": list(self.run_egress), "timeout_s": self.timeout_s, "stop_timeout_s": self.stop_timeout_s},
                 "accepts": list(self.accepts)}
@@ -117,9 +116,9 @@ def load_config(text: str) -> Config:
 
 
 def load_config_dict(d: Any) -> Config:
-    if not isinstance(d, dict) or d.get("contract") != CONTRACT:
+    if not isinstance(d, dict) or d.get("contract") not in ACCEPTED:
         raise Invalid(f'harness.json must be an object with "contract": {CONTRACT}')
-    if unknown := sorted(set(d) - KEYS):
+    if unknown := sorted(set(d) - KEYS - ({"interrupt"} if d.get("contract") == 7 else set())):
         raise Invalid(f"harness.json: unknown keys {', '.join(unknown)}")
     cli = _section(d, "cli", ("name", "version"))
     defaults = _section(d, "defaults", ("provider", "model"))
@@ -129,15 +128,12 @@ def load_config_dict(d: Any) -> Config:
     for name in (env.get("key", ""), env.get("url", "")):
         if not isinstance(name, str) or (name and not name.replace("_", "").isalnum()):
             raise Invalid("harness.json: provider_env names are environment variable names")
-    interrupt = _text(d, "interrupt", "SIGUSR1")
-    if interrupt not in SIGNALS:
-        raise Invalid(f"harness.json: interrupt is one of {', '.join(SIGNALS)}")
     accepts = d.get("accepts", ["input", "previous_response_id"])
     if not isinstance(accepts, list) or not all(isinstance(a, str) and a in FIELDS for a in accepts):
         raise Invalid(f"harness.json: accepts is a list of request fields from {', '.join(FIELDS)}")
     return Config(description=_text(d, "description"), cli=_text(cli, "name"), version=_text(cli, "version"),
                   provider=_text(defaults, "provider"), model=_text(defaults, "model"),
-                  key_env=env.get("key", ""), url_env=env.get("url", ""), interrupt=interrupt,
+                  key_env=env.get("key", ""), url_env=env.get("url", ""),
                   install_egress=_hosts(install, "install"), install_timeout_s=_seconds(install, "timeout_s", 900),
                   run_egress=_hosts(run, "run"), timeout_s=_seconds(run, "timeout_s", 3600),
                   stop_timeout_s=_seconds(run, "stop_timeout_s", 20), accepts=tuple(accepts))
@@ -176,7 +172,7 @@ def unpack(archive: bytes, into: Path) -> None:
 
 
 def validate(folder: Path) -> Config:
-    """The folder is a package on contract 7, or Invalid says what is missing. Its scripts are made
+    """The folder is a package on the contract, or Invalid says what is missing. Its scripts are made
     executable: an upload may have lost the bit. Bash and Python files must at least parse."""
     for name in REQUIRED:
         if not (folder / name).is_file():

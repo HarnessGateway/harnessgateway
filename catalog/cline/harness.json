@@ -1,10 +1,9 @@
 {
-  "contract": 7,
+  "contract": 8,
   "description": "Cline CLI, headless over --json, on an OpenAI-compatible provider. Text, reasoning and tool content become items as each piece ends.",
   "cli": {"name": "cline", "version": "3.0.73"},
   "defaults": {"provider": "deepseek-openai", "model": "deepseek-chat"},
   "provider_env": {"key": "OPENAI_API_KEY", "url": "OPENAI_BASE_URL"},
-  "interrupt": "SIGUSR1",
   "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
   "run": {"egress": [], "timeout_s": 1800, "stop_timeout_s": 20},
   "accepts": ["input", "instructions", "previous_response_id", "reasoning.effort", "metadata"]

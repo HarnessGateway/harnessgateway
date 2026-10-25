@@ -31,24 +31,12 @@ class Settings:
     base_image: str = ""                             # HG_BASE_IMAGE: the sandbox image; empty pulls the shipped one, or builds it
     runtime: str = ""                                # HG_RUNTIME: a sandboxed Docker runtime, e.g. runsc (gVisor)
     sandbox: str = "docker"                          # HG_SANDBOX: docker (the sandbox) or process (development only, no isolation)
-    trace_sharing: bool = False                      # HG_TRACE_SHARING=1: free-plan organizations share traces unless they opt out
     allow_private: bool = False                      # HG_ALLOW_PRIVATE=1: egress may name private addresses (self-hosted)
     ca_file: Path | None = None                      # HG_CA_FILE: a CA bundle, where the network re-signs TLS
     worker_name: str = field(default_factory=socket.gethostname)   # HG_WORKER_NAME
     worker_slots: int = 4                            # HG_WORKER_SLOTS: turns at once on this node
     control_url: str = ""                            # HG_CONTROL_URL: the API, for a worker on another machine
-    github_client_id: str = ""                       # HG_GITHUB_CLIENT_ID / _SECRET: sign in with GitHub, when set
-    github_client_secret: str = ""
-    google_client_id: str = ""                       # HG_GOOGLE_CLIENT_ID / _SECRET: sign in with Google, when set
-    google_client_secret: str = ""
-    smtp_url: str = ""                               # HG_SMTP_URL: smtp(s)://user:pass@host:port; set, sign-ups verify their email
-    mail_from: str = ""                              # HG_MAIL_FROM: the sender
-    oidc_issuer: str = ""                            # HG_OIDC_ISSUER / _CLIENT_ID / _CLIENT_SECRET / _NAME: single sign-on with any OpenID Connect provider
-    oidc_client_id: str = ""
-    oidc_client_secret: str = ""
-    oidc_name: str = "sso"
     kms: str = "local"                               # HG_KMS: local (HG_MASTER_KEY or a file) or aws (HG_KMS_KEY_ID)
-    billing: str = "none"                            # HG_BILLING: none or stripe (HG_STRIPE_KEY)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_dir", Path(self.data_dir).absolute())
@@ -67,15 +55,6 @@ class Settings:
             raise ValueError("HG_SANDBOX is docker or process")
         if self.kms not in ("local", "aws"):
             raise ValueError("HG_KMS is local or aws")
-        if self.billing not in ("none", "stripe"):
-            raise ValueError("HG_BILLING is none or stripe")
-
-    def identity_env(self) -> dict[str, str]:
-        """The identity providers' settings, by their variable names, for `backends.identity.open_identities`."""
-        return {"HG_GITHUB_CLIENT_ID": self.github_client_id, "HG_GITHUB_CLIENT_SECRET": self.github_client_secret,
-                "HG_GOOGLE_CLIENT_ID": self.google_client_id, "HG_GOOGLE_CLIENT_SECRET": self.google_client_secret,
-                "HG_OIDC_ISSUER": self.oidc_issuer, "HG_OIDC_CLIENT_ID": self.oidc_client_id, "HG_OIDC_CLIENT_SECRET": self.oidc_client_secret,
-                "HG_OIDC_NAME": self.oidc_name}
 
     @classmethod
     def from_env(cls, roles: str = "all") -> Settings:
@@ -88,14 +67,8 @@ class Settings:
                    deployer_key=env.get("HG_DEPLOYER_KEY", ""), join_token=env.get("HG_JOIN_TOKEN", ""),
                    gateway_host=env.get("HG_GATEWAY_HOST", cls.gateway_host), gateway_port=int(env.get("HG_GATEWAY_PORT", cls.gateway_port)),
                    gateway_url=env.get("HG_GATEWAY_URL", ""), base_image=env.get("HG_BASE_IMAGE", ""), runtime=env.get("HG_RUNTIME", ""),
-                   sandbox=env.get("HG_SANDBOX", cls.sandbox), trace_sharing=env.get("HG_TRACE_SHARING", "") in ("1", "true", "yes"),
+                   sandbox=env.get("HG_SANDBOX", cls.sandbox),
                    allow_private=env.get("HG_ALLOW_PRIVATE", "") in ("1", "true", "yes"),
                    ca_file=Path(env["HG_CA_FILE"]) if env.get("HG_CA_FILE") else None,
                    worker_name=env.get("HG_WORKER_NAME") or socket.gethostname(), worker_slots=int(env.get("HG_WORKER_SLOTS", cls.worker_slots)),
-                   control_url=env.get("HG_CONTROL_URL", ""),
-                   github_client_id=env.get("HG_GITHUB_CLIENT_ID", ""), github_client_secret=env.get("HG_GITHUB_CLIENT_SECRET", ""),
-                   google_client_id=env.get("HG_GOOGLE_CLIENT_ID", ""), google_client_secret=env.get("HG_GOOGLE_CLIENT_SECRET", ""),
-                   smtp_url=env.get("HG_SMTP_URL", ""), mail_from=env.get("HG_MAIL_FROM", ""),
-                   oidc_issuer=env.get("HG_OIDC_ISSUER", ""), oidc_client_id=env.get("HG_OIDC_CLIENT_ID", ""),
-                   oidc_client_secret=env.get("HG_OIDC_CLIENT_SECRET", ""), oidc_name=env.get("HG_OIDC_NAME", cls.oidc_name),
-                   kms=env.get("HG_KMS", cls.kms), billing=env.get("HG_BILLING", cls.billing))
+                   control_url=env.get("HG_CONTROL_URL", ""), kms=env.get("HG_KMS", cls.kms))

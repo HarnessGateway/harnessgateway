@@ -14,7 +14,6 @@ The CLI's documentation: <https://learn.chatgpt.com/docs/non-interactive-mode>.
 | Accepts | `input`, `instructions`, `previous_response_id`, `reasoning.effort`, `reasoning.summary`, `text.format`, `text.verbosity`, `tools`, `metadata` |
 | Egress, install | `registry.npmjs.org` |
 | Egress, run | none |
-| Steer signal | `SIGUSR1` |
 
 ## Verified
 
@@ -40,4 +39,4 @@ hg ask codex "Create hello.txt containing hello, then say done."
 hg ask codex/myprovider/some-model "…"       # another provider and model
 ```
 
-In the console: Catalog, then Fork on **Codex**. The fork's first commit is the catalog's package; edit it as your own from there.
+In the app: Providers and harnesses, Add a harness, **Codex**. The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.

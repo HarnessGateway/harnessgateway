@@ -6,7 +6,7 @@
 #
 # The platform sets: HG_REQUEST, HG_WORKSPACE (cwd, kept between turns), HOME (seeded, kept per member),
 # HG_STATE (kept with the session: put the CLI's resume handle here), HG_FILES (the request's
-# input_file parts, decoded), HG_DIR (scratch; $HG_DIR/interrupt holds a steer's text), HG_SESSION,
+# input_file parts, decoded), HG_DIR (scratch for this turn), HG_SESSION,
 # HG_RESPONSE, HG_TURN (1, 2, …), HG_PREVIOUS (the previous_response_id, or empty), HG_MODEL (the
 # model segment of the request's model path, or the package default), HG_PROVIDER_URL and
 # HG_PROVIDER_KEY_FILE (the gateway and the session token), plus the provider_env names from
@@ -26,10 +26,8 @@ effort=$(jq -r '.reasoning.effort // ""' "$HG_REQUEST")
 #    AGENTS.md that is replaced each turn (a CLI with a flag would take --append-system-prompt instead)
 python3 "$HG_HARNESS_DIR/instructions.py" "$instructions"
 
-# 3. a steer: the text arrives in $HG_DIR/interrupt with this signal, delivered to this script alone;
-#    the usual answer is to let the running turn end and run the steer as the next turn
-steer=""
-trap 'steer=$(cat "$HG_DIR/interrupt" 2>/dev/null || true)' USR1
+# 3. a stop (SIGTERM to this script's process group: a cancel, a client that went away, or a new request
+#    on the session) ends the CLI; wait in a loop so a signal that lands mid-wait is not lost
 run_wait() { "$@" </dev/null & local pid=$! rc; while :; do wait "$pid"; rc=$?; kill -0 "$pid" 2>/dev/null || break; done; return $rc; }
 
 # 4. the turn: the CLI, resumed from $HG_STATE on later turns, its output mapped to Responses events.
@@ -42,5 +40,4 @@ turn() {
   echo-cli "$1" | python3 "$HG_HARNESS_DIR/map.py"
 }
 run_wait turn "$prompt"; rc=$?
-if [ -n "$steer" ]; then run_wait turn "$steer"; rc=$?; fi
 exit $rc

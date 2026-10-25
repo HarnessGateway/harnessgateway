@@ -10,9 +10,9 @@ from pathlib import Path
 from harnessgateway.kernel.execution import Execution, Spec
 from harnessgateway.backends.sandboxes.process import ProcessExecution, host_env
 
-HARNESS_JSON = {"contract": 7, "description": "a test harness", "cli": {"name": "echo-cli", "version": "1"},
+HARNESS_JSON = {"contract": 8, "description": "a test harness", "cli": {"name": "echo-cli", "version": "1"},
                 "defaults": {"provider": "prov", "model": "m1"},
-                "provider_env": {"key": "FAKE_KEY", "url": "FAKE_URL"}, "interrupt": "SIGUSR1",
+                "provider_env": {"key": "FAKE_KEY", "url": "FAKE_URL"},
                 "install": {"egress": ["registry.example"], "timeout_s": 60},
                 "run": {"egress": ["git.example"], "timeout_s": 60, "stop_timeout_s": 2},
                 "accepts": ["input", "instructions", "previous_response_id"]}
@@ -46,7 +46,7 @@ INSTALL_SH = "#!/usr/bin/env bash\nset -eu\nmkdir -p \"$HG_TOOLS/bin\"\nprintf '
 
 
 def members(files: dict[str, str | bytes | None] | None = None, **changes: str) -> dict[str, bytes]:
-    config = {**HARNESS_JSON, **{k: json.loads(v) if v.startswith(("{", "[")) else v for k, v in changes.items()}}
+    config = {**HARNESS_JSON, **{k: json.loads(v) if v.startswith(("{", "[")) or v.isdigit() else v for k, v in changes.items()}}
     out: dict[str, str | bytes | None] = {"harness.json": json.dumps(config), "install.sh": INSTALL_SH, "request.sh": REQUEST_SH,
                                            "seeds/home/home.txt": "from-home", "seeds/workspace/README.md": "from-workspace"}
     if files is not None:

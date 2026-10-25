@@ -2,11 +2,11 @@
 API key, and runs a harness package on this machine while you develop one.
 
     hg login URL KEY                 remember where the platform is and who you are (~/.config/hg/config.json)
-    hg me                            who you are, your organization, your teams
+    hg me                            who you are, your organization
     hg providers [put NAME --url U --api A --key K | rm NAME]
     hg catalog [NAME]                the shipped packages
     hg harnesses                     the harnesses you can use
-    hg harness new NAME --catalog P | --fork H | --dir DIR [--team T]
+    hg harness new NAME --catalog P | --fork H | --dir DIR
     hg harness pull NAME DIR         the package's files into DIR
     hg harness push NAME DIR [-m MSG]   DIR as the next commit (a new harness when none)
     hg harness log NAME | rm NAME
@@ -16,10 +16,12 @@ API key, and runs a harness package on this machine while you develop one.
     hg ask MODEL TEXT [--stream] [--previous ID] [--file PATH]...   POST /v1/responses
     hg response ID [--detail | --request]
     hg sessions | hg session ID [--files | --cat PATH | --trace | --archive OUT]
-    hg steer SESSION TEXT | hg cancel RESPONSE
-    hg rodeo TASK MODEL MODEL... [--pick HARNESS]
-    hg keys | hg key new [--label L]
-    hg teams | hg team put NAME MEMBER... | hg members
+    hg cancel RESPONSE
+    hg keys | hg keys new [--label L]
+    hg members | hg members add NAME | hg members invite EMAIL
+
+A second `hg ask --previous ID` while that session is still running supersedes the running turn:
+it is stopped gracefully and the new request runs on the workspace it left.
 """
 from __future__ import annotations
 
@@ -127,14 +129,14 @@ def catalog(a: argparse.Namespace) -> None:
 def harnesses(a: argparse.Namespace) -> None:
     with client() as c:
         rows = check(c.get("/v1/harnesses"))["data"]
-        table([{"name": r["name"], "team": r["team"] or "(org)", "head": r["head"][:8], "cli": f"{r['cli']['name']} {r['cli']['version']}".strip(),
-                "editable": "yes" if r["editable"] else "no"} for r in rows], ["name", "team", "head", "cli", "editable"])
+        table([{"name": r["name"], "head": r["head"][:8], "cli": f"{r['cli']['name']} {r['cli']['version']}".strip(),
+                "editable": "yes" if r["editable"] else "no"} for r in rows], ["name", "head", "cli", "editable"])
 
 
 def harness(a: argparse.Namespace) -> None:
     with client() as c:
         if a.action == "new":
-            body: dict[str, Any] = {"team": a.team or ""}
+            body: dict[str, Any] = {}
             if a.catalog:
                 body["catalog"] = a.catalog
             elif a.fork:
@@ -154,7 +156,7 @@ def harness(a: argparse.Namespace) -> None:
                 tar.extractall(out, filter="data")
             print(f"{a.name} -> {out}")
         elif a.action == "push":
-            r = c.put(f"/v1/harnesses/{a.name}", content=pack_dir(Path(a.dir)), params={"team": a.team or ""},
+            r = c.put(f"/v1/harnesses/{a.name}", content=pack_dir(Path(a.dir)),
                       headers={"content-type": "application/gzip", "x-commit-message": a.message or f"push from {Path(a.dir).name}"})
             h = check(r)
             print(f"{h['name']} at {h['head'][:8]}: {len(h['files'])} files")
@@ -202,7 +204,7 @@ def run_local(a: argparse.Namespace) -> None:
            "HG_DIR": str(rundir), "HG_STATE": str(st), "HG_FILES": str(rundir / "files"), "HG_REQUEST": str(rundir / "request.json"),
            "HG_SESSION": f"sess_{state.name}", "HG_RESPONSE": f"resp_{turn:032d}", "HG_TURN": str(turn),
            "HG_PREVIOUS": req.previous or "", "HG_MODEL": req.model or config.model, "HG_HARNESS_DIR": str(folder),
-           "HG_TOOLS": str(tools), "HG_INTERRUPT": config.interrupt, "HG_CONTRACT": str(contract.CONTRACT),
+           "HG_TOOLS": str(tools), "HG_CONTRACT": str(contract.CONTRACT),
            "HG_PROVIDER_URL": os.environ.get("HG_PROVIDER_URL", ""), "HG_PROVIDER_API": os.environ.get("HG_PROVIDER_API", ""),
            "HG_PROVIDER_KEY_FILE": ""}
     env["PATH"] = f"{tools}/bin:{env.get('PATH', os.defpath)}"
@@ -325,44 +327,9 @@ def session(a: argparse.Namespace) -> None:
             show(check(c.get(f"/v1/sessions/{a.id}")))
 
 
-def steer(a: argparse.Namespace) -> None:
-    with client() as c:
-        show(check(c.post(f"/v1/sessions/{a.session}/interrupt", json={"input": a.text})))
-
-
 def cancel(a: argparse.Namespace) -> None:
     with client() as c:
         show(check(c.post(f"/v1/responses/{a.response}/cancel")))
-
-
-def rodeo(a: argparse.Namespace) -> None:
-    with client() as c:
-        if a.list:
-            d = check(c.get("/v1/rodeos"))
-            table(d["leaderboard"], ["harness", "runs", "wins"])
-            return
-        ids = []
-        for model in a.models:
-            r = check(c.post("/v1/responses", json={"model": model, "input": a.task, "background": True}))
-            ids.append(r["id"])
-        print("running " + ", ".join(ids), file=sys.stderr)
-        results = []
-        for rid in ids:
-            while (r := check(c.get(f"/v1/responses/{rid}")))["status"] in ("queued", "in_progress"):
-                time.sleep(2)
-            results.append(r)
-        for model, r in zip(a.models, results):
-            text = "".join(p.get("text", "") for i in r["output"] if i["type"] == "message" for p in i["content"])
-            print(f"== {model}: {r['status']}\n{text.strip()}\n")
-        d = check(c.post("/v1/rodeos", json={"task": a.task, "entries": [{"response": rid} for rid in ids]}))
-        if a.pick:
-            d = check(c.patch(f"/v1/rodeos/{d['id']}", json={"winner": a.pick}))
-        print(f"rodeo {d['id']} winner={d['winner'] or '(pick one: hg rodeo --pick HARNESS --id ID)'}")
-
-
-def pick(a: argparse.Namespace) -> None:
-    with client() as c:
-        show(check(c.patch(f"/v1/rodeos/{a.id}", json={"winner": a.harness})))
 
 
 def keys(a: argparse.Namespace) -> None:
@@ -385,16 +352,6 @@ def members(a: argparse.Namespace) -> None:
             table(check(c.get("/v1/members"))["data"], ["name", "role"])
 
 
-def teams(a: argparse.Namespace) -> None:
-    with client() as c:
-        if a.action == "put":
-            show(check(c.put(f"/v1/teams/{a.name}", json={"members": a.members, "title": a.title or ""})))
-        elif a.action == "rm":
-            show(check(c.delete(f"/v1/teams/{a.name}")))
-        else:
-            table([{"name": t["name"], "members": ", ".join(t["members"])} for t in check(c.get("/v1/teams"))["data"]], ["name", "members"])
-
-
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="hg", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -405,7 +362,7 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("catalog"); s.add_argument("name", nargs="?"); s.set_defaults(run=catalog)
     sub.add_parser("harnesses").set_defaults(run=harnesses)
     s = sub.add_parser("harness"); s.add_argument("action", choices=["new", "pull", "push", "log", "rm", "show", "run"]); s.add_argument("name", nargs="?")
-    s.add_argument("dir", nargs="?"); s.add_argument("--catalog"); s.add_argument("--fork"); s.add_argument("--dir", dest="dir_opt"); s.add_argument("--team")
+    s.add_argument("dir", nargs="?"); s.add_argument("--catalog"); s.add_argument("--fork"); s.add_argument("--dir", dest="dir_opt")
     s.add_argument("-m", "--message"); s.add_argument("--at")
     s.add_argument("--input"); s.add_argument("--request"); s.add_argument("--state"); s.add_argument("--env", action="append")
     s.add_argument("--install", action="store_true", help="run install.sh into the state's tools directory first")
@@ -419,13 +376,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("sessions").set_defaults(run=sessions)
     s = sub.add_parser("session"); s.add_argument("id"); s.add_argument("--files", action="store_true"); s.add_argument("--cat"); s.add_argument("--trace", action="store_true")
     s.add_argument("--archive"); s.set_defaults(run=session)
-    s = sub.add_parser("steer"); s.add_argument("session"); s.add_argument("text"); s.set_defaults(run=steer)
     s = sub.add_parser("cancel"); s.add_argument("response"); s.set_defaults(run=cancel)
-    s = sub.add_parser("rodeo"); s.add_argument("task", nargs="?"); s.add_argument("models", nargs="*"); s.add_argument("--pick"); s.add_argument("--list", action="store_true"); s.set_defaults(run=rodeo)
-    s = sub.add_parser("pick"); s.add_argument("id"); s.add_argument("harness"); s.set_defaults(run=pick)
     s = sub.add_parser("keys"); s.add_argument("action", nargs="?", default="list", choices=["list", "new"]); s.add_argument("--label"); s.add_argument("--member"); s.set_defaults(run=keys)
     s = sub.add_parser("members"); s.add_argument("action", nargs="?", default="list", choices=["list", "add", "invite"]); s.add_argument("name", nargs="?"); s.add_argument("--role", default="member"); s.set_defaults(run=members)
-    s = sub.add_parser("teams"); s.add_argument("action", nargs="?", default="list", choices=["list", "put", "rm"]); s.add_argument("name", nargs="?"); s.add_argument("members", nargs="*"); s.add_argument("--title"); s.set_defaults(run=teams)
     a = p.parse_args(argv)
     a.run(a)
 

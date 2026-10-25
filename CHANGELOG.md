@@ -4,6 +4,41 @@ Every release is a section here, newest first, and the newest section's heading 
 A merge to `main` that adds a section releases it: the release workflow tags that version, builds
 the wheel and the image, and publishes the section as its notes.
 
+## [9.0.0]
+
+The platform, pared down to the multi-tenant platform for organizations: the same product managed
+and self-hosted, an app of one page, and one rule for a busy session. What was taken out was not
+broken; it was more than the product is.
+
+- **One app page.** `/app` is sign-in, then one page: the sessions on the left, the conversation on
+  the right, and a setup page for providers and harnesses. Add a provider, add a harness (from the
+  catalog, or upload an archive), start a session with the harness of your choice, type, press
+  Enter. The console's other pages (the package editor, the catalog browser, teams, members, keys,
+  usage, organization settings, the deployer's dashboard) are gone; what they did is the API's and
+  `hg`'s.
+- **The next message wins.** There is no steer. A `POST /v1/responses` with `previous_response_id`
+  naming a session that is running a turn supersedes that turn: it is stopped gracefully, ends
+  `cancelled` with `metadata.incomplete_reason: superseded`, and the new turn runs when it has
+  ended, on the workspace it left. A turn still queued ends at once. The trace records the
+  supersede. `POST /v1/sessions/{id}/interrupt`, `hg steer`, `harness.json`'s `interrupt`,
+  `$HG_INTERRUPT` and `$HG_DIR/interrupt` are gone; the package contract is **8**, and a contract-7
+  package still loads and runs (its `interrupt` is ignored). The catalog packages are on 8.
+- **Removed:** teams (every harness is the organization's; owners change them, members run them;
+  a sandbox's uid is the organization's), rodeos, webhooks, metering and usage, plans, trace
+  sharing and the dataset, billing, mail (no email verification or password reset), identity
+  providers (GitHub, Google, OpenID Connect), the `usage` and `platform/usage` routes, `PATCH
+  /v1/harnesses/{name}`. Settings `HG_TRACE_SHARING`, `HG_BILLING`, `HG_STRIPE_KEY`, `HG_SMTP_URL`,
+  `HG_MAIL_FROM`, `HG_GITHUB_*`, `HG_GOOGLE_*` and `HG_OIDC_*` are gone; `harnessgateway doctor`
+  checks records, key management, blobs, events and the sandbox.
+- **Kept, as it was:** organizations with ceilings and a status, members and invitations, keys,
+  providers sealed and swapped at the gateway, harnesses as git repositories with a history,
+  nodes, sessions with snapshots, traces and captures, the Responses wire with streaming,
+  background turns, cancel, closing the request, `Idempotency-Key` and the rate ceiling, the
+  catalog, `hg`, the backends (SQLite or Postgres, a directory or S3, a local master key or a KMS),
+  the deployer's organization and fleet routes. A 7.1 data directory still boots; a 9 reads what
+  earlier releases kept and ignores what it no longer has (`tests/test_upgrade.py`).
+- The image is `:9`.
+
 ## [8.0.0]
 
 The platform, rebuilt for production around the bet: harness packages are an organization's

@@ -103,11 +103,11 @@ the MCP file the `{"mcpServers": {}}` shape; is the hooks file the
 `{"PreToolUse": [{"matcher", "hooks": [{"type": "command", "command"}]}]}` shape; which home or
 config directory variable relocates everything per tenant.
 
-### 6. Control: interrupt, steer, guardrails, tool restriction
+### 6. Control: stop and resume, guardrails, tool restriction
 
 Record: whether the session is written incrementally (so SIGINT then resume loses nothing);
-whether a command channel exists for mid-run steering (RPC mode, ACP mode, an app server or
-gateway) and its commands; which hook events can block a tool call and how; the deny-rule or
+whether the CLI resumes the session a stopped run left (the platform's one steering model: the
+next request stops the running turn and continues the session); which hook events can block a tool call and how; the deny-rule or
 permission mechanism; the sandbox mode; how built-in tools are restricted by name; anything that
 silently disables hooks (Cline's `-y`) or needs a trust flag headless.
 

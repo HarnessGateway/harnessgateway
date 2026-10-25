@@ -33,7 +33,7 @@ ENVELOPE = {"response.created", "response.in_progress", "response.queued", "resp
 FINAL = {"completed": "response.completed", "failed": "response.failed", "incomplete": "response.incomplete", "cancelled": "response.incomplete"}
 STATUSES = ("completed", "failed", "incomplete", "cancelled")
 ERROR_CODES = {"server_error", "rate_limit_exceeded", "invalid_prompt"}          # the codes a package may use as they are
-INCOMPLETE_REASONS = {"max_output_tokens", "max_messages", "content_filter", "steered"}
+INCOMPLETE_REASONS = {"max_output_tokens", "max_messages", "content_filter"}
 NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
 
 

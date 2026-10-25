@@ -51,7 +51,7 @@ Read its `request.sh` and `map.py` end to end. Read the CLI's row in every table
 
 `cli.name` and `cli.version` as installed; `defaults.provider` the provider name the package is
 built for and `defaults.model` a model that provider serves; `provider_env` the CLI's own variable
-names for the key and the base URL; `interrupt` the signal `request.sh` traps; `install.egress`
+names for the key and the base URL; `install.egress`
 the registry; `run.egress` empty unless the CLI must reach something beside the provider;
 `accepts` the fields `request.sh` honours.
 
@@ -75,8 +75,8 @@ In order:
    (`instructions.py` from the template does this), the MCP config from `tools`, the CLI's
    config with `$HG_PROVIDER_URL` and the token (the `provider_env` names carry them; a CLI that
    reads a config file instead gets the file written here, every turn).
-3. Trap the steer signal: read `$HG_DIR/interrupt` into a variable. The usual answer is to let the
-   running invocation end and run the steer's text as a second invocation of the same session.
+3. Keep the CLI's resume handle in `$HG_STATE` as soon as the CLI announces it, so a turn that is
+   stopped early (a cancel, a client gone, a new request superseding it) loses nothing.
 4. Run the CLI in its headless, auto-approving, JSON-output mode, with the resume handle from
    `$HG_STATE` when `HG_PREVIOUS` is set, and pipe its output through the mapper. Capture the
    session id the CLI announces (on stdout, stderr or a file) into `$HG_STATE`.

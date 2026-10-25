@@ -1,4 +1,7 @@
-"""The domain: organizations, members, teams, keys, providers sealed, and harnesses as repositories."""
+"""The domain: organizations, members, keys, providers sealed, nodes, and harnesses as repositories."""
+import os
+import shutil
+
 import pytest
 
 from domainfix import domain
@@ -13,44 +16,26 @@ def d(tmp_path, vault):
     return domain(SqliteRecords(tmp_path / "r.db"), DirBlobs(tmp_path / "blobs", "http://x", b"s"), vault, tmp_path / "git")
 
 
-def test_orgs_members_teams_keys(d):
+def test_orgs_members_keys(d):
     o = d.orgs.create("acme", title="ACME")
-    assert o.plan == "free" and not o.trace_sharing and o.trace_sharing_since == 0          # the free plan's ceilings, unless given
-    assert o.ceilings.requests_per_minute == 30 and o.ceilings.max_runs == 2 and o.ceilings.cpus == 2
-    assert d.orgs.create("given", {"max_runs": 7}).ceilings.max_runs == 7 and d.orgs.create("ent", plan="enterprise").ceilings.max_runs == 32
+    assert o.ceilings.max_runs == 4 and o.ceilings.requests_per_minute == 120 and o.title == "ACME"   # the defaults, unless given
+    assert d.orgs.create("given", {"max_runs": 7}).ceilings.max_runs == 7
     with pytest.raises(Conflict):
         d.orgs.create("acme")
     with pytest.raises(Invalid):
         d.orgs.create("catalog")
-    with pytest.raises(Invalid):
-        d.orgs.create("x", plan="platinum")
-    assert d.orgs.update("acme", plan="enterprise", trace_sharing=True).trace_sharing is False      # enterprise never shares
-    assert d.orgs.get("acme").ceilings.max_runs == 32                                              # a new plan brings its ceilings
-    assert d.orgs.update("acme", plan="team", limits={"max_runs": 3}).ceilings.max_runs == 3        # unless others are given
-    shared = d.orgs.update("acme", plan="free", trace_sharing=True)
-    assert shared.trace_sharing is True and shared.shares and shared.trace_sharing_since > 0        # sharing is dated
-    since = shared.trace_sharing_since
-    assert d.orgs.update("acme", title="still").trace_sharing_since == since                        # and the date holds while it is on
-    assert d.orgs.sharing() == [d.orgs.get("acme")] and d.orgs.get("acme").public()["trace_sharing_since"] == since
-    off = d.orgs.update("acme", trace_sharing=False)
-    assert off.trace_sharing_since == 0 and d.orgs.sharing() == [] and off.public()["trace_sharing_since"] == 0
-    assert d.orgs.update("acme", trace_sharing=True).trace_sharing_since > since                    # turned on again: a new date
-    d.orgs.update("acme", trace_sharing=False)
+    assert d.orgs.update("acme", limits={"max_runs": 3}).ceilings.max_runs == 3
+    assert d.orgs.update("acme", title="still").title == "still" and d.orgs.get("acme").ceilings.max_runs == 3
+    assert d.orgs.get("acme").public() == {"name": "acme", "title": "still", "status": "active", "created": o.created, "limits": d.orgs.get("acme").limits}
     d.members.create("acme", "chase", "owner")
     d.members.create("acme", "dev", "member")
-    t = d.teams.put("acme", "platform", ["dev"], "Platform")
-    assert t.members == ["dev"] and d.teams.includes(d.members.get("acme", "dev"), "platform") and d.teams.includes(d.members.get("acme", "chase"), "platform")
-    assert d.teams.of(d.members.get("acme", "dev")) == ["platform"] and d.teams.of(d.members.get("acme", "chase")) == []
-    with pytest.raises(Invalid):
-        d.teams.put("acme", "x", ["nobody"])
     with pytest.raises(Invalid):
         d.members.set_role("acme", "chase", "member")                      # the last owner stays
     key, secret = d.keys.mint("acme", "dev", "laptop")
     assert d.keys.resolve(secret).name == "dev" and d.keys.resolve("hg_nope") is None
     d.members.remove("acme", "dev")
-    d.teams.drop_member("acme", "dev")
     d.keys.revoke_all("acme", "dev")
-    assert d.keys.resolve(secret) is None and d.teams.get("acme", "platform").members == []
+    assert d.keys.resolve(secret) is None
     d.orgs.update("acme", status="suspended")
     k2, s2 = d.keys.mint("acme", "chase")
     assert d.keys.resolve(s2) is None
@@ -83,12 +68,12 @@ def test_providers_sealed(d):
 
 
 def test_nodes(d):
-    n, secret = d.nodes.register("node-1", slots=4, version="8.0.0")
+    n, secret = d.nodes.register("node-1", slots=4, version="9.0.0")
     assert d.nodes.by_secret(secret).id == n.id and d.nodes.by_secret("hgw_nope") is None and n.alive
     d.nodes.touch(n, running=2)
-    assert d.nodes.list()[0].running == 2 and d.nodes.list()[0].version == "8.0.0"
-    d.nodes.touch(n, running=0, version="8.1.0", slots=8)                                    # restarted on a new release
-    assert d.nodes.list()[0].version == "8.1.0" and d.nodes.list()[0].slots == 8
+    assert d.nodes.list()[0].running == 2 and d.nodes.list()[0].version == "9.0.0"
+    d.nodes.touch(n, running=0, version="9.1.0", slots=8)                                    # restarted on a new release
+    assert d.nodes.list()[0].version == "9.1.0" and d.nodes.list()[0].slots == 8
     d.nodes.forget(n.id)
     assert d.nodes.list() == []
 
@@ -96,7 +81,6 @@ def test_nodes(d):
 def test_harness_lifecycle(d, tmp_path):
     d.orgs.create("acme")
     d.members.create("acme", "chase", "owner")
-    d.members.create("acme", "dev", "member")
     h = d.harnesses.create_from_archive("acme", "echo", archive(), "Chase <c@x>")
     assert h.head and h.config["cli"]["name"] == "echo-cli" and d.blobs.exists(d.harnesses.blob_key("acme", "echo", h.head))
     with pytest.raises(Conflict):
@@ -117,24 +101,12 @@ def test_harness_lifecycle(d, tmp_path):
     r = d.harnesses.replace("acme", "echo", archive(files={"README.md": None, "extra.txt": "x"}), "push", "chase")
     assert {e.path for e in d.harnesses.files("acme", "echo")} >= {"extra.txt"} and len(d.harnesses.log("acme", "echo")) == 3
     # another replica: no local repository, restored from the bundle
-    import shutil
     shutil.rmtree(d.harnesses.repo_path("acme", "echo"))
     assert d.harnesses.repo("acme", "echo").head() == r.head
-    # teams decide who may use and change a harness
-    d.teams.put("acme", "platform", ["dev"])
-    chase, dev = d.members.get("acme", "chase"), d.members.get("acme", "dev")
-    d.harnesses.move("acme", "echo2", "platform")
-    assert [x.name for x in d.harnesses.visible(dev)] == ["echo", "echo2"] and d.harnesses.editable(dev, "echo2").team == "platform"
-    with pytest.raises(Invalid):
-        d.harnesses.editable(dev, "echo")                                    # organization-wide: an owner's to change
-    assert d.harnesses.editable(chase, "echo").name == "echo"
-    d.teams.put("acme", "platform", [])
-    with pytest.raises(NotFound):
-        d.harnesses.usable(dev, "echo2")
-    with pytest.raises(Conflict):
-        d.teams.delete("acme", "platform")
+    # a contract-7 package (the previous major's) still validates and loads
+    seven = d.harnesses.create_from_archive("acme", "seven", archive(contract="7", interrupt="SIGUSR1"), "x")
+    assert seven.configuration().cli == "echo-cli" and "interrupt" not in seven.config
     d.orgs.update("acme", limits={"upload_mb": 1})
-    import os
     with pytest.raises(Invalid, match="upload limit"):
         d.harnesses.create_from_archive("acme", "big", archive(files={"blob.bin": os.urandom(2 * 1024 * 1024)}), "x")
     d.harnesses.delete("acme", "echo")

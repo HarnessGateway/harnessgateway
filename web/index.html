@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HarnessGateway</title>
-<meta name="description" content="One Responses API in front of every coding agent, or any CLI. Your harness packages map the request onto the command line; the platform provides the wire, the sandbox, the keys, the trace and the rodeo. Self-hosted or managed, the same product.">
+<meta name="description" content="One Responses API in front of every coding agent, or any CLI. Your harness packages map the request onto the command line; the platform provides the wire, the sandbox and the keys. Self-hosted or managed, the same product.">
 <link rel="icon" href="/web/favicon.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -13,8 +13,8 @@
 <body class="site">
 <header>
   <a class="brand" href="/"><img src="/web/favicon.png" alt="" width="28" height="28"><span class="wordmark">Harness<em>Gateway</em></span></a>
-  <nav><a href="#how">How it works</a><a href="#catalog">Catalog</a><a href="#rodeo">Rodeo</a><a href="#deploy">Deploy</a><a href="/docs/">Docs</a></nav>
-  <div class="cta"><a class="btn quiet" href="https://github.com/HarnessGateway/harnessgateway">Source</a><a class="btn act" href="/app">Open the console</a></div>
+  <nav><a href="#how">How it works</a><a href="#catalog">Catalog</a><a href="#platform">The platform</a><a href="#deploy">Deploy</a><a href="/docs/">Docs</a></nav>
+  <div class="cta"><a class="btn quiet" href="https://github.com/HarnessGateway/harnessgateway">Source</a><a class="btn act" href="/app">Open the app</a></div>
 </header>
 
 <section class="hero">
@@ -22,7 +22,7 @@
     <h1>Every coding agent, <em>one API</em>.</h1>
     <p class="lead">HarnessGateway speaks the OpenAI Responses API and nothing else. Behind it, a harness package your organization owns maps each request onto a coding-agent CLI, or any command line, running in a sandbox with your provider keys, your instructions and your tools. Switch harnesses by changing the model name.</p>
     <div class="row">
-      <a class="btn act" href="/app">Create an account</a>
+      <a class="btn act" href="/app">Open the app</a>
       <a class="btn quiet" href="#deploy">Deploy your own</a>
     </div>
   </div>
@@ -33,9 +33,9 @@
   <h2>How it works</h2>
   <p class="lead">A request comes in as a Responses call. The platform reads the model name to pick the harness and the provider, then hands the whole request to the package. The package drives the CLI and emits Responses events. Nothing in between invents a schema.</p>
   <div class="grid3">
-    <div class="feature"><span class="n">1</span><b>Set up a provider</b><p>Anthropic, OpenAI, DeepSeek or any compatible endpoint. The key is stored encrypted and injected into the sandbox for the length of one turn, behind a door that only reaches the hosts the package lists.</p></div>
-    <div class="feature"><span class="n">2</span><b>Pick or build a harness</b><p>Fork a catalog package or write your own: a git repository with <code>harness.json</code>, <code>install.sh</code>, <code>request.sh</code> and the seeds the CLI expects in its workspace and home. Edit it in the console, commit, push from the CLI.</p></div>
-    <div class="feature"><span class="n">3</span><b>Call it like any model</b><p>Point the OpenAI SDK at the gateway with <code>model: "codex"</code> or <code>"claude-code/anthropic/claude-sonnet-4-5"</code>. Stream, continue with <code>previous_response_id</code>, run in the background, steer or cancel.</p></div>
+    <div class="feature"><span class="n">1</span><b>Add a provider</b><p>Anthropic, OpenAI, DeepSeek or any compatible endpoint. The key is sealed on arrival and swapped in at the gateway for one request at a time; no sandbox ever sees it.</p></div>
+    <div class="feature"><span class="n">2</span><b>Add a harness</b><p>Fork a catalog package or upload your own: <code>harness.json</code>, <code>install.sh</code>, <code>request.sh</code> and the seeds the CLI expects. A git repository the platform hosts, with a history.</p></div>
+    <div class="feature"><span class="n">3</span><b>Start a session</b><p>In the app, or from any OpenAI SDK with <code>model: "codex"</code>. Type, press Enter. A message sent while the agent works stops it and runs the new message on the same workspace, like a coding agent's web view.</p></div>
   </div>
   <div class="term" style="margin-top:22px"><span class="c"># the official SDK, any language</span>
 from openai import OpenAI
@@ -48,7 +48,7 @@ for event in r: print(event.type)
 
 <section class="band alt" id="catalog"><div>
   <h2>Twelve packages, verified</h2>
-  <p class="lead">Each catalog package was run against a live provider on the day it shipped: a first turn that writes a file, a second turn that recalls it, and a streamed turn. The checks are recorded in the package and shown in the console.</p>
+  <p class="lead">Each catalog package was run against a live provider on the day it shipped: a first turn that writes a file, a second turn that recalls it, and a streamed turn. The checks are recorded in the package.</p>
   <div class="wall">
     <span>Claude Code <i>✓</i></span><span>Codex <i>✓</i></span><span>Pi <i>✓</i></span><span>Oh My Pi <i>✓</i></span><span>Kilo Code <i>✓</i></span><span>DeepSeek Harness <i>✓</i></span><span>Hermes Agent <i>✓</i></span><span>Cline</span><span>OpenClaw</span><span>Command Code</span><span>Shell <i>✓</i></span><span>Template <i>✓</i></span>
   </div>
@@ -59,33 +59,22 @@ for event in r: print(event.type)
   <h2>What the platform owns</h2>
   <p class="lead">The package owns how the CLI is run. The platform owns everything an organization should not have to build twice.</p>
   <div class="grid3">
-    <div class="feature"><b>Managed sandboxing</b><p>Every turn runs in a fresh container as the organization's own uid, read-only root, no capabilities, a private network with a single door. The tenant controls the egress list and nothing else about the sandbox.</p></div>
-    <div class="feature"><b>Keys injected per request</b><p>Provider keys never reach the package or the CLI. The sandbox sees a per-turn token; the door swaps it for the real key on the way out and only to the provider's host.</p></div>
-    <div class="feature"><b>Traced end to end</b><p>The request as sent, the events as emitted, the response as returned, the package's log and the door's log: one trace per turn, in the console and over the API.</p></div>
-    <div class="feature"><b>Workspaces that persist</b><p>A conversation keeps its workspace and the CLI's state across turns. Browse the files, read the trace, steer the run with a message mid-turn, or cancel it.</p></div>
-    <div class="feature"><b>Organizations and teams</b><p>Owners manage providers, members and keys. Teams own harnesses only their members use. Sessions are visible to their creator and the owners.</p></div>
-    <div class="feature"><b>Packages as git</b><p>A harness is a repository the platform hosts. Commit from the editor, push from the CLI, fork from the catalog or from a teammate, read the history, export a bundle.</p></div>
+    <div class="feature"><b>Multi-tenant sandboxing</b><p>Every turn runs in a fresh container as the organization's own uid, read-only root, no capabilities, a private network with a single door. The tenant controls the egress list and nothing else about the sandbox.</p></div>
+    <div class="feature"><b>Keys swapped per request</b><p>Provider keys never reach the package or the CLI. The sandbox sees a per-turn token; the gateway swaps it for the real key on the way out and only to the provider's host.</p></div>
+    <div class="feature"><b>Sessions that persist</b><p>A session keeps its workspace and the CLI's state across turns, on whichever node runs the next one. Continue it from the app or with <code>previous_response_id</code> from any client: it is the same session.</p></div>
+    <div class="feature"><b>Traced end to end</b><p>The request as sent, the events as emitted, the response as returned, the package's log, the provider exchanges: one record per turn, over the API.</p></div>
+    <div class="feature"><b>Organizations</b><p>Owners manage providers, harnesses, members and keys; members run sessions and see their own. Sign up with an email, or let the deployer create organizations and invite people.</p></div>
     <div class="feature"><b>Any CLI</b><p>The platform executes command lines; coding agents are the ones it ships packages for. The <code>shell</code> package runs the request as a script with no provider at all. Wrap yours the same way.</p></div>
-    <div class="feature"><b>Metered, not tokened</b><p>Compute, egress and storage are what the platform meters; tokens stay between you and your provider. Usage per organization, team, member, harness and session.</p></div>
-    <div class="feature"><b>Built for agents too</b><p>Idempotency keys for safe retries, a 429 with Retry-After at the ceiling, background turns, and signed webhooks that deliver the final response.</p></div>
-  </div>
-</section>
-
-<section class="band" id="rodeo">
-  <div class="feature rodeo-feature" style="padding:28px 32px">
-    <img src="/web/picky-rodeo.png" alt="">
-    <h2>Rodeo</h2>
-    <p class="lead" style="margin:8px 0 0;max-width:720px">Run one task across several harnesses at once, watch them stream side by side in their own workspaces, and pick the winner. The picks accumulate into a leaderboard for your organization, on your tasks, with your providers.</p>
   </div>
 </section>
 
 <section class="band" id="deploy">
   <h2>Deploy in one command</h2>
-  <p class="lead">One container, one data directory, Docker for the sandboxes. The compose file brings Postgres, S3-compatible storage and nodes that join. The managed platform runs the same image.</p>
+  <p class="lead">One container, one data directory, Docker for the sandboxes. The compose file brings Postgres, S3-compatible storage and nodes that join. The managed platform runs the same image with other names in its environment.</p>
   <div class="term"><span class="c"># one box</span>
 docker run -d --name harnessgateway -p 8000:8000 \
   -v hg:/data -v /var/run/docker.sock:/var/run/docker.sock \
-  -e HG_PUBLIC_URL=<span class="o">https://hg.example.com</span> ghcr.io/harnessgateway/harnessgateway:8
+  -e HG_PUBLIC_URL=<span class="o">https://hg.example.com</span> ghcr.io/harnessgateway/harnessgateway:9
 
 <span class="c"># or Postgres, S3 and nodes, with the compose file in deploy/</span>
 docker compose -f deploy/compose.yml up -d && docker compose -f deploy/compose.yml run --rm api doctor</div>
@@ -100,7 +89,7 @@ docker compose -f deploy/compose.yml up -d && docker compose -f deploy/compose.y
   <span class="wordmark">Harness<em>Gateway</em></span>
   <a href="/docs/">Documentation</a>
   <a href="https://github.com/HarnessGateway/harnessgateway">github.com/HarnessGateway/harnessgateway</a>
-  <a href="/app">Console</a>
+  <a href="/app">The app</a>
   <span style="margin-left:auto">Apache-2.0</span>
 </footer>
 </body>

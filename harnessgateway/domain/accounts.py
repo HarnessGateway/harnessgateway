@@ -1,15 +1,14 @@
-"""Accounts, the people who sign in to the app. An account has an email, a name, a
-password (hashed, scrypt) or an identity provider's subject or both, and memberships: the organizations
-it belongs to and its member name in each. Members and API keys are unchanged; an account is one
-more way to be a member. Platform-level records, so an email is one account across orgs.
+"""Accounts, the people who sign in to the app. An account has an email, a name, a password (hashed,
+scrypt) and memberships: the organizations it belongs to and its member name in each. Members and
+API keys are unchanged; an account is one more way to be a member. Platform-level records, so an
+email is one account across orgs.
 
     account/<id>                   the account
     email/<digest(email)>          email -> account id
-    oauth/<provider>:<subject>     an identity provider's subject -> account id
-    invite/<org>/<digest>       an org's invitation to an email: the role it gets
+    invite/<org>/<digest>          an org's invitation to an email: the role it gets
 
-The tokens (the app's session, verification, a password reset) are signed with a key derived
-from the master key and carry their purpose and expiry; nothing is stored for them.
+The app's session token is signed with a key derived from the master key and carries its purpose
+and expiry; nothing is stored for it.
 """
 from __future__ import annotations
 
@@ -25,9 +24,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..errors import Conflict, Invalid, NotFound
-from ..kernel.ids import NAME, check_name, digest_of, is_name
+from ..kernel.ids import NAME, check_name, digest_of
 from ..kernel.vault import Sealer
-from . import PLATFORM
+from . import PLATFORM, load
 from .members import Member, Members
 from .orgs import Orgs
 
@@ -73,34 +72,26 @@ class Account:
     email: str
     name: str
     created: float
-    password: str = field(default="", repr=False)   # hashed, or "" for an identity provider's account
-    verified: bool = False
-    oauth: dict[str, str] = field(default_factory=dict)            # provider -> subject
+    password: str = field(default="", repr=False)   # hashed
     memberships: list[dict[str, str]] = field(default_factory=list)   # [{org, member}]
 
     def public(self) -> dict[str, Any]:
-        return {"id": self.id, "email": self.email, "name": self.name, "verified": self.verified,
-                "providers": sorted(self.oauth), "has_password": bool(self.password), "created": self.created}
+        return {"id": self.id, "email": self.email, "name": self.name, "created": self.created}
 
 
 class Accounts:
-    def __init__(self, records, vault: Sealer, orgs: Orgs, members: Members, trace_sharing: bool = False):
-        self.records, self.orgs, self.members, self.trace_sharing = records, orgs, members, trace_sharing
+    def __init__(self, records, vault: Sealer, orgs: Orgs, members: Members):
+        self.records, self.orgs, self.members = records, orgs, members
         self._secret = vault.derive("accounts")
 
     # accounts
-    def create(self, email: str, name: str, password: str = "", oauth: dict[str, str] | None = None, verified: bool = False) -> Account:
+    def create(self, email: str, name: str, password: str) -> Account:
         email = normalize_email(email)
         if self.by_email(email):
             raise Conflict("an account with that email exists; sign in")
-        if not password and not oauth:
-            raise Invalid("an account has a password or an identity provider")
-        a = Account(uuid.uuid4().hex[:12], email, (name or "").strip()[:80] or handle_of(email), time.time(),
-                    hash_password(password) if password else "", verified, dict(oauth or {}))
+        a = Account(uuid.uuid4().hex[:12], email, (name or "").strip()[:80] or handle_of(email), time.time(), hash_password(password))
         self.records.put("account", PLATFORM, a.id, asdict(a))
         self.records.put("email", PLATFORM, digest_of(email), {"account": a.id})
-        for provider, subject in a.oauth.items():
-            self.records.put("oauth", PLATFORM, f"{provider}:{subject}", {"account": a.id})
         return a
 
     def _put(self, a: Account) -> None:
@@ -110,7 +101,7 @@ class Accounts:
         d = self.records.get("account", PLATFORM, account_id) if re.fullmatch(r"[0-9a-f]{12}", account_id or "") else None
         if d is None:
             raise NotFound("no such account")
-        return Account(**d)
+        return load(Account, d)
 
     def by_email(self, email: str) -> Account | None:
         try:
@@ -120,38 +111,10 @@ class Accounts:
         ref = self.records.get("email", PLATFORM, digest_of(email))
         return self.by_id(ref["account"]) if ref else None
 
-    def by_oauth(self, provider: str, subject: str) -> Account | None:
-        if not is_name(provider) or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", subject or ""):
-            return None
-        ref = self.records.get("oauth", PLATFORM, f"{provider}:{subject}")
-        return self.by_id(ref["account"]) if ref else None
-
-    def link_oauth(self, a: Account, provider: str, subject: str) -> Account:
-        check_name(provider, "identity provider")
-        a = Account(**{**asdict(a), "oauth": {**a.oauth, provider: subject}, "verified": True})
-        self._put(a)
-        self.records.put("oauth", PLATFORM, f"{provider}:{subject}", {"account": a.id})
-        return a
-
     def login(self, email: str, password: str) -> Account | None:
         """The account, if the password is right; None says nothing about which part was wrong."""
         a = self.by_email(email)
         return a if a and a.password and check_password(a.password, password or "") else None
-
-    def set_password(self, a: Account, password: str) -> Account:
-        a = Account(**{**asdict(a), "password": hash_password(password)})
-        self._put(a)
-        return a
-
-    def set_name(self, a: Account, name: str) -> Account:
-        a = Account(**{**asdict(a), "name": (name or "").strip()[:80] or a.name})
-        self._put(a)
-        return a
-
-    def mark_verified(self, a: Account) -> Account:
-        a = Account(**{**asdict(a), "verified": True})
-        self._put(a)
-        return a
 
     # memberships
     def memberships(self, a: Account) -> list[dict[str, Any]]:
@@ -164,7 +127,7 @@ class Accounts:
                 member = self.members.get(m["org"], m["member"])
             except NotFound:
                 continue
-            out.append({"org": t.name, "member": member.name, "role": member.role, "status": t.status})
+            out.append({"org": t.name, "title": t.title, "member": member.name, "role": member.role, "status": t.status})
         return out
 
     def member_of(self, a: Account, org: str) -> Member | None:
@@ -195,9 +158,8 @@ class Accounts:
         return m
 
     def create_org(self, a: Account, name: str, limits: dict[str, Any] | None = None) -> Member:
-        """An org of the account's own, on the free plan, with the account as its first owner. On a
-        deployment that shares traces, it shares until an owner turns that off."""
-        self.orgs.create(check_name(name, "org"), limits, trace_sharing=self.trace_sharing)
+        """An org of the account's own, with the account as its first owner."""
+        self.orgs.create(check_name(name, "org"), limits)
         return self.join(a, name, "owner")
 
     def free_org_name(self, wanted: str) -> str:
@@ -275,8 +237,6 @@ class Accounts:
         try:
             a = self.by_id(c["a"])
         except NotFound:
-            return None
-        if not a.verified:
             return None
         m = self.member_of(a, c.get("t", ""))
         if m is None:

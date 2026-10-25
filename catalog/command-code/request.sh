@@ -26,8 +26,6 @@ cat > "$HOME/.commandcode/providers.json" <<CFG
 CFG
 [ -s "$HOME/.commandcode/config.json" ] || echo '{"provider": "hg", "model": "hg/'"$HG_MODEL"'", "localOnly": true}' > "$HOME/.commandcode/config.json"
 
-steer=""
-trap 'steer=$(cat "$HG_DIR/interrupt" 2>/dev/null || true)' USR1
 run_wait() { "$@" </dev/null & local pid=$! rc; while :; do wait "$pid"; rc=$?; kill -0 "$pid" 2>/dev/null || break; done; return $rc; }
 
 turn() {
@@ -39,5 +37,4 @@ turn() {
   command-code "${args[@]}" "$1" | python3 "$HG_HARNESS_DIR/map.py"
 }
 run_wait turn "$prompt"; rc=$?
-if [ -n "$steer" ]; then run_wait turn "$steer"; rc=$?; fi
 exit $rc

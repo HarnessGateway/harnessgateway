@@ -1,6 +1,6 @@
 """Backend: where a turn runs. A `Node` prepares the base image, builds a package's tools layer once
-per commit, and hands out a `Runtime` (see `kernel.execution`) for one turn with the uid of the
-turn's scope and the organization's ceilings. `docker` is the sandbox (a sandboxed Docker runtime
+per commit, and hands out a `Runtime` (see `kernel.execution`) for one turn with the organization's
+own uid and ceilings. `docker` is the sandbox (a sandboxed Docker runtime
 such as gVisor's runsc is the same backend with `runtime` set); `process` runs turns as plain
 processes for developing packages and is never for anyone else's code.
 """
@@ -40,19 +40,12 @@ class Node(Protocol):
 
     def runtime_for(self, scope: str, limits: Limits, *, read_only: Sequence[Path] = (), writable: Sequence[Path] = (),
                     egress: Sequence[str] = (), gateway_url: str = "", token: str = ""):
-        """A runtime for one turn of `scope` (an organization, or a team within it)."""
+        """A runtime for one turn of `scope`, the organization whose turn it is."""
         ...
 
     async def tools_for(self, scope: str, limits: Limits, folder: Path, config: Config, root: Path, image_id: str) -> Path:
         """The package's tools layer, installed once per commit and image."""
         ...
-
-
-def scope_of(org: str, team: str = "") -> str:
-    """Whose runs these are, for the sandbox: the organization's, or one team's within it. Each
-    scope gets its own uid, so a team's sandboxes are as apart from another team's as from another
-    organization's."""
-    return f"{org}/{team}" if team else org
 
 
 def uid_for(scope: str) -> int:

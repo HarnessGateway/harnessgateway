@@ -8,10 +8,10 @@
 #   HG_PORT (8000)        where the API listens on this machine; put a TLS proxy in front for the internet
 #   HG_PUBLIC_URL         how browsers and workers reach it (default http://<this host>:<port>)
 #   HG_SIGNUP (closed)    open: anyone may create an organization from the sign-up page
-#   HG_IMAGE              the image (default ghcr.io/harnessgateway/harnessgateway:8)
+#   HG_IMAGE              the image (default ghcr.io/harnessgateway/harnessgateway:9)
 set -euo pipefail
 PORT="${HG_PORT:-8000}"
-IMAGE="${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}"
+IMAGE="${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}"
 NAME="${HG_NAME:-harnessgateway}"
 PUBLIC="${HG_PUBLIC_URL:-http://$(hostname -f 2>/dev/null || hostname):$PORT}"
 

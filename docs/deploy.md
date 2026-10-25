@@ -21,14 +21,14 @@ prints the keys the first boot made. By hand, it is:
 ```bash
 docker run -d --name harnessgateway --restart unless-stopped -p 8000:8000 \
   -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data \
-  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:8
+  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:9
 ```
 
 That runs `serve --role all`: the API on 8000, the gateway, and a worker that pulls the sandbox
 base image and then takes turns. The first boot makes the deployer key and, with sign-up closed,
 an organization and its owner's key, and prints them once: `docker logs harnessgateway`. The home
 page is at `/`, the console at `/app`, this documentation at `/docs/`, the OpenAPI reference at
-`/reference`.
+`/reference`. The app is one page: providers, harnesses, sessions.
 
 Everything the platform keeps is on the `hg` volume at `/data`: the master key, the records (SQLite),
 the blobs, the harness repositories, the worker's caches. The sandboxes are started by the host's
@@ -56,8 +56,7 @@ credentials in the environment) to use managed services instead; add nodes on ot
 below. `--profile one-box` is the small shape instead: every role in one container over SQLite and
 a blob directory on the `hg-data` volume, still behind Caddy. Set `HG_SIGNUP=open` to let anyone
 create an organization from the sign-up page; leave it closed to create organizations yourself or
-by invitation. `HG_TRACE_SHARING=1` makes free organizations share their traces by default
-([Data](data.md)).
+by invitation.
 
 ## The roles
 
@@ -80,9 +79,8 @@ Nodes on other machines run the image with `--role worker`, `HG_CONTROL_URL` set
 ## The managed shape
 
 The managed platform is this compose file with other names in the environment: `HG_KMS=aws` with
-`HG_KMS_KEY_ID` so the master key is wrapped by a KMS, `HG_BILLING=stripe` with `HG_STRIPE_KEY` so
-meter readings reach the billing system, `HG_TRACE_SHARING=1`, `HG_SIGNUP=open`, and an identity
-provider or two. Nothing in the code tells the two apart; [Configuration](configuration.md) lists
+`HG_KMS_KEY_ID` so the master key is wrapped by a KMS, a managed Postgres and an S3 bucket, and
+`HG_SIGNUP=open`. Nothing in the code tells the two apart; [Configuration](configuration.md) lists
 every name.
 
 ## Without Docker, for development
@@ -101,6 +99,6 @@ platform; see [Write a package](packages.md).
 Pull the new image and restart the container; a data directory from the previous major boots as
 it is (`tests/test_upgrade.py` proves it on 7.1's). `harnessgateway doctor` afterwards says every
 backend is reachable. A release is
-tagged `vX.Y.Z` and pushed as `:X.Y.Z`, `:X` and `:latest`; pin the major (`:8`) to take fixes
-without a contract change. The package contract is versioned in `harness.json` (`"contract": 7`)
-and a new major of the platform is the only thing that changes it.
+tagged `vX.Y.Z` and pushed as `:X.Y.Z`, `:X` and `:latest`; pin the major (`:9`) to take fixes
+without a contract change. The package contract is versioned in `harness.json` (`"contract": 8`;
+a contract-7 package still runs) and a new major of the platform is the only thing that changes it.

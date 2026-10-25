@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from ..backends.records import Records
 from ..errors import Conflict, Invalid, NotFound
 from ..kernel.ids import check_name, is_name
+from . import load
 from .orgs import Orgs
 
 ROLES = ("owner", "member")
@@ -43,10 +44,10 @@ class Members:
         d = self.records.get("member", org, name) if is_name(name) else None
         if d is None:
             raise NotFound(f"no member {name}")
-        return Member(**d)
+        return load(Member, d)
 
     def list(self, org: str) -> list[Member]:
-        return [Member(**d) for d in self.records.list("member", org)]
+        return [load(Member, d) for d in self.records.list("member", org)]
 
     def set_role(self, org: str, name: str, role: str) -> Member:
         m = self.get(org, name)
@@ -59,8 +60,7 @@ class Members:
         return m
 
     def remove(self, org: str, name: str) -> None:
-        """The member record; their keys and team seats are revoked by `Keys.revoke_all` and
-        `Teams.drop_member`, which the caller runs with this."""
+        """The member record; their keys are revoked by `Keys.revoke_all`, which the caller runs with this."""
         m = self.get(org, name)
         if m.owner:
             self._not_the_last_owner(org)

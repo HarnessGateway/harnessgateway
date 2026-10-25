@@ -10,7 +10,7 @@
         its owner and the owner's key. The master key is written to <data>/master.key unless one is there.
     harnessgateway doctor
         Checks every backend the environment names, one line each, and exits 1 if any fails: records,
-        key management, blobs, events, mail, identity providers, billing, and the sandbox runtime.
+        key management, blobs, events, and the sandbox runtime.
 """
 from __future__ import annotations
 
@@ -102,9 +102,6 @@ def doctor_checks(settings: Settings) -> list[tuple[str, str, str]]:
     check("kms", settings.kms, kms)
     check("blobs", settings.blobs_url.split("://")[0], blobs)
     check("events", "postgres notify" if settings.records_url.startswith("postgres") else "polling", events)
-    check("mail", "smtp" if service.mail.enabled else "none", lambda: None if service.mail.enabled else "sign-ups are not verified by mail")
-    check("identities", ", ".join(sorted(service.identities)) or "none", lambda: None)
-    check("billing", settings.billing, lambda: None if service.billing.enabled else "usage is metered, not billed")
     check("sandbox", settings.sandbox, sandbox)
     service.records.close()
     return out

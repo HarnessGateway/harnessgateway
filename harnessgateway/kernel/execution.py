@@ -127,10 +127,6 @@ class Execution(Protocol):
         """Wait for its end, and say how it ended. The same Outcome every time."""
         ...
 
-    async def interrupt(self, name: str) -> bool:
-        """A named signal, delivered where the runtime says it lands; False once it has ended."""
-        ...
-
 
 class Runtime(Protocol):
     """A place to run things, with the guarantees it documents (isolation, limits, network)."""
@@ -169,6 +165,3 @@ class NeverStarted:
 
     async def wait(self) -> Outcome:
         return self._outcome
-
-    async def interrupt(self, name: str) -> bool:
-        return False

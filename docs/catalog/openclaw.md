@@ -14,7 +14,6 @@ The CLI's documentation: <https://docs.openclaw.ai/cli/agent>.
 | Accepts | `input`, `instructions`, `previous_response_id`, `reasoning.effort`, `metadata` |
 | Egress, install | `registry.npmjs.org`, `nodejs.org` |
 | Egress, run | none |
-| Steer signal | `SIGUSR1` |
 
 ## Verified
 
@@ -42,4 +41,4 @@ hg ask openclaw "Create hello.txt containing hello, then say done."
 hg ask openclaw/myprovider/some-model "…"       # another provider and model
 ```
 
-In the console: Catalog, then Fork on **OpenClaw**. The fork's first commit is the catalog's package; edit it as your own from there.
+In the app: Providers and harnesses, Add a harness, **OpenClaw**. The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.

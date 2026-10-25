@@ -1,6 +1,6 @@
 """Layer 0: names and identifiers. A name is lowercase letters, digits, dots, dashes and underscores,
 at most 63, starting with a letter or digit; the same rule for every kind of thing a member names.
-An id carries its kind as a prefix (`resp_`, `sess_`, `rodeo_`), so a wrong kind is refused by
+An id carries its kind as a prefix (`resp_`, `sess_`), so a wrong kind is refused by
 shape before any lookup."""
 from __future__ import annotations
 

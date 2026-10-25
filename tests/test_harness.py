@@ -1,4 +1,4 @@
-"""Layer 2: a package is contract 7 or it is refused by name; an archive is unpacked safely; a digest
+"""Layer 2: a package is contract 8 (or 7, which still loads) or it is refused by name; an archive is unpacked safely; a digest
 names a version; seeds copy through the safe writer."""
 import io
 import json
@@ -13,7 +13,7 @@ from harnessgateway.contract.package import Config, copy_seed, digest, load_conf
 
 
 def test_config_defaults_and_values():
-    assert load_config(json.dumps({"contract": 7})) == Config()
+    assert load_config(json.dumps({"contract": 8})) == Config() == load_config(json.dumps({"contract": 7, "interrupt": "SIGUSR1"}))
     c = load_config(json.dumps(HARNESS_JSON))
     assert (c.provider, c.model, c.key_env, c.url_env) == ("prov", "m1", "FAKE_KEY", "FAKE_URL")
     assert c.install_egress == ("registry.example",) and c.run_egress == ("git.example",) and c.timeout_s == 60
@@ -22,12 +22,12 @@ def test_config_defaults_and_values():
 
 
 @pytest.mark.parametrize("bad, says", [
-    ("not json", "not JSON"), ('{"contract": 3}', '"contract": 7'), ('{"contract": 7, "extra": 1}', "unknown keys"),
-    ('{"contract": 7, "defaults": {"sandbox": "x"}}', "defaults is an object"),
-    ('{"contract": 7, "interrupt": "SIGTERM"}', "interrupt is one of"),
-    ('{"contract": 7, "run": {"timeout_s": -1}}', "positive number"),
-    ('{"contract": 7, "provider_env": {"key": "has space"}}', "environment variable names"),
-    ('{"contract": 7, "run": {"egress": "host"}}', "list of hosts"),
+    ("not json", "not JSON"), ('{"contract": 3}', '"contract": 8'), ('{"contract": 8, "extra": 1}', "unknown keys"),
+    ('{"contract": 8, "defaults": {"sandbox": "x"}}', "defaults is an object"),
+    ('{"contract": 8, "interrupt": "SIGUSR1"}', "unknown keys"),
+    ('{"contract": 8, "run": {"timeout_s": -1}}', "positive number"),
+    ('{"contract": 8, "provider_env": {"key": "has space"}}', "environment variable names"),
+    ('{"contract": 8, "run": {"egress": "host"}}', "list of hosts"),
 ])
 def test_config_refusals(bad, says):
     with pytest.raises(Invalid, match=says):

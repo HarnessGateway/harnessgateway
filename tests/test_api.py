@@ -1,8 +1,8 @@
-"""Layer 6, end to end without Docker: the API with an in-process worker on a fake node, over ASGI.
+"""Layer 5, end to end without Docker: the API with an in-process worker on a fake node, over ASGI.
 Sign-up, providers, a harness from an archive, a turn whose package reads request.json and prints
-Responses stream events, continuation from a snapshot, streaming, background, cancel, steer,
-stateless, archive, trace, response.sh shaping, teams, the deployer's view, organizations apart,
-and the official OpenAI SDK unchanged."""
+Responses stream events, continuation from a snapshot, streaming, background, cancel, a request that
+supersedes a running turn, stateless, archive, trace, response.sh shaping, the harness repository,
+the deployer's view, organizations apart, and the official OpenAI SDK unchanged."""
 import asyncio
 import base64
 import io
@@ -17,10 +17,14 @@ from harnessgateway.api.app import Service, create_app
 from harnessgateway.config import Settings
 from harnessgateway.services.worker import Worker
 
+# a package that runs until it is stopped (and says so), unless the input is "quick"
 SLOW = """#!/usr/bin/env bash
 echo started
-trap 'printf "{\\"type\\":\\"response.output_item.done\\",\\"item\\":{\\"type\\":\\"message\\",\\"id\\":\\"msg_s\\",\\"role\\":\\"assistant\\",\\"status\\":\\"completed\\",\\"content\\":[{\\"type\\":\\"output_text\\",\\"text\\":\\"steer=%s\\",\\"annotations\\":[]}]}}\\n" "$(cat "$HG_DIR/interrupt")"; exit 0' USR1
 trap 'echo stopping; exit 0' TERM
+if [ "$(jq -r '.input' "$HG_REQUEST")" = "quick" ]; then
+  printf '{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_q","role":"assistant","status":"completed","content":[{"type":"output_text","text":"quick done","annotations":[]}]}}\\n'
+  exit 0
+fi
 sleep 30 & wait $!
 """
 
@@ -31,14 +35,9 @@ def platform(tmp_path, vault, monkeypatch):
     folder(tmp_path / "catalog" / "demo", description="shipped")
     settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="open", join_token="jt",
                         deployer_key="hgd_deployer")
-    hooks: list[httpx.Request] = []
-
-    def receive(request: httpx.Request) -> httpx.Response:
-        hooks.append(request)
-        return httpx.Response(200)
-    service = Service(settings, vault, webhook_transport=httpx.MockTransport(receive))
+    service = Service(settings, vault)
     app = create_app(service)
-    app.state.hooks, app.state.service = hooks, service
+    app.state.service = service
     transport = httpx.ASGITransport(app=app)
     node = FakeNode()
     worker = Worker("http://api.test", node, tmp_path / "cache", name="w1", slots=2, version="t", join_token="jt", transport=transport)
@@ -70,6 +69,15 @@ async def running(client, rid: str) -> None:
             return
         await asyncio.sleep(0.05)
     raise AssertionError("the turn never started")
+
+
+async def settled(client, rid: str) -> dict:
+    for _ in range(300):
+        got = (await client.get(f"/v1/responses/{rid}")).json()
+        if got["status"] not in ("queued", "in_progress"):
+            return got
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"{rid} is still running")
 
 
 async def with_worker(worker, coro):
@@ -143,6 +151,9 @@ def test_turns_stream_and_continue(platform):
         s4 = (await client.get(f"/v1/sessions/{r4['metadata']['session_id']}")).json()
         assert s4["stored"] is False and (await client.get(f"/v1/sessions/{s4['id']}/files")).json()["data"] == []
         assert (await client.post("/v1/responses", json={"model": "echo", "input": "x", "previous_response_id": r4["id"]})).status_code == 400
+        # the sessions, as the app lists them
+        listed = (await client.get("/v1/sessions")).json()["data"]
+        assert {s["id"] for s in listed} >= {sid, s4["id"]} and all(s["status"] == "idle" for s in listed)
         # the official SDK, unchanged
         from openai import AsyncOpenAI
         sdk = AsyncOpenAI(api_key=key, base_url="http://api.test/v1", http_client=httpx.AsyncClient(transport=transport))
@@ -189,7 +200,7 @@ def test_refusals(platform):
     asyncio.run(with_worker(worker, go()))
 
 
-def test_background_cancel_steer(platform):
+def test_background_cancel_and_supersede(platform):
     app, transport, worker, node = platform
 
     async def go():
@@ -200,29 +211,31 @@ def test_background_cancel_steer(platform):
         assert r["status"] in ("queued", "in_progress")
         sid = r["metadata"]["session_id"]
         await running(client, r["id"])
+        assert (await client.get(f"/v1/sessions/{sid}")).json()["status"] == "running"
         await asyncio.sleep(0.6)                       # let the trap be installed
-        steered = (await client.post(f"/v1/sessions/{sid}/interrupt", json={"input": "turn left"}))
-        assert steered.status_code == 200, steered.text
-        for _ in range(300):
-            got = (await client.get(f"/v1/responses/{r['id']}")).json()
-            if got["status"] != "in_progress":
-                break
-            await asyncio.sleep(0.1)
-        detail = (await client.get(f"/v1/responses/{r['id']}/detail")).json()
-        assert got["status"] == "completed" and got["output"][0]["content"][0]["text"] == "steer=turn left", detail
-        # cancel a running turn
-        r2 = (await client.post("/v1/responses", json={"model": "slow", "input": "go", "background": True, "previous_response_id": r["id"]})).json()
-        await running(client, r2["id"])
+        # a new request on the running session: the running turn is stopped, the new one runs after it, on its workspace
+        r2 = (await client.post("/v1/responses", json={"model": "slow", "input": "quick", "previous_response_id": r["id"]})).json()
+        assert r2["status"] == "completed" and r2["output"][0]["content"][0]["text"] == "quick done" and r2["metadata"]["turn"] == "2", r2
+        first = await settled(client, r["id"])
+        assert first["status"] == "cancelled" and first["metadata"]["incomplete_reason"] == "superseded"
+        assert first["output"][0]["content"][0]["text"].strip().endswith("stopping")       # SIGTERM reached the package: a graceful stop
+        detail2 = (await client.get(f"/v1/responses/{r2['id']}/detail")).json()
+        assert detail2["started"] > first["completed_at"] - 1                               # the second ran after the first ended
+        # cancel a running turn on purpose
+        r3 = (await client.post("/v1/responses", json={"model": "slow", "input": "go", "background": True, "previous_response_id": r2["id"]})).json()
+        await running(client, r3["id"])
         await asyncio.sleep(0.3)
-        cancelled = (await client.post(f"/v1/responses/{r2['id']}/cancel")).json()
+        cancelled = (await client.post(f"/v1/responses/{r3['id']}/cancel")).json()
         assert cancelled["status"] == "cancelled" and cancelled["metadata"]["incomplete_reason"] == "cancelled"
         trace = [t["kind"] for t in (await client.get(f"/v1/sessions/{sid}/trace")).json()["data"]]
-        assert trace == ["request", "interrupt", "response", "request", "cancel", "response"]
-        # a busy session refuses a second turn
-        r3 = (await client.post("/v1/responses", json={"model": "slow", "input": "go", "background": True, "previous_response_id": r2["id"]})).json()
-        busy = await client.post("/v1/responses", json={"model": "slow", "input": "go", "previous_response_id": r2["id"]})
-        assert busy.status_code == 409
-        await client.post(f"/v1/responses/{r3['id']}/cancel")
+        assert trace == ["request", "supersede", "request", "response", "response", "request", "cancel", "response"]
+        assert (await client.get(f"/v1/sessions/{sid}")).json()["status"] == "idle"
+        # a running session cannot be deleted; an idle one can
+        r4 = (await client.post("/v1/responses", json={"model": "slow", "input": "go", "background": True, "previous_response_id": r3["id"]})).json()
+        await running(client, r4["id"])
+        assert (await client.delete(f"/v1/sessions/{sid}")).status_code == 409
+        await client.post(f"/v1/responses/{r4['id']}/cancel")
+        assert (await client.delete(f"/v1/sessions/{sid}")).status_code == 200
     asyncio.run(with_worker(worker, go()))
 
 
@@ -251,7 +264,7 @@ def test_response_sh_shapes(platform):
     asyncio.run(with_worker(worker, go()))
 
 
-def test_harness_repository_and_teams(platform):
+def test_harness_repository_members_and_the_deployer(platform):
     app, transport, worker, node = platform
 
     async def go():
@@ -262,7 +275,7 @@ def test_harness_repository_and_teams(platform):
         assert h["origin"] == "catalog/demo" and h["description"] == "shipped" and h["editable"] is True
         assert {f["path"] for f in h["files"]} >= {"harness.json", "install.sh", "request.sh"}
         assert (await client.get("/v1/harnesses/echo/files/request.sh")).text.startswith("#!/usr/bin/env bash")
-        # a commit through the editor
+        # a commit through the API
         head = h["head"]
         c = await client.post("/v1/harnesses/echo/commits", json={"changes": {"README.md": "# mine", "seeds/home/home.txt": "edited"}, "message": "notes", "parent": head})
         assert c.status_code == 200 and c.json()["head"] != head
@@ -287,137 +300,56 @@ def test_harness_repository_and_teams(platform):
             assert "README.md" in tar.getnames()
         pushed = await client.put("/v1/harnesses/echo", content=archive(files={"README.md": None, "NEW.md": "n"}), headers={"x-commit-message": "pushed"})
         assert pushed.status_code == 200 and {f["path"] for f in pushed.json()["files"]} >= {"NEW.md"} and not any(f["path"] == "README.md" for f in pushed.json()["files"])
-        # fork, teams and visibility
+        f = (await client.post("/v1/harnesses/echo-copy", json={"fork": "echo"})).json()
+        assert f["origin"] == f"{org}/echo" and len((await client.get("/v1/harnesses/echo-copy/commits")).json()["data"]) == 4
+        # a member runs every harness and sees their own sessions; an owner changes harnesses and sees every session
         await client.post("/v1/members", json={"name": "dev", "role": "member"})
         dev_key = (await client.post("/v1/members/dev/keys", json={})).json()["secret"]
         dev = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {dev_key}"}, timeout=60)
-        await client.put("/v1/teams/platform", json={"members": ["dev"], "title": "Platform"})
-        f = (await client.post("/v1/harnesses/echo-platform", json={"fork": "echo", "team": "platform"})).json()
-        assert f["team"] == "platform" and f["origin"] == f"{org}/echo" and len((await client.get("/v1/harnesses/echo-platform/commits")).json()["data"]) == 4
         names = {h["name"]: h["editable"] for h in (await dev.get("/v1/harnesses")).json()["data"]}
-        assert names == {"echo": False, "echo-platform": True}
+        assert names == {"echo": False, "echo-copy": False}
         assert (await dev.post("/v1/harnesses/echo/commits", json={"changes": {"x": "y"}})).status_code == 403
-        assert (await dev.post("/v1/harnesses/echo-platform/commits", json={"changes": {"x": "y"}})).status_code == 200
         assert (await dev.post("/v1/harnesses/mine", json={"catalog": "demo"})).status_code == 403
-        assert (await dev.post("/v1/harnesses/mine", json={"catalog": "demo", "team": "platform"})).status_code == 200
-        r = (await dev.post("/v1/responses", json={"model": "echo-platform", "input": "team run"})).json()
-        assert r["status"] == "completed"
-        # a team's sessions are the team's: a teammate sees them, another member of the organization does not
-        for name in ("peer", "outsider"):
-            await client.post("/v1/members", json={"name": name, "role": "member"})
-        await client.put("/v1/teams/platform", json={"members": ["dev", "peer"], "title": "Platform"})
-        peer_key, out_key = [(await client.post(f"/v1/members/{n}/keys", json={})).json()["secret"] for n in ("peer", "outsider")]
-        peer = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {peer_key}"}, timeout=60)
-        outsider = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {out_key}"}, timeout=60)
-        team_sid = r["metadata"]["session_id"]
-        assert (await peer.get(f"/v1/sessions/{team_sid}")).status_code == 200 and (await peer.get(f"/v1/responses/{r['id']}")).status_code == 200
-        assert team_sid in {s["id"] for s in (await peer.get("/v1/sessions")).json()["data"]}
-        assert (await outsider.get(f"/v1/sessions/{team_sid}")).status_code == 404 and (await outsider.get(f"/v1/responses/{r['id']}")).status_code == 404
-        assert (await outsider.get("/v1/sessions")).json()["data"] == []
-        mine = (await dev.post("/v1/responses", json={"model": "echo", "input": "private"})).json()
-        assert (await peer.get(f"/v1/responses/{mine['id']}")).status_code == 404                 # a member's own session stays theirs
-        await client.put("/v1/teams/platform", json={"members": []})
-        assert (await dev.post("/v1/responses", json={"model": "echo-platform", "input": "x"})).status_code == 404
-        assert (await client.delete("/v1/teams/platform")).status_code == 409
-        # the deployer sees counts, never content
+        assert (await dev.put("/v1/providers/other", json={"url": "https://o.example", "api": "openai-chat", "key": "k"})).status_code == 403
+        mine = (await dev.post("/v1/responses", json={"model": "echo-copy", "input": "private"})).json()
+        assert mine["status"] == "completed"
+        assert (await client.get(f"/v1/responses/{mine['id']}")).status_code == 200                  # the owner sees it
+        assert mine["metadata"]["session_id"] in {s["id"] for s in (await client.get("/v1/sessions")).json()["data"]}
+        assert (await dev.get(f"/v1/responses/{r1['id']}")).status_code == 404                       # a member sees only their own
+        assert [s["member"] for s in (await dev.get("/v1/sessions")).json()["data"]] == ["dev"]
+        # the deployer sees names and counts, never content
         dep = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": "Bearer hgd_deployer"})
         orgs = (await dep.get("/v1/orgs")).json()["data"]
-        assert orgs[0]["name"] == org and orgs[0]["usage"]["turns"] == 5
-        assert (await dep.get("/v1/platform/usage")).json()["totals"]["turns"] == 5
-        assert (await dep.get("/v1/responses/" + r["id"])).status_code == 403
-        assert (await dep.get(f"/v1/orgs/{org}/usage")).json()["totals"]["turns"] == 5
-        # the organization sees its own usage: an owner all of it, a member their own and their teams'
-        u = (await client.get("/v1/usage?days=0")).json()
-        assert u["totals"]["turns"] == 5 and u["totals"]["cpu_seconds"] > 0 and "cpu_seconds" in u["meters"] and "input_tokens" in u["shown"]
-        assert {m["member"] for m in u["members"]} == {"chase", "dev"} and {t["team"] for t in u["teams"]} == {"", "platform"}
-        assert (await client.get("/v1/usage?days=0&team=platform")).json()["totals"]["turns"] == 1
-        own = (await dev.get("/v1/usage?days=0")).json()
-        assert own["totals"]["turns"] == 2 and [m["member"] for m in own["members"]] == ["dev"]
-        assert (await peer.get("/v1/usage?days=0")).json()["totals"]["turns"] == 0
-        assert (await peer.get("/v1/usage?team=platform")).status_code == 403                    # no longer in the team
-        # the dataset: nothing until an organization shares; then its sessions, pseudonymized
-        assert (await dep.get("/v1/dataset/summary")).json()["orgs"] == 0 and (await dep.get("/v1/dataset")).text == ""
-        assert (await client.patch("/v1/org", json={"trace_sharing": True})).json()["trace_sharing"] is True
-        shared = (await client.post("/v1/responses", json={"model": "echo", "input": "shared"})).json()
-        lines = [json.loads(x) for x in (await dep.get("/v1/dataset")).text.splitlines()]
-        assert [x["session"] for x in lines] == [shared["metadata"]["session_id"]] and lines[0]["turns"][0]["request"]["input"] == "shared"
-        assert lines[0]["org"].startswith("org_") and org not in json.dumps(lines)
-        summary = (await dep.get("/v1/dataset/summary")).json()
-        assert {k: summary[k] for k in ("orgs", "sessions", "turns", "since")} == {"orgs": 1, "sessions": 1, "turns": 1, "since": 0} and summary["until"] > 0
-        assert (await dep.patch(f"/v1/orgs/{org}", json={"plan": "enterprise"})).json()["trace_sharing"] is False
-        assert (await dep.get("/v1/dataset")).text == ""
+        assert orgs[0]["name"] == org and orgs[0]["counts"]["responses"] == 4 and orgs[0]["counts"]["running"] == 0
+        one = (await dep.get(f"/v1/orgs/{org}")).json()
+        assert one["harnesses"] == ["echo", "echo-copy"] and one["providers"] == ["prov"] and {m["name"] for m in one["members"]} == {"chase", "dev"}
+        assert (await dep.get("/v1/responses/" + r1["id"])).status_code == 403
+        assert (await dep.get("/v1/fleet")).json()["workers"] == 1
         # another organization sees nothing of this one
         other, _, _ = await owner_client(transport, email="eve@other.test")
         assert (await other.get("/v1/harnesses")).json()["data"] == []
-        assert (await other.get(f"/v1/responses/{r['id']}")).status_code == 404
+        assert (await other.get(f"/v1/responses/{r1['id']}")).status_code == 404
+        # suspended: refused until active again
+        assert (await dep.patch(f"/v1/orgs/{org}", json={"status": "suspended"})).json()["status"] == "suspended"
+        assert (await client.get("/v1/me")).status_code == 401
+        assert (await dep.patch(f"/v1/orgs/{org}", json={"status": "active"})).json()["status"] == "active"
+        assert (await client.get("/v1/me")).status_code == 200
     asyncio.run(with_worker(worker, go()))
 
 
-def test_webhooks_receive_every_final_response(platform):
-    app, transport, worker, node = platform
-
-    async def go():
-        client, key, org = await owner_client(transport)
-        await setup(transport, client)
-        made = (await client.post("/v1/webhooks", json={"url": "https://hooks.example/hg", "label": "ci"})).json()
-        assert made["secret"].startswith("whsec_") and made["label"] == "ci" and made["last_status"] == 0
-        listed = (await client.get("/v1/webhooks")).json()["data"]
-        assert [w["id"] for w in listed] == [made["id"]] and "secret" not in listed[0]
-        assert (await client.post("/v1/webhooks", json={"url": "nope"})).status_code == 400
-        pinged = (await client.post(f"/v1/webhooks/{made['id']}/ping")).json()
-        assert pinged["status"] == 200 and pinged["last_status"] == 200 and json.loads(app.state.hooks[-1].content)["type"] == "ping"
-        r = (await client.post("/v1/responses", json={"model": "echo", "input": "hello"})).json()
-        app.state.service.notifier.drain()
-        event = json.loads(app.state.hooks[-1].content)
-        assert event["type"] == "response.completed" and event["data"]["id"] == r["id"] and event["data"]["output"] == r["output"]
-        from harnessgateway.services.webhooks import SIGNATURE, TIMESTAMP, verify
-        assert verify(made["secret"], app.state.hooks[-1].headers[TIMESTAMP], app.state.hooks[-1].content, app.state.hooks[-1].headers[SIGNATURE])
-        # a member cannot manage webhooks; a deleted one receives nothing more
-        await client.post("/v1/members", json={"name": "dev", "role": "member"})
-        dev_key = (await client.post("/v1/members/dev/keys", json={})).json()["secret"]
-        dev = httpx.AsyncClient(transport=transport, base_url="http://api.test", headers={"Authorization": f"Bearer {dev_key}"})
-        assert (await dev.get("/v1/webhooks")).status_code == 403
-        assert (await client.delete(f"/v1/webhooks/{made['id']}")).json() == {"deleted": made["id"]}
-        count = len(app.state.hooks)
-        await client.post("/v1/responses", json={"model": "echo", "input": "quiet"})
-        app.state.service.notifier.drain()
-        assert len(app.state.hooks) == count
-    asyncio.run(with_worker(worker, go()))
-
-
-def test_rodeo(platform):
-    app, transport, worker, node = platform
-
-    async def go():
-        client, key, org = await owner_client(transport)
-        await client.put("/v1/providers/prov", json={"url": "https://api.example.com/v1", "api": "openai-responses", "key": "sk-test"})
-        for name in ("a", "b"):
-            await client.post(f"/v1/harnesses/{name}", json={"archive": base64.b64encode(archive()).decode()})
-        ra = (await client.post("/v1/responses", json={"model": "a", "input": "task"})).json()
-        rb = (await client.post("/v1/responses", json={"model": "b", "input": "task"})).json()
-        rodeo = (await client.post("/v1/rodeos", json={"task": "task", "entries": [{"response": ra["id"]}, {"response": rb["id"]}]})).json()
-        assert [e["harness"] for e in rodeo["entries"]] == ["a", "b"] and rodeo["winner"] == ""
-        picked = (await client.patch(f"/v1/rodeos/{rodeo['id']}", json={"winner": "b"})).json()
-        assert picked["winner"] == "b"
-        board = (await client.get("/v1/rodeos")).json()["leaderboard"]
-        assert board[0] == {"harness": "b", "runs": 1, "wins": 1}
-        assert (await client.post("/v1/rodeos", json={"entries": [{"response": ra["id"]}]})).status_code == 400
-    asyncio.run(with_worker(worker, go()))
-
-
-# accounts: the console's sign-in, over the same routes
+# accounts: the app's sign-in, over the same routes
 def test_accounts_sign_up_invite_switch_and_the_cookie_on_member_routes(platform):
     app, transport, worker, node = platform
 
     async def scenario():
         async with httpx.AsyncClient(transport=transport, base_url="http://api.test") as c:
-            assert (await c.get("/auth/providers")).json() == {"signup": "open", "password": True, "mail": False, "identities": [], "github": False, "google": False}
+            assert (await c.get("/auth/providers")).json() == {"signup": "open", "password": True}
             assert (await c.get("/auth/me")).status_code == 401
             assert (await c.post("/auth/signup", json={"email": "chase@example.com", "password": "short"})).status_code == 400
             r = await c.post("/auth/signup", json={"email": "Chase@Example.com", "password": "correct horse", "name": "Chase"})
             assert r.status_code == 201, r.text
             me = r.json()
-            assert me["account"]["email"] == "chase@example.com" and me["account"]["verified"] and me["account"]["has_password"]
+            assert me["account"]["email"] == "chase@example.com" and me["account"]["name"] == "Chase"
             assert me["current"] == {**me["current"], "org": "chase", "member": "chase", "role": "owner"}   # an organization of its own
             assert "hg_session" in c.cookies
             assert (await c.post("/auth/signup", json={"email": "chase@example.com", "password": "correct horse"})).status_code == 409
@@ -442,15 +374,9 @@ def test_accounts_sign_up_invite_switch_and_the_cookie_on_member_routes(platform
                 assert (await dev.post("/auth/logout")).status_code == 200
                 assert (await dev.get("/auth/me")).status_code == 401
             assert (await c.get("/v1/invites")).json()["data"] == []            # spent
-            # wrong password, then the right one; a changed password
+            # wrong password, then the right one
             assert (await c.post("/auth/login", json={"email": "chase@example.com", "password": "wrong"})).status_code == 401
             assert (await c.post("/auth/login", json={"email": "chase@example.com", "password": "correct horse"})).status_code == 200
-            assert (await c.post("/auth/password", json={"current": "wrong", "password": "new horse 2"})).status_code == 403
-            assert (await c.post("/auth/password", json={"current": "correct horse", "password": "new horse 2"})).status_code == 200
-            assert (await c.post("/auth/login", json={"email": "chase@example.com", "password": "new horse 2"})).status_code == 200
-            assert (await c.patch("/auth/account", json={"name": "C. Dovey"})).json()["name"] == "C. Dovey"
-            # the identity providers are not configured here
-            assert (await c.get("/auth/github")).status_code == 404
     asyncio.run(scenario())
 
 
@@ -467,30 +393,4 @@ def test_sign_up_is_closed_but_an_invitation_opens_it(tmp_path, vault):
             assert (await c.post("/v1/invites", json={"email": "a@example.com", "role": "owner"}, headers={"Authorization": f"Bearer {key}"})).status_code == 200
             r = await c.post("/auth/signup", json={"email": "a@example.com", "password": "correct horse"})
             assert r.status_code == 201 and r.json()["current"]["org"] == "acme" and r.json()["current"]["role"] == "owner"
-    asyncio.run(go())
-
-
-def test_sign_up_with_mail_verifies_first(tmp_path, vault, monkeypatch):
-    sent = []
-    from harnessgateway.backends.mail.smtp import SmtpMail
-    monkeypatch.setattr(SmtpMail, "send", lambda self, to, subject, text: sent.append((to, subject, text)))
-    settings = Settings(data_dir=tmp_path / "data", public_url="http://api.test", signup="open", smtp_url="smtp://mail.test:587", mail_from="hg@test")
-    app = create_app(Service(settings, vault))
-
-    async def go():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://api.test") as c:
-            r = await c.post("/auth/signup", json={"email": "a@example.com", "password": "correct horse"})
-            assert r.status_code == 200 and r.json() == {"verify": True, "email": "a@example.com"} and "hg_session" not in c.cookies
-            assert (await c.post("/auth/login", json={"email": "a@example.com", "password": "correct horse"})).status_code == 403
-            assert len(sent) == 1 and sent[0][0] == "a@example.com"
-            token = sent[0][2].split("token=")[1].split()[0]
-            r = await c.get("/auth/verify", params={"token": token})
-            assert r.status_code == 303 and r.headers["location"] == "/app" and "hg_session" in c.cookies
-            assert (await c.get("/auth/me")).json()["account"]["verified"]
-            assert (await c.get("/auth/verify", params={"token": "nope"})).status_code == 400
-            # a reset link, then a new password
-            assert (await c.post("/auth/reset", json={"email": "a@example.com"})).status_code == 200
-            token = sent[-1][2].split("#reset=")[1].split()[0]
-            assert (await c.post("/auth/reset/confirm", json={"token": token, "password": "a new horse"})).status_code == 200
-            assert (await c.post("/auth/login", json={"email": "a@example.com", "password": "a new horse"})).status_code == 200
     asyncio.run(go())

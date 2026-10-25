@@ -1,7 +1,7 @@
 """Layer 1 under Docker: the hardened container, the turn runner, the door and the forwarder.
 A real base image with nothing of ours in it; the tenant's uid; no capabilities; the token in the
 container and only the token; provider calls relayed to the gateway through the door; private
-egress refused; response.sh deciding the response; a steer reaching request.sh alone; a stop."""
+egress refused; response.sh deciding the response; a stop."""
 import asyncio
 import os
 import threading
@@ -18,7 +18,6 @@ IMAGE = "python:3.12-slim"
 CA = Path(os.environ["HG_CA_FILE"]) if os.environ.get("HG_CA_FILE") else None
 REQUEST = """#!/usr/bin/env bash
 set -u
-trap 'echo "steer=$(cat "$HG_DIR/interrupt")"; exit 0' USR1
 prompt=$(cat)
 echo "prompt=$prompt uid=$(id -u) caps=$(grep CapEff /proc/self/status | awk '{print $2}')"
 echo "user=$(id -un) home=$(python3 -c 'import os,pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
@@ -85,7 +84,7 @@ def spec(tmp_path: Path, prompt: str, rt: DockerRuntime, timeout: float = 120) -
         (tmp_path / d).mkdir(exist_ok=True)
     (tmp_path / "run" / "request.json").write_text(prompt)
     env = {"HG_REQUEST": str(tmp_path / "run" / "request.json"), "HG_WORKSPACE": str(tmp_path / "workspace"), "HOME": str(tmp_path / "home"), "HG_DIR": str(tmp_path / "run"),
-           "HG_HARNESS_DIR": str(tmp_path / "folder"), "HG_INTERRUPT": "SIGUSR1", "PATH": "/usr/local/bin:/usr/bin:/bin",
+           "HG_HARNESS_DIR": str(tmp_path / "folder"), "PATH": "/usr/local/bin:/usr/bin:/bin",
            "HG_PROVIDER_URL": rt.provider_url + "/x", "HG_PROVIDER_KEY_FILE": str(rt.token_path),
            "FAKE_KEY": "sk-hg-testtoken", "FAKE_URL": rt.provider_url}
     return Spec(("bash", str(TURN_SCRIPT)), input=prompt.encode(), env=env, workspace=tmp_path / "workspace", timeout_s=timeout)
@@ -127,24 +126,11 @@ def test_without_response_sh(tmp_path, gateway):
     assert not (tmp_path / "run" / "response").exists()                       # no response.sh: the stream events are the response
 
 
-def test_steer_and_stop(tmp_path, gateway):
+def test_stop(tmp_path, gateway):
     folder(tmp_path)
     rt = runtime(tmp_path, gateway)
 
     async def go():
-        ex = await rt.start(spec(tmp_path, "wait", rt))
-        out, err, sent = b"", b"", False
-        async for e in ex.events():
-            if e.stream == "stderr":
-                err += e.data
-            if e.stream == "stdout":
-                out += e.data
-                if b"rootfs=" in out and not sent:
-                    sent = True
-                    await asyncio.sleep(1)                   # let request.sh reach its wait, as a real steer would
-                    (tmp_path / "run" / "interrupt").write_text("turn left")
-                    assert await ex.interrupt("SIGUSR1")
-        steered = await ex.wait()
         ex2 = await rt.start(spec(tmp_path, "wait", rt))
         out2 = b""
         async for e in ex2.events():
@@ -152,8 +138,7 @@ def test_steer_and_stop(tmp_path, gateway):
                 out2 += e.data
                 if b"rootfs=" in out2:
                     ex2.stop(10)
-        return out, err, steered, out2, await ex2.wait()
-    out, err, steered, out2, stopped = asyncio.run(go())
-    assert b"steer=turn left" in out and steered.kind == "exited" and steered.code == 0, (steered, out, err)
+        return out2, await ex2.wait()
+    out2, stopped = asyncio.run(go())
     assert (tmp_path / "run" / "response").read_text().startswith("outcome=cancelled")
     assert stopped.kind == "stopped" and stopped.code == 0 and b"rootfs=" in out2

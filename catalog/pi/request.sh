@@ -24,8 +24,6 @@ cat > "$HOME/.pi/agent/models.json" <<CFG
 {"providers": {"hg": {"baseUrl": "${HG_PROVIDER_URL%/v1}", "api": "$api", "apiKey": "\$ANTHROPIC_API_KEY", "models": [{"id": "$HG_MODEL", "reasoning": true, "input": ["text", "image"], "contextWindow": 128000, "maxTokens": 16384}]}}}
 CFG
 
-steer=""
-trap 'steer=$(cat "$HG_DIR/interrupt" 2>/dev/null || true)' USR1
 run_wait() { "$@" </dev/null & local pid=$! rc; while :; do wait "$pid"; rc=$?; kill -0 "$pid" 2>/dev/null || break; done; return $rc; }
 
 turn() {
@@ -36,5 +34,4 @@ turn() {
   pi "${args[@]}" "${attach[@]}" "$1" | python3 "$HG_HARNESS_DIR/map.py"
 }
 run_wait turn "$prompt"; rc=$?
-if [ -n "$steer" ]; then run_wait turn "$steer"; rc=$?; fi
 exit $rc

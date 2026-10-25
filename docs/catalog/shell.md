@@ -14,7 +14,6 @@ The CLI's documentation: <https://github.com/HarnessGateway/harnessgateway/blob/
 | Accepts | `input`, `instructions`, `previous_response_id`, `metadata` |
 | Egress, install | none |
 | Egress, run | none |
-| Steer signal | `SIGUSR1` |
 
 ## Verified
 
@@ -29,7 +28,7 @@ On 2026-10-24, contract 7, provider `(none)`, model `(none)`: **3 of 3** checks 
 ## Notes
 
 - provider_env is empty, so the platform issues no token and starts no gateway forwarder: the sandbox has no way out but the run egress list (empty here).
-- instructions run first as a setup script; a steer runs as one more script after the current one ends.
+- instructions run first as a setup script, their output kept out of the response.
 - The workspace persists for the session: continue with previous_response_id and the files are there.
 - Add egress hosts in harness.json to let the script reach the network; add a CLI in install.sh under $HG_TOOLS.
 
@@ -41,4 +40,4 @@ hg ask shell "Create hello.txt containing hello, then say done."
 hg ask shell/myprovider/some-model "…"       # another provider and model
 ```
 
-In the console: Catalog, then Fork on **Shell**. The fork's first commit is the catalog's package; edit it as your own from there.
+In the app: Providers and harnesses, Add a harness, **Shell**. The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.

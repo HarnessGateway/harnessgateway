@@ -12,7 +12,7 @@
  },
  "notes": [
   "provider_env is empty, so the platform issues no token and starts no gateway forwarder: the sandbox has no way out but the run egress list (empty here).",
-  "instructions run first as a setup script; a steer runs as one more script after the current one ends.",
+  "instructions run first as a setup script, their output kept out of the response.",
   "The workspace persists for the session: continue with previous_response_id and the files are there.",
   "Add egress hosts in harness.json to let the script reach the network; add a CLI in install.sh under $HG_TOOLS."
  ]

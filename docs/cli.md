@@ -6,11 +6,11 @@ with the platform (`pip install harnessgateway` or `uv tool install harnessgatew
 
 ```
 hg login URL KEY                 remember where the platform is and who you are (~/.config/hg/config.json)
-hg me                            who you are, your organization, your teams
+hg me                            who you are, your organization
 hg providers [put NAME --url U --api A --key K | rm NAME]
 hg catalog [NAME]                the shipped packages
 hg harnesses                     the harnesses you can use
-hg harness new NAME --catalog P | --fork H | --dir DIR [--team T]
+hg harness new NAME --catalog P | --fork H | --dir DIR
 hg harness pull NAME DIR         the package's files into DIR
 hg harness push NAME DIR [-m MSG]   DIR as the next commit (a new harness when none)
 hg harness log NAME | rm NAME | show NAME
@@ -20,15 +20,15 @@ hg harness run DIR [--input TEXT | --request FILE] [--state DIR] [--env K=V] [--
 hg ask MODEL TEXT [--stream] [--previous ID] [--file PATH]...   POST /v1/responses
 hg response ID [--detail | --request]
 hg sessions | hg session ID [--files | --cat PATH | --trace | --archive OUT]
-hg steer SESSION TEXT | hg cancel RESPONSE
-hg rodeo TASK MODEL MODEL... [--pick HARNESS] | hg rodeo --list | hg pick ID HARNESS
+hg cancel RESPONSE
 hg keys | hg keys new [--label L] [--member M]
-hg teams | hg teams put NAME MEMBER... [--title T] | hg teams rm NAME
 hg members | hg members add NAME [--role R] | hg members invite EMAIL [--role R]
 ```
 
 `HG_URL` and `HG_KEY` in the environment override the saved login. Output is JSON, except `ask
---stream`, which prints the text as it arrives and the items as they end.
+--stream`, which prints the text as it arrives and the items as they end. A second `hg ask
+--previous ID` while that session is still running supersedes the running turn: it is stopped
+gracefully and the new request runs on the workspace it left.
 
 ## A first session
 

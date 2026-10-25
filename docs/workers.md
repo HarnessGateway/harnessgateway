@@ -21,7 +21,9 @@ home, the request's files) and, when the package names a provider, the session t
 provider. A turn of a session whose trees are on another live node waits three seconds for that
 node first, so a conversation stays where its workspace already is; past that, any node takes it.
 The node materializes the turn, runs it, posts the output as it arrives, snapshots the workspace
-and state, and reports the result. Cancels and steers come back on the heartbeat.
+and state, and reports the result. Stops (a cancel, a client gone, a turn superseded by the next
+request) come back on the heartbeat. A turn whose session is running another turn is not handed
+out until that one has ended.
 
 ## Caches
 
@@ -44,7 +46,7 @@ many run at once on a node. The sandboxes' disk is the daemon's; snapshots are b
 per session. The control plane (`api,gateway`) is stateless over Postgres and S3 and scales by
 replicas; followers of a running turn are woken by Postgres `NOTIFY` across replicas, with no
 polling. The gateway relays provider traffic, so size it for that bandwidth. Housekeeping (lost
-turns, the daily storage sample) runs in every `api` and is safe to repeat.
+turns) runs in every `api` and is safe to repeat.
 
 ## A sandboxed runtime
 

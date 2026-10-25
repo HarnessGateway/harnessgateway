@@ -52,8 +52,6 @@ TOML
 } > "$CODEX_HOME/config.toml"
 while IFS=$'\t' read -r label token; do [ -n "$label" ] && export "HG_MCP_$(echo "$label" | tr a-z A-Z | sed 's/[^A-Z0-9]/_/g')=$token"; done < <(q '.tools // [] | .[] | select(.type=="mcp" and .authorization) | "\(.server_label)\t\(.authorization)"')
 
-steer=""
-trap 'steer=$(cat "$HG_DIR/interrupt" 2>/dev/null || true)' USR1
 run_wait() { "$@" </dev/null & local pid=$! rc; while :; do wait "$pid"; rc=$?; kill -0 "$pid" 2>/dev/null || break; done; return $rc; }
 
 turn() {
@@ -66,5 +64,4 @@ turn() {
   fi
 }
 run_wait turn "$prompt"; rc=$?
-if [ -n "$steer" ]; then run_wait turn "$steer"; rc=$?; fi
 exit $rc

@@ -43,10 +43,10 @@ def host_env() -> dict[str, str]:
 
 class ProcessExecution:
     def __init__(self, proc: asyncio.subprocess.Process, timeout_s: float | None, interactive: bool,
-                 interrupt: Action | None, kill: Action | None, cleanup: Callable[[], Awaitable[None]] | None,
+                 stop: Action | None, kill: Action | None, cleanup: Callable[[], Awaitable[None]] | None,
                  sidecars: Mapping[str, asyncio.StreamReader], stop_signal: int = signal.SIGINT):
         self._proc, self._cleanup, self._stop_signal = proc, cleanup, stop_signal
-        self._signal = interrupt or self._interrupt_group
+        self._signal = stop or self._stop_group
         self._kill = kill
         self._loop = asyncio.get_running_loop()
         self._stopping = False                       # asked to stop: an exit now is `stopped`
@@ -127,16 +127,6 @@ class ProcessExecution:
     async def wait(self) -> Outcome:
         return await asyncio.shield(self._finished)
 
-    async def interrupt(self, name: str) -> bool:
-        """A named signal (`SIGUSR1`…) to the process itself, not its group; False once it has ended."""
-        if self._ended:
-            return False
-        try:
-            os.kill(self._proc.pid, getattr(signal, name))
-            return True
-        except (ProcessLookupError, AttributeError):
-            return False
-
     # the process
     @property
     def _ended(self) -> bool:
@@ -215,7 +205,7 @@ class ProcessExecution:
         except ProcessLookupError:
             pass
 
-    def _interrupt_group(self) -> None:
+    def _stop_group(self) -> None:
         self._signal_group(self._stop_signal)
 
     def _kill_group(self) -> None:

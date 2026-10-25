@@ -5,16 +5,18 @@ session is the chain of turns that share a workspace, kept as snapshots in blobs
     response/<org>/<rid>      the turn: public fields, job fields, and the node's commands
     session/<org>/<sid>       the chain: turns, the snapshot, which turn runs now, which node holds it
     chunk/<org>/<rid>:<seq>   a running turn's output, as it arrives, for any number of followers
-    trace/<org>/<sid>:<seq>   every request, response, steer, cancel and disconnect, as sent
+    trace/<org>/<sid>:<seq>   every request, response, cancel, disconnect and supersede, as sent
 
     blobs tenants/<o>/sessions/<sid>/snapshot.tgz             workspace/ and state/ after the last turn
           tenants/<o>/members/<m>/harnesses/<h>/home.tgz      the member's home for that package
           tenants/<o>/sessions/<sid>/turns/<rid>/request.json the client's request, verbatim
           tenants/<o>/sessions/<sid>/turns/<rid>/…            files in, the door log, the provider captures
 
-Reach is organization, then team, then member: a member sees their own work and the work of the
-teams they are in; an owner the organization's; nobody another organization's. The node's side of
-a turn (claim, output, result) is `services.scheduler`.
+Reach is organization, then member: a member sees their own work, an owner the organization's,
+nobody another organization's. A session runs one turn at a time, and a new request on a running
+session supersedes the running turn: that turn is stopped gracefully and the new one runs when it
+has ended, the way a coding agent's web view takes the next message. The node's side of a turn
+(claim, output, result) is `services.scheduler`.
 """
 from __future__ import annotations
 
@@ -33,11 +35,11 @@ from ..backends.records import Records
 from ..contract import wire
 from ..errors import Conflict, Invalid, NotFound
 from ..kernel.ids import new_id
+from . import load
 from .harnesses import Harnesses
 from .members import Member
 from .orgs import Orgs
 from .providers import Providers
-from .teams import Teams
 
 FINAL = ("completed", "failed", "cancelled", "incomplete")
 RUNNING = "1"
@@ -64,7 +66,6 @@ class Turn:
     metadata: dict[str, str]
     text: str = ""                                   # the input's text, for lists and the console
     instructions: Any = None
-    team: str = ""                                   # the harness's team: its members may see this turn
     background: bool = False                         # a background turn outlives the request that made it
     status: str = "queued"
     running: str = "0"                               # "1" while a node has it: counted against max_runs
@@ -82,8 +83,7 @@ class Turn:
     truncated: bool = False
     files: str = ""                                  # blob key of the request's files, if any
     cancel: bool = False
-    stop_reason: str = ""                            # why it was stopped: cancelled, or client_disconnected
-    interrupts: list[dict[str, Any]] = field(default_factory=list)
+    stop_reason: str = ""                            # why it was stopped: cancelled, client_disconnected, or superseded
 
     @property
     def final(self) -> bool:
@@ -98,11 +98,10 @@ class Session:
     harness: str
     version: str
     created: float
-    team: str = ""
     title: str = ""
     stored: bool = True
     responses: list[str] = field(default_factory=list)
-    running: str = ""                                # the turn in progress, if any
+    running: str = ""                                # the turn in progress, if any; the next queued one takes over when it ends
     snapshot_key: str = ""                           # blob key of the last snapshot, if any
     snapshot: str = ""                               # the turn that made it (a node's cache key)
     node: str = ""                                   # the node that ran the last turn and holds the trees
@@ -125,9 +124,9 @@ def snapshot_blob(org: str, sid: str) -> str:
 
 
 class Sessions:
-    def __init__(self, records: Records, blobs: Blobs, events: Events, orgs: Orgs, teams: Teams, harnesses: Harnesses, providers: Providers):
+    def __init__(self, records: Records, blobs: Blobs, events: Events, orgs: Orgs, harnesses: Harnesses, providers: Providers):
         self.records, self.blobs, self.events = records, blobs, events
-        self.orgs, self.teams, self.harnesses, self.providers = orgs, teams, harnesses, providers
+        self.orgs, self.harnesses, self.providers = orgs, harnesses, providers
 
     # records
     def put_session(self, s: Session) -> None:
@@ -140,39 +139,37 @@ class Sessions:
         found = self.records.find("session", sid) if sid.startswith("sess_") else None
         if not found:
             raise NotFound(f"no session {sid}")
-        return Session(**found[1])
+        return load(Session, found[1])
 
     def turn_by_id(self, rid: str) -> Turn:
         found = self.records.find("response", rid) if rid.startswith("resp_") else None
         if not found:
             raise NotFound(f"no response {rid}")
-        return Turn(**found[1])
+        return load(Turn, found[1])
 
     def trace_in(self, s: Session, kind: str, rid: str, body: Any) -> None:
         seq = len(self.records.list("trace", s.org, f"{s.id}:"))
         self.records.put("trace", s.org, f"{s.id}:{seq:06d}", {"at": time.time(), "kind": kind, "response": rid, "body": body})
 
     # reach
-    def reachable(self, who: Member, org: str, member: str, team: str = "") -> bool:
-        if org != who.org:
-            return False
-        return who.owner or member == who.name or (bool(team) and self.teams.includes(who, team))
+    def reachable(self, who: Member, org: str, member: str) -> bool:
+        return org == who.org and (who.owner or member == who.name)
 
     def session(self, who: Member, sid: str) -> Session:
         s = self.session_by_id(sid)
-        if not self.reachable(who, s.org, s.member, s.team):
+        if not self.reachable(who, s.org, s.member):
             raise NotFound(f"no session {sid}")
         return s
 
     def turn(self, who: Member, rid: str) -> Turn:
         r = self.turn_by_id(rid)
-        if not self.reachable(who, r.org, r.member, r.team):
+        if not self.reachable(who, r.org, r.member):
             raise NotFound(f"no response {rid}")
         return r
 
     def list(self, who: Member) -> list[Session]:
-        found = [Session(**d) for d in self.records.list("session", who.org)]
-        return sorted((s for s in found if self.reachable(who, s.org, s.member, s.team)), key=lambda s: -s.created)
+        found = [load(Session, d) for d in self.records.list("session", who.org)]
+        return sorted((s for s in found if self.reachable(who, s.org, s.member)), key=lambda s: -s.created)
 
     def turns_of(self, who: Member, sid: str) -> list[Turn]:
         s = self.session(who, sid)
@@ -184,17 +181,20 @@ class Sessions:
 
     # a turn asked
     def create(self, who: Member, req: wire.Request) -> Turn:
-        """Queue a turn; a node runs it. Conflict while the session is busy."""
+        """Queue a turn; a node runs it. A session that is running a turn stops it: the new request
+        supersedes the running one, which ends `cancelled` with reason `superseded`, and the new turn
+        runs on the workspace it left."""
         org = self.orgs.active(who.org)
+        superseded = None
         if req.previous:
             prev = self.turn_by_id(req.previous)
-            if not self.reachable(who, prev.org, prev.member, prev.team):
+            if not self.reachable(who, prev.org, prev.member):
                 raise NotFound(f"no response {req.previous}")
             s = self.session_by_id(prev.session)
             if not s.stored:
                 raise Invalid(f"{req.previous} was not stored, so it cannot be continued")
             if s.running:
-                raise Conflict(f"session {s.id} is running a response")
+                superseded = self.turn_by_id(s.running)
             if req.harness != s.harness:
                 raise Invalid(f"session {s.id} runs {s.harness}, not {req.harness}")
             version = s.version
@@ -202,10 +202,10 @@ class Sessions:
             inherited = prev.provider                 # a continuation keeps the provider unless the request names one
         else:
             inherited = ""
-            h = self.harnesses.usable(who, req.harness)
+            h = self.harnesses.get(who.org, req.harness)
             version = h.head
             config = h.configuration()
-            s = Session(new_id("sess"), who.org, who.name, h.name, version, time.time(), h.team,
+            s = Session(new_id("sess"), who.org, who.name, h.name, version, time.time(),
                         req.text.strip().splitlines()[0][:TITLE_MAX] if req.text.strip() else "", req.store)
         provider_name = req.provider or inherited or config.provider
         if not provider_name and config.needs_provider:
@@ -222,13 +222,25 @@ class Sessions:
         self.blobs.put(turn_blob(s.org, s.id, rid, "request.json"), json.dumps(req.body).encode())
         r = Turn(rid, s.id, s.org, s.member, s.harness, version, provider.name if provider else "", req.model or config.model, s.turn + 1,
                  time.time(), req.previous, req.store, dict(req.metadata), text=req.text, instructions=req.body.get("instructions"),
-                 team=s.team, background=req.background, files=files)
+                 background=req.background, files=files)
+        if superseded is not None and not superseded.final:
+            self.trace_in(s, "supersede", superseded.id, {"by": rid})
+            self._stop(superseded, s, "superseded")          # a queued one ends now and frees the session; a running one when the node stops it
         s.responses.append(rid)
-        s.running = rid
+        if not s.running:
+            s.running = rid
         self.put_session(s)
         self.put_turn(r)
         self.trace_in(s, "request", rid, req.for_trace())
         return r
+
+    def next_turn(self, s: Session) -> str:
+        """The session's oldest queued turn, which takes the session over when the running one ends."""
+        for rid in s.responses:
+            d = self.records.get("response", s.org, rid)
+            if d and d["status"] == "queued":
+                return rid
+        return ""
 
     # the response object and the stream
     def response_object(self, r: Turn) -> dict[str, Any]:
@@ -291,7 +303,7 @@ class Sessions:
         except Invalid:
             return []
 
-    # stopping and steering
+    # stopping
     def cancel(self, who: Member, rid: str, reason: str = "cancelled") -> Turn:
         """Ask the node to stop it gracefully (the package's stop signal, then its grace); a queued turn
         ends at once. `reason` is what the response says: `cancelled`, or `client_disconnected`."""
@@ -300,13 +312,17 @@ class Sessions:
             return r
         s = self.session_by_id(r.session)
         self.trace_in(s, "cancel" if reason == "cancelled" else "disconnect", rid, {})
-        if r.status == "queued" and self.records.update_if("response", r.org, rid, "status", "queued",
+        return self._stop(r, s, reason)
+
+    def _stop(self, r: Turn, s: Session, reason: str) -> Turn:
+        if r.status == "queued" and self.records.update_if("response", r.org, r.id, "status", "queued",
                                                            asdict(Turn(**{**asdict(r), "status": "cancelled", "running": "0", "stop_reason": reason,
                                                                           "incomplete": {"reason": reason}, "ended": time.time()}))):
-            s.running = ""
-            self.put_session(s)
-            return self.turn_by_id(rid)
-        r = self.turn_by_id(rid)
+            if s.running == r.id:
+                s.running = self.next_turn(s)
+                self.put_session(s)
+            return self.turn_by_id(r.id)
+        r = self.turn_by_id(r.id)
         r.cancel, r.stop_reason = True, reason
         self.put_turn(r)
         return r
@@ -319,21 +335,6 @@ class Sessions:
         if r.final or r.background:
             return r
         return self.cancel(who, rid, reason="client_disconnected")
-
-    def interrupt(self, who: Member, sid: str, text: str) -> Turn:
-        """Steer the session's running turn: the text reaches request.sh with the package's signal."""
-        s = self.session(who, sid)
-        if not s.running:
-            raise Conflict(f"session {sid} is not running a response")
-        r = self.turn_by_id(s.running)
-        if r.final or r.status == "queued":
-            raise Conflict(f"session {sid} is not running a response")
-        if not isinstance(text, str) or not text.strip():
-            raise Invalid("a steer carries text")
-        r.interrupts.append({"seq": len(r.interrupts) + 1, "text": text})
-        self.put_turn(r)
-        self.trace_in(s, "interrupt", r.id, {"input": text})
-        return r
 
     # the workspace, from its last snapshot
     def archive(self, who: Member, sid: str) -> bytes:
@@ -399,7 +400,7 @@ class Sessions:
         if s.running:
             raise Conflict(f"session {sid} is running a response")
         for rid in s.responses:
-            for kind in ("response", "usage"):
+            for kind in ("response", "capture"):
                 self.records.delete(kind, s.org, rid)
             self.events.clear(s.org, rid)
         for i in range(len(self.records.list("trace", s.org, f"{sid}:"))):

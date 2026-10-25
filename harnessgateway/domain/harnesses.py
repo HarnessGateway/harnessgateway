@@ -1,9 +1,8 @@
-"""A harness: a package the organization owns, as a repository with a history. It belongs to the
-organization or to one team; every commit is validated as a package before it becomes the head; a
-session runs the commit it started on. Repositories live on the node that holds them and are
+"""A harness: a package the organization owns, as a repository with a history. Every commit is
+validated as a package before it becomes the head; a session runs the commit it started on. Repositories live on the node that holds them and are
 mirrored as bundles in the blob store, so another replica restores one when it has no copy.
 
-    harness/<org>/<name>                a package: its team (or none), its head commit, its created time
+    harness/<org>/<name>                a package: its head commit, its created time, its origin
       git   <git>/<org>/<name>.git                               the repository, on the node that holds it
       blob  tenants/<org>/harnesses/<name>/repo.bundle           the repository, mirrored after every commit
       blob  tenants/<org>/harnesses/<name>/<sha>.tgz             a commit's files, packed for workers
@@ -24,9 +23,8 @@ from ..backends.repos.git import Repo
 from ..contract import package
 from ..errors import Conflict, Invalid, NotFound
 from ..kernel.ids import check_name, is_name
-from .members import Member
+from . import load
 from .orgs import RESERVED, Orgs
-from .teams import Teams
 
 
 @dataclass(frozen=True)
@@ -35,7 +33,6 @@ class Harness:
     name: str
     head: str                                        # the current commit
     created: float
-    team: str = ""                                   # "" is the whole organization
     origin: str = ""                                 # the catalog package or harness it was forked from
     config: dict[str, Any] = field(default_factory=dict)   # harness.json at the head, as JSON
 
@@ -43,13 +40,13 @@ class Harness:
         return package.load_config_dict(self.config)
 
     def public(self) -> dict[str, Any]:
-        return {"name": self.name, "team": self.team, "head": self.head, "created": self.created, "origin": self.origin, **self.config}
+        return {"name": self.name, "head": self.head, "created": self.created, "origin": self.origin, **self.config}
 
 
 class Harnesses:
-    def __init__(self, records: Records, blobs: Blobs, git_root: Path, orgs: Orgs, teams: Teams, allow_private: bool = False):
+    def __init__(self, records: Records, blobs: Blobs, git_root: Path, orgs: Orgs, allow_private: bool = False):
         self.records, self.blobs, self.git_root = records, blobs, Path(git_root)
-        self.orgs, self.teams, self.allow_private = orgs, teams, allow_private
+        self.orgs, self.allow_private = orgs, allow_private
 
     # where things are
     def repo_path(self, org: str, name: str) -> Path:
@@ -77,28 +74,10 @@ class Harnesses:
         d = self.records.get("harness", org, name) if is_name(name) else None
         if d is None:
             raise NotFound(f"no harness {name}")
-        return Harness(**d)
+        return load(Harness, d)
 
     def list(self, org: str) -> list[Harness]:
-        return [Harness(**d) for d in self.records.list("harness", org)]
-
-    def visible(self, who: Member) -> list[Harness]:
-        return [h for h in self.list(who.org) if self.teams.includes(who, h.team)]
-
-    def usable(self, who: Member, name: str) -> Harness:
-        """The harness, if the member may run it: the organization's, or one of their teams'."""
-        h = self.get(who.org, name)
-        if not self.teams.includes(who, h.team):
-            raise NotFound(f"no harness {name}")
-        return h
-
-    def editable(self, who: Member, name: str) -> Harness:
-        """The harness, if the member may change it: an owner changes any; a member changes their
-        teams'; an organization-wide harness is an owner's."""
-        h = self.usable(who, name)
-        if not who.owner and not h.team:
-            raise Invalid("an organization-wide harness is changed by an owner; team harnesses by their team")
-        return h
+        return [load(Harness, d) for d in self.records.list("harness", org)]
 
     def files(self, org: str, name: str, sha: str | None = None) -> list[Entry]:
         return self.repo(org, name).tree(sha or self.get(org, name).head)
@@ -134,22 +113,20 @@ class Harnesses:
             self.blobs.put(self.blob_key(org, name, sha), package.pack(folder))
         return config
 
-    def _settle(self, org: str, name: str, repo: Repository, sha: str, team: str, origin: str, created: float | None) -> Harness:
+    def _settle(self, org: str, name: str, repo: Repository, sha: str, origin: str, created: float | None) -> Harness:
         config = self._validated(repo, sha, org, name)
         existing = self.records.get("harness", org, name)
         h = Harness(org, name, sha, created if created is not None else (existing["created"] if existing else time.time()),
-                    team, origin, config.as_json())
+                    origin, config.as_json())
         self.records.put("harness", org, name, asdict(h))
         self.blobs.put(self.bundle_key(org, name), repo.bundle())
         return h
 
-    def _new(self, org: str, name: str, team: str) -> Repository:
+    def _new(self, org: str, name: str) -> Repository:
         self.orgs.get(org)
         check_name(name, "harness")
         if name in RESERVED:
             raise Invalid(f"{name} is a reserved name")
-        if team:
-            self.teams.get(org, team)
         if self.records.get("harness", org, name):
             raise Conflict(f"harness {name} exists")
         return Repo.init(self.repo_path(org, name))
@@ -159,11 +136,10 @@ class Harnesses:
         if len(archive) > o.ceilings.upload_mb * 1024 * 1024:
             raise Invalid(f"the package is over the organization's upload limit of {o.ceilings.upload_mb} MB")
 
-    def create_from_archive(self, org: str, name: str, archive: bytes, author: str, team: str = "", origin: str = "",
-                            message: str = "import") -> Harness:
+    def create_from_archive(self, org: str, name: str, archive: bytes, author: str, origin: str = "", message: str = "import") -> Harness:
         """A new harness whose first commit is the archive's files."""
         self._within_upload(org, archive)
-        repo = self._new(org, name, team)
+        repo = self._new(org, name)
         try:
             with tempfile.TemporaryDirectory(prefix="hg-import-") as tmp:
                 folder = Path(tmp) / "folder"
@@ -171,24 +147,23 @@ class Harnesses:
                 package.unpack(archive, folder)
                 package.validate(folder)
                 sha = repo.import_tree(folder, message, author)
-            return self._settle(org, name, repo, sha, team, origin, None)
+            return self._settle(org, name, repo, sha, origin, None)
         except Exception:
             repo.delete()
             raise
 
-    def create_from_folder(self, org: str, name: str, folder: Path, author: str, team: str = "", origin: str = "",
-                           message: str = "fork") -> Harness:
+    def create_from_folder(self, org: str, name: str, folder: Path, author: str, origin: str = "", message: str = "fork") -> Harness:
         """A new harness from a directory on this node (a catalog package)."""
-        repo = self._new(org, name, team)
+        repo = self._new(org, name)
         try:
             package.validate(Path(folder))
             sha = repo.import_tree(Path(folder), message, author)
-            return self._settle(org, name, repo, sha, team, origin, None)
+            return self._settle(org, name, repo, sha, origin, None)
         except Exception:
             repo.delete()
             raise
 
-    def fork(self, org: str, name: str, into: str, author: str, team: str = "") -> Harness:
+    def fork(self, org: str, name: str, into: str, author: str) -> Harness:
         """A copy of a harness, history and all, as another harness of the organization."""
         repo = self.repo(org, name)
         check_name(into, "harness")
@@ -196,11 +171,9 @@ class Harnesses:
             raise Invalid(f"{into} is a reserved name")
         if self.records.get("harness", org, into):
             raise Conflict(f"harness {into} exists")
-        if team:
-            self.teams.get(org, team)
         forked = repo.fork(self.repo_path(org, into))
         try:
-            return self._settle(org, into, forked, forked.head(), team, f"{org}/{name}", None)
+            return self._settle(org, into, forked, forked.head(), f"{org}/{name}", None)
         except Exception:
             forked.delete()
             raise
@@ -211,7 +184,7 @@ class Harnesses:
         repo = self.repo(org, name)
         sha = repo.commit(changes, message, author, parent if parent is not None else h.head)
         try:
-            return self._settle(org, name, repo, sha, h.team, h.origin, h.created)
+            return self._settle(org, name, repo, sha, h.origin, h.created)
         except Invalid:
             if h.head:
                 repo.reset(h.head)                    # the bad commit is unreachable
@@ -231,18 +204,10 @@ class Harnesses:
         if sha == h.head:
             return h
         try:
-            return self._settle(org, name, repo, sha, h.team, h.origin, h.created)
+            return self._settle(org, name, repo, sha, h.origin, h.created)
         except Invalid:
             repo.reset(h.head)
             raise
-
-    def move(self, org: str, name: str, team: str) -> Harness:
-        h = self.get(org, name)
-        if team:
-            self.teams.get(org, team)
-        h = Harness(**{**asdict(h), "team": team})
-        self.records.put("harness", org, name, asdict(h))
-        return h
 
     def delete(self, org: str, name: str) -> None:
         self.get(org, name)

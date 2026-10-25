@@ -6,7 +6,7 @@ sandbox sees a per-turn session token and the gateway's address, never the key.
 
 ## Add one
 
-In the console, Providers; or:
+In the app, "Add or replace a provider"; or:
 
 ```bash
 hg providers put deepseek --url https://api.deepseek.com/anthropic --api anthropic-messages --key sk-…
@@ -50,6 +50,6 @@ The CLI calls `$HG_PROVIDER_URL` (its `provider_env.url` name carries the same a
 session token as its key. The door in the sandbox's network forwards the call to the gateway; the
 gateway checks the token against the turn, swaps it for the provider's key, allows only the API
 shape's own paths (`/v1/messages` for Anthropic, `/v1/chat/completions`, `/v1/responses`,
-`/v1/models` for OpenAI shapes), forwards over TLS, counts the call and the bytes for the
-organization's usage, and keeps the exchange as the turn's capture (bodies bounded at 4 MB),
+`/v1/models` for OpenAI shapes), forwards over TLS, and keeps the exchange as the turn's capture
+(bodies bounded at 4 MB),
 readable at `GET /v1/responses/{id}/captures`. The key never appears in a capture.

@@ -1,8 +1,7 @@
 """The provider gateway, the one process where a provider's key is in the clear. A sandbox
 reaches it through its door's forwarder with the turn's session token as its only credential; the
-gateway swaps the token for the key, allows only the API shape's own paths, forwards over TLS,
-counts the call for metering, and keeps the exchange (request and response bodies, bounded) as the
-turn's capture. The key never enters a sandbox or a worker, and never appears in a capture.
+gateway swaps the token for the key, allows only the API shape's own paths, forwards over TLS, and
+keeps the exchange (request and response bodies, bounded) as the turn's capture. The key never enters a sandbox or a worker, and never appears in a capture.
 
 It is a plain HTTP/1.1 server on its own port, standard library only, so the same code serves the
 `gateway` role alone or inside `all`. One request per connection.
@@ -153,14 +152,13 @@ class Gateway:
             up_w.close()
 
     def _record(self, grant: dict[str, Any], exchange: Exchange) -> None:
-        """The exchange into the turn's capture and the turn's usage; a failure here never fails the call."""
+        """The exchange into the turn's captures, numbered; a failure here never fails the call."""
         try:
             rid, tenant = grant["response"], grant["org"]
-            usage = self.records.get("usage", tenant, rid) or {"calls": 0, "bytes_in": 0, "bytes_out": 0, "seconds": 0, "at": exchange.at}
-            usage = {**usage, "calls": usage["calls"] + 1, "bytes_in": usage["bytes_in"] + exchange.bytes_in,
-                     "bytes_out": usage["bytes_out"] + exchange.bytes_out}
-            self.records.put("usage", tenant, rid, usage)
-            key = f"tenants/{tenant}/sessions/{grant['session']}/turns/{rid}/provider/{usage['calls']:04d}.json"
+            count = self.records.get("capture", tenant, rid) or {"calls": 0, "bytes_in": 0, "bytes_out": 0}
+            count = {"calls": count["calls"] + 1, "bytes_in": count["bytes_in"] + exchange.bytes_in, "bytes_out": count["bytes_out"] + exchange.bytes_out}
+            self.records.put("capture", tenant, rid, count)
+            key = f"tenants/{tenant}/sessions/{grant['session']}/turns/{rid}/provider/{count['calls']:04d}.json"
             self.blobs.put(key, json.dumps({"at": exchange.at, "method": exchange.method, "path": exchange.path,
                                             "status": exchange.status, "request": exchange.request.decode("utf-8", "replace"),
                                             "response": exchange.response.decode("utf-8", "replace")}).encode())

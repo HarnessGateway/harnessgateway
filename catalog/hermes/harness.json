@@ -1,5 +1,5 @@
 {
-  "contract": 7,
+  "contract": 8,
   "description": "Hermes Agent in quiet chat mode on an Anthropic-shaped provider: the final answer as a message, sessions resumed by id.",
   "cli": {
     "name": "hermes",
@@ -13,7 +13,6 @@
     "key": "ANTHROPIC_API_KEY",
     "url": "ANTHROPIC_BASE_URL"
   },
-  "interrupt": "SIGUSR1",
   "install": {
     "egress": [
       "pypi.org",

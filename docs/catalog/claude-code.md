@@ -14,7 +14,6 @@ The CLI's documentation: <https://code.claude.com/docs/en/cli-reference>.
 | Accepts | `input`, `instructions`, `previous_response_id`, `reasoning.effort`, `tools`, `max_tool_calls`, `text.format`, `metadata` |
 | Egress, install | `registry.npmjs.org` |
 | Egress, run | none |
-| Steer signal | `SIGUSR1` |
 
 ## Verified
 
@@ -40,4 +39,4 @@ hg ask claude-code "Create hello.txt containing hello, then say done."
 hg ask claude-code/myprovider/some-model "…"       # another provider and model
 ```
 
-In the console: Catalog, then Fork on **Claude Code**. The fork's first commit is the catalog's package; edit it as your own from there.
+In the app: Providers and harnesses, Add a harness, **Claude Code**. The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.

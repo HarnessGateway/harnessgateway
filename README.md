@@ -5,10 +5,9 @@
 **Every coding agent, one API.** HarnessGateway speaks the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
 and nothing else. Behind it, a *harness package* your organization owns maps each request onto a
 command line, usually a coding-agent CLI (Claude Code, Codex, Pi, Hermes, Kilo, Cline, …), running
-in a sandbox the platform owns, with your provider keys injected for the length of one turn. Switch
-harnesses by changing the model name; wrap [any CLI](docs/any-cli.md) the same way. The managed
-platform and a self-hosted one are the same image; the platform meters compute, egress and storage,
-never tokens.
+in a sandbox the platform owns, with your provider keys swapped in for one request at a time.
+Switch harnesses by changing the model name; wrap [any CLI](docs/any-cli.md) the same way. The
+managed platform and a self-hosted one are the same image.
 
 ```python
 from openai import OpenAI
@@ -30,49 +29,47 @@ One container, every role, the data on a volume, sandboxes through the Docker so
 ```bash
 docker run -d --name harnessgateway --restart unless-stopped -p 8000:8000 \
   -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data \
-  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:8
+  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:9
 docker logs harnessgateway         # the first boot's keys, shown once
 ```
 
 `deploy/compose.yml` is the shape that grows: Postgres, S3 (MinIO), two API replicas behind Caddy
 and nodes that join; `--profile one-box` is the same behind TLS in one container.
 `harnessgateway doctor` checks every backend. The documentation is served by the platform at
-`/docs/`, and the console at `/app`.
+`/docs/`, and the app at `/app`.
 
 ## Then
 
 1. **Sign in** at `/app` with the owner's key from the log, or create an account when sign-up is open.
 2. **Add a provider**: an endpoint and its key (Anthropic, OpenAI, DeepSeek, any compatible).
    The key is sealed on arrival; no sandbox ever sees it.
-3. **Fork a harness** from the catalog, or write one. A harness is a git repository the platform
-   hosts: edit it in the console and commit, or `hg harness pull`, change, `hg harness push`.
-4. **Converse**: a conversation with a harness, its items streamed, the workspace's files and the
-   trace beside it; steer it mid-run, cancel it or just close the request, continue it from any client with `previous_response_id`.
-5. **Run a rodeo**: one task across several harnesses side by side; pick the winner, keep the leaderboard.
-6. **Let agents call it**: `Idempotency-Key` for safe retries, `429` with `Retry-After` at the
-   ceiling, background turns and signed webhooks for the result.
+3. **Add a harness** from the catalog, or upload one. A harness is a git repository the platform
+   hosts: `hg harness pull`, change, `hg harness push`.
+4. **Start a session**: pick the harness, type, press Enter. The items stream in; the workspace
+   persists across turns. A message sent while the agent works stops it and runs the new message on
+   the same workspace, like a coding agent's web view. Continue the same session from any client
+   with `previous_response_id`.
 
 ## The division of labour
 
 | The package owns | The platform owns |
 |---|---|
-| reading the request (`request.json`, verbatim) and building the CLI invocation | the wire: validation against the SDK's schema, streaming, continuation, background, steer, cancel |
-| the CLI's install (`install.sh`), its seeds (`AGENTS.md`, MCP config, skills, settings) | managed multi-tenant sandboxing: a fresh hardened container per turn, a uid per organization, one door out; the tenant controls only the egress list |
-| mapping the CLI's output onto Responses stream events | provider keys injected per request through a gateway that swaps a session token for the key |
-| the final shape, when the events are not enough (`response.sh`) | tracing of every request, response, steer, cancel and provider exchange |
-| | organizations, teams, members, keys; harness repositories with history; workspaces that persist; rodeos |
-| | metering of compute, egress and storage; usage per organization, team, member, harness and session; the dataset of the organizations that share their traces, pseudonymized |
+| reading the request (`request.json`, verbatim) and building the CLI invocation | the wire: validation against the SDK's schema, streaming, continuation, background, cancel, one turn at a time per session |
+| the CLI's install (`install.sh`), its seeds (`AGENTS.md`, MCP config, skills, settings) | multi-tenant sandboxing: a fresh hardened container per turn, a uid per organization, one door out; the tenant controls only the egress list |
+| mapping the CLI's output onto Responses stream events | provider keys swapped in per request through a gateway that trades a session token for the key |
+| the final shape, when the events are not enough (`response.sh`) | tracing of every request, response, cancel and provider exchange |
+| | organizations, members, keys; harness repositories with history; sessions whose workspaces persist |
 
 ## The catalog
 
 Twelve packages ship with the platform, each built from its CLI's own help and documentation and
 run against a live provider before release: a template, a `shell` package that runs any command
 line with no provider at all, and Claude Code, Codex, Pi, Oh My Pi, Kilo Code, DeepSeek Harness,
-Hermes Agent, Cline, OpenClaw and Command Code. Where a CLI cannot
-do something yet (resume headlessly, stream its events) the package says so. The research behind
-them is [the Responses wire](docs/responses-wire.md): every request field mapped to each CLI's
-invocation, every response field to its output, the seeds each reads, and the precedence a package
-follows when a CLI offers several ways.
+Hermes Agent, Cline, OpenClaw and Command Code. Where a CLI cannot do something yet (resume
+headlessly, stream its events) the package says so. The research behind them is [the Responses
+wire](docs/responses-wire.md): every request field mapped to each CLI's invocation, every response
+field to its output, the seeds each reads, and the precedence a package follows when a CLI offers
+several ways.
 
 ## Write a package
 
@@ -101,7 +98,7 @@ for researching a CLI first.
 uv sync --extra dev
 uv run pytest -q                          # without Docker
 uv run pytest -q -m docker                # a real sandbox
-uv run harnessgateway serve --dev         # the platform without Docker, for the console and packages
+uv run harnessgateway serve --dev         # the platform without Docker, for the app and packages
 ```
 
 [Contributing and releases](docs/contributing.md) has the layers (kernel, contract, backends,

@@ -16,12 +16,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..backends.billing import open_billing
 from ..backends.blobs import open_blobs
 from ..backends.events import open_events
-from ..backends.identity import open_identities
 from ..backends.kms import open_sealer
-from ..backends.mail import open_mailer
 from ..backends.records import open_records
 from ..config import Settings
 from ..contract.package import CONTRACT
@@ -33,17 +30,11 @@ from ..domain.members import Members
 from ..domain.nodes import Nodes
 from ..domain.orgs import Orgs
 from ..domain.providers import Providers
-from ..domain.rodeos import Rodeos
 from ..domain.sessions import Sessions
-from ..domain.teams import Teams
-from ..domain.webhooks import Webhooks
 from ..errors import Conflict, Invalid, NotFound, TooMany
 from ..kernel.vault import Sealer
-from ..services.intake import Intake
-from ..services.dataset import Dataset
 from ..services.housekeeping import Housekeeping
-from ..services.metering import Metering
-from ..services.webhooks import Notifier
+from ..services.intake import Intake
 from ..services.scheduler import Scheduler
 from . import control, deployer, internal, responses, signin
 from .auth import Principals
@@ -59,42 +50,26 @@ VERSION = version("harnessgateway")
 class Service:
     """The platform's parts, built from its settings; shared by every role in a process."""
 
-    def __init__(self, settings: Settings, vault: Optional[Sealer] = None, *, identities=None, mail=None, billing=None, webhook_transport=None):
+    def __init__(self, settings: Settings, vault: Optional[Sealer] = None):
         self.settings = settings
         self.records = open_records(settings.records_url)
         self.vault = vault or open_sealer(settings.kms, os.environ, self.records)
         self.blobs = open_blobs(settings.blobs_url, base_url=settings.public_url, secret=self.vault.derive("blobs"))
         self.events = open_events(self.records, settings.records_url)
-        self.mail = mail if mail is not None else open_mailer(settings.smtp_url, settings.mail_from)
-        self.identities = identities if identities is not None else open_identities(settings.identity_env())
-        self.billing = billing if billing is not None else open_billing(settings.billing, os.environ)
         self.orgs = Orgs(self.records, self.blobs)
         self.members = Members(self.records, self.orgs)
-        self.teams = Teams(self.records, self.orgs, self.members)
         self.keys = Keys(self.records, self.orgs, self.members)
         self.providers = Providers(self.records, self.vault, self.orgs, settings.allow_private)
-        self.harnesses = Harnesses(self.records, self.blobs, settings.data_dir / "git", self.orgs, self.teams, settings.allow_private)
+        self.harnesses = Harnesses(self.records, self.blobs, settings.data_dir / "git", self.orgs, settings.allow_private)
         self.nodes = Nodes(self.records)
-        self.sessions = Sessions(self.records, self.blobs, self.events, self.orgs, self.teams, self.harnesses, self.providers)
-        self.rodeos = Rodeos(self.records, self.sessions)
+        self.sessions = Sessions(self.records, self.blobs, self.events, self.orgs, self.harnesses, self.providers)
         self.intake = Intake(self.records, self.orgs, self.sessions)
-        self.metering = Metering(self.records, self.blobs, self.orgs, self.billing)
-        self.webhooks = Webhooks(self.records, self.vault, self.orgs)
-        self.notifier = Notifier(self.webhooks, self.sessions, webhook_transport)
-        self.scheduler = Scheduler(self.sessions, self.harnesses, self.providers, self.orgs, self.nodes, settings.gateway_url,
-                                   on_final=self.turn_ended)
+        self.scheduler = Scheduler(self.sessions, self.harnesses, self.providers, self.orgs, self.nodes, settings.gateway_url)
         self.catalog = Catalog()
-        self.accounts = Accounts(self.records, self.vault, self.orgs, self.members, settings.trace_sharing)
-        self.dataset = Dataset(self.records, self.blobs, self.orgs, self.vault)
-        self.housekeeping = Housekeeping(self.scheduler, self.metering)
+        self.accounts = Accounts(self.records, self.vault, self.orgs, self.members)
+        self.housekeeping = Housekeeping(self.scheduler)
         self.join_token = settings.join_token or secrets.token_urlsafe(32)   # an in-process node joins with it
         self.principals = Principals(self.keys, self.nodes, settings.deployer_key, self.join_token, self.accounts)
-
-
-    def turn_ended(self, r, report) -> None:
-        """What happens when a turn ends, after its response is final: it is metered, then announced."""
-        self.metering.turn_ended(r, report)
-        self.notifier.turn_ended(r, report)
 
 
 def create_app(service: Service) -> FastAPI:
@@ -115,8 +90,7 @@ def create_app(service: Service) -> FastAPI:
 
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"status": "ok", "version": VERSION, "contract": CONTRACT, "roles": list(settings.roles), "signup": settings.signup,
-                "trace_sharing": settings.trace_sharing}
+        return {"status": "ok", "version": VERSION, "contract": CONTRACT, "roles": list(settings.roles), "signup": settings.signup}
 
     app.include_router(responses.router(service))
     app.include_router(control.router(service))

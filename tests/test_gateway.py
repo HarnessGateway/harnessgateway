@@ -1,5 +1,5 @@
 """Layer 4: the gateway swaps a session token for the provider's key, relays only the API shape's
-paths, keeps the exchange as the turn's capture and counts it as usage. Against a TLS upstream of
+paths, keeps the exchange as the turn's capture and counts it. Against a TLS upstream of
 our own, so no key and no byte leaves this machine."""
 import asyncio
 import datetime
@@ -41,7 +41,7 @@ def certificate(tmp_path):
     return tmp_path / "cert.pem", tmp_path / "key.pem"
 
 
-def test_relay_capture_and_usage(tmp_path, vault):
+def test_relay_and_capture(tmp_path, vault):
     cert, key = certificate(tmp_path)
     seen = []
 
@@ -88,7 +88,7 @@ def test_relay_capture_and_usage(tmp_path, vault):
     assert no.startswith(b"HTTP/1.1 401") and forbidden.startswith(b"HTTP/1.1 403")
     assert seen[0][0] == "POST /v1/chat/completions HTTP/1.1" and seen[0][1]["Authorization"] == "Bearer sk-real-secret"
     assert len(seen) == 1                                   # the refused calls never reached the provider
-    usage = store.records.get("usage", "acme", "resp_1")
+    usage = store.records.get("capture", "acme", "resp_1")
     assert usage["calls"] == 1 and usage["bytes_in"] == 8 and usage["bytes_out"] > 0
     captures = store.blobs.list("tenants/acme/sessions/sess_1/turns/resp_1/provider")
     assert captures == ["tenants/acme/sessions/sess_1/turns/resp_1/provider/0001.json"]

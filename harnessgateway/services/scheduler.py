@@ -1,9 +1,9 @@
 """The scheduler: the node's side of a turn. Nodes pull: `claim` hands out the oldest queued turn
-whose organization has a free slot, preferring the node that already holds the session's trees, with
-URLs good for that turn's blobs and a token good for that turn's provider; `commands` carries cancels
-and steers back on each heartbeat; `result` ends the turn, mapping the package's events and shape
-onto the response through `contract.wire`. A node that stops heartbeating loses its turns, not the
-sessions."""
+whose organization has a free slot and whose session is not running another turn, preferring the node
+that already holds the session's trees, with URLs good for that turn's blobs and a token good for that
+turn's provider; `commands` carries cancels back on each heartbeat; `result` ends the turn, mapping
+the package's events and shape onto the response through `contract.wire`, and hands the session to
+its next queued turn. A node that stops heartbeating loses its turns, not the sessions."""
 from __future__ import annotations
 
 import time
@@ -12,6 +12,7 @@ from typing import Any
 
 from ..backends.sandboxes.docker import PROVIDER_URL
 from ..contract import wire
+from ..domain import load
 from ..domain.harnesses import Harnesses
 from ..domain.nodes import LOST_AFTER_S, Node, Nodes
 from ..domain.orgs import Orgs
@@ -27,11 +28,12 @@ class Scheduler:
                  on_final=None):
         self.sessions, self.harnesses, self.providers, self.orgs, self.nodes = sessions, harnesses, providers, orgs, nodes
         self.records, self.blobs, self.gateway_url = sessions.records, sessions.blobs, gateway_url
-        self.on_final = on_final                     # called with the final Turn: metering, webhooks
+        self.on_final = on_final                     # called with the final Turn and the node's report
 
     def claim(self, node: Node) -> dict[str, Any] | None:
-        """The oldest queued turn whose organization has a free slot, as a job, or None. A turn whose
-        session's trees are on another live node waits a moment for that node first."""
+        """The oldest queued turn whose organization has a free slot and whose session is free, as a
+        job, or None. A turn whose session's trees are on another live node waits a moment for that
+        node first; a turn that superseded a running one waits for that one to end."""
         alive = {n.id for n in self.nodes.list() if n.alive}
         for org, rid, doc in self.records.where("response", "status", "queued", limit=50):
             try:
@@ -41,10 +43,12 @@ class Scheduler:
             if self.records.count("response", org, "running", RUNNING) >= ceilings.max_runs:
                 continue
             holder = self.records.get("session", org, doc["session"]) or {}
+            if holder.get("running", rid) != rid:
+                continue                             # the session is running another turn: this one is next
             held_by = holder.get("node", "")
             if held_by and held_by != node.id and held_by in alive and time.time() - doc["created"] < AFFINITY_S:
                 continue
-            r = Turn(**{**doc, "status": "claimed", "running": RUNNING, "worker": node.id, "started": time.time()})
+            r = load(Turn, {**doc, "status": "claimed", "running": RUNNING, "worker": node.id, "started": time.time()})
             if self.records.update_if("response", org, rid, "status", "queued", asdict(r)):
                 return self.job(r, ceilings)
         return None
@@ -58,7 +62,7 @@ class Scheduler:
         home = home_blob(r.org, r.member, r.harness)
         get, put = self.blobs.presign_get, self.blobs.presign_put
         ttl = int(timeout) + 600
-        return {"id": r.id, "session": s.id, "org": r.org, "team": r.team, "member": r.member, "harness": r.harness, "version": r.version,
+        return {"id": r.id, "session": s.id, "org": r.org, "member": r.member, "harness": r.harness, "version": r.version,
                 "turn": r.turn, "new_session": r.turn == 1, "previous": r.previous or "", "model": r.model,
                 "store": r.store, "config": config.as_json(), "limits": ceilings.as_dict(), "timeout_s": timeout, "token": token,
                 "provider": {"name": provider.name, "api": provider.api, "path": provider.path, "url": PROVIDER_URL + provider.path} if provider
@@ -86,16 +90,16 @@ class Scheduler:
         self.sessions.events.append(r.org, rid, chunks)
 
     def commands(self, node: Node, running: list[str], version: str = "", slots: int = 0) -> dict[str, dict[str, Any]]:
-        """What the node should do to the turns it reports; also its heartbeat."""
+        """What the node should do to the turns it reports (stop them, or nothing); also its heartbeat."""
         self.nodes.touch(node, len(running), version, slots)
         out: dict[str, dict[str, Any]] = {}
         for rid in running:
             try:
                 r = self.sessions.turn_by_id(rid)
             except NotFound:
-                out[rid] = {"cancel": True, "interrupts": []}
+                out[rid] = {"cancel": True}
                 continue
-            out[rid] = {"cancel": r.cancel or r.final, "interrupts": r.interrupts}
+            out[rid] = {"cancel": r.cancel or r.final}
         return out
 
     def result(self, node: Node, rid: str, body: dict[str, Any]) -> Turn:
@@ -146,7 +150,7 @@ class Scheduler:
             s.snapshot_key, s.snapshot = snapshot_blob(r.org, s.id), rid
         if not r.store:
             s.stored = False
-        s.running, s.node = "", node.id
+        s.running, s.node = self.sessions.next_turn(s), node.id       # a turn that superseded this one runs now
         self.sessions.put_session(s)
         self.sessions.trace_in(s, "response", rid, self.sessions.response_object(r))
         if self.on_final:

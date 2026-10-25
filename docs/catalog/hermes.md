@@ -14,7 +14,6 @@ The CLI's documentation: <https://hermes-agent.nousresearch.com/docs/reference/c
 | Accepts | `input`, `instructions`, `previous_response_id`, `metadata` |
 | Egress, install | `pypi.org`, `files.pythonhosted.org` |
 | Egress, run | none |
-| Steer signal | `SIGUSR1` |
 
 ## Verified
 
@@ -42,4 +41,4 @@ hg ask hermes "Create hello.txt containing hello, then say done."
 hg ask hermes/myprovider/some-model "…"       # another provider and model
 ```
 
-In the console: Catalog, then Fork on **Hermes Agent**. The fork's first commit is the catalog's package; edit it as your own from there.
+In the app: Providers and harnesses, Add a harness, **Hermes Agent**. The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.

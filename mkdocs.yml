@@ -47,14 +47,12 @@ nav:
   - Get started:
       - Deploy: deploy.md
       - First boot and sign-in: initialize.md
-      - The console: console.md
+      - The app: app.md
       - Providers: providers.md
       - Harnesses: harnesses.md
+      - Sessions: sessions.md
       - Requests: requests.md
-  - Use it:
-      - Conversations and sessions: conversations.md
-      - Rodeo: rodeo.md
-      - Teams, members and keys: teams.md
+  - Use it from code:
       - The hg command line: cli.md
       - The API: api.md
   - Packages:
@@ -71,11 +69,12 @@ nav:
       - Oh My Pi: catalog/omp.md
       - OpenClaw: catalog/openclaw.md
       - Pi: catalog/pi.md
+      - Shell: catalog/shell.md
       - Template: catalog/template.md
       - The Responses wire: responses-wire.md
   - Operate it:
-      - Organizations, plans and limits: organizations.md
-      - Data, metering and trace sharing: data.md
+      - Members and keys: members.md
+      - Organizations and limits: organizations.md
       - Nodes and scale: workers.md
       - Configuration: configuration.md
       - Security: security.md

@@ -1,7 +1,6 @@
-"""The organization's routes: who you are, members, invitations, teams, keys, providers, the catalog
-and the harnesses. Owners register providers, manage members and teams and every harness; members
-read them and edit the harnesses of their teams. Each route validates, calls the domain and shapes
-the reply; nothing else."""
+"""The organization's routes: who you are, members, invitations, keys, providers, the catalog and the
+harnesses. Owners register providers, manage members and change harnesses; members read them and run
+them. Each route validates, calls the domain and shapes the reply; nothing else."""
 from __future__ import annotations
 
 import asyncio
@@ -31,11 +30,6 @@ class RoleBody(BaseModel):
     role: str
 
 
-class TeamBody(BaseModel):
-    members: list[str] = []
-    title: str = ""
-
-
 class KeyBody(BaseModel):
     label: str = ""
 
@@ -52,7 +46,6 @@ class NewHarnessBody(BaseModel):
     catalog: str = ""
     fork: str = ""
     archive: str = ""
-    team: str = ""
     message: str = ""
 
 
@@ -65,22 +58,12 @@ class CommitBody(BaseModel):
     encoding: str = "text"
 
 
-class MoveBody(BaseModel):
-    team: str = ""
-
-
-class WebhookBody(BaseModel):
-    url: str
-    label: str = ""
-
-
 class OrgSettingsBody(BaseModel):
     title: Optional[str] = None
-    trace_sharing: Optional[bool] = None
 
 
 def router(service) -> APIRouter:
-    principals, orgs, members, teams, keys = service.principals, service.orgs, service.members, service.teams, service.keys
+    principals, orgs, members, keys = service.principals, service.orgs, service.members, service.keys
     providers, harnesses, catalog, accounts = service.providers, service.harnesses, service.catalog, service.accounts
     r = APIRouter(prefix="/v1")
     member, owner = Depends(principals.member), Depends(principals.owner)
@@ -88,51 +71,15 @@ def router(service) -> APIRouter:
     @r.get("/me")
     def me(who: Member = member) -> dict:
         o = orgs.get(who.org)
-        return {**asdict(who), "limits": o.limits, "org_status": o.status, "org_title": o.title, "plan": o.plan,
-                "trace_sharing": o.trace_sharing, "teams": teams.of(who)}
+        return {**asdict(who), "limits": o.limits, "org_status": o.status, "org_title": o.title}
 
     @r.get("/org")
     def get_org(who: Member = member) -> dict:
         return orgs.get(who.org).public()
 
-    @r.get("/usage")
-    def usage(days: int = 30, team: str = "", harness: str = "", who: Member = member) -> dict:
-        """What the organization used: the last `days` (all time with 0), narrowed to a team or a
-        harness. An owner sees the organization; a member sees their own turns and their teams'.
-        Compute, egress and storage are what the platform meters; tokens are shown, never billed here."""
-        if who.owner:
-            return service.metering.summary(who.org, days, team=team, harness=harness)
-        if team and not teams.includes(who, team):
-            raise HTTPException(403, f"you are not in team {team}")
-        mine = service.metering.summary(who.org, days, team=team, member="" if team else who.name, harness=harness)
-        if not team:
-            mine["members"] = [row for row in mine["members"] if row["member"] == who.name]
-        return mine
-
     @r.patch("/org")
     def patch_org(body: OrgSettingsBody, who: Member = owner) -> dict:
-        return orgs.update(who.org, title=body.title, trace_sharing=body.trace_sharing).public()
-
-    # webhooks: where final responses are posted
-    @r.post("/webhooks")
-    def create_webhook(body: WebhookBody, who: Member = owner) -> dict:
-        w, secret = service.webhooks.create(who.org, body.url, body.label)
-        return {**w.public(), "secret": secret}
-
-    @r.get("/webhooks")
-    def list_webhooks(who: Member = owner) -> dict:
-        return {"object": "list", "data": [w.public() for w in service.webhooks.list(who.org)]}
-
-    @r.post("/webhooks/{wid}/ping")
-    def ping_webhook(wid: str, who: Member = owner) -> dict:
-        """A `ping` event, delivered now; the webhook's record shows how it went."""
-        status = service.notifier.ping(service.webhooks.get(who.org, wid)).result(timeout=120)
-        return {**service.webhooks.get(who.org, wid).public(), "status": status}
-
-    @r.delete("/webhooks/{wid}")
-    def delete_webhook(wid: str, who: Member = owner) -> dict:
-        service.webhooks.delete(who.org, wid)
-        return {"deleted": wid}
+        return orgs.update(who.org, title=body.title).public()
 
     # members and invitations
     @r.post("/members")
@@ -152,7 +99,6 @@ def router(service) -> APIRouter:
         if name == who.name:
             raise Invalid("you cannot remove yourself; another owner does that")
         members.remove(who.org, name)
-        teams.drop_member(who.org, name)
         keys.revoke_all(who.org, name)
         return {"deleted": name}
 
@@ -168,24 +114,6 @@ def router(service) -> APIRouter:
     def revoke_invite(email: str, who: Member = owner) -> dict:
         accounts.revoke_invite(who.org, email)
         return {"deleted": email}
-
-    # teams
-    @r.put("/teams/{name}")
-    def put_team(name: str, body: TeamBody, who: Member = owner) -> dict:
-        return asdict(teams.put(who.org, name, body.members, body.title))
-
-    @r.get("/teams")
-    def list_teams(who: Member = member) -> dict:
-        return {"object": "list", "data": [asdict(t) for t in teams.list(who.org)]}
-
-    @r.get("/teams/{name}")
-    def get_team(name: str, who: Member = member) -> dict:
-        return asdict(teams.get(who.org, name))
-
-    @r.delete("/teams/{name}")
-    def delete_team(name: str, who: Member = owner) -> dict:
-        teams.delete(who.org, name)
-        return {"deleted": name}
 
     # keys
     @r.post("/members/{name}/keys")
@@ -237,43 +165,34 @@ def router(service) -> APIRouter:
     def get_catalog_file(name: str, path: str, who: Member = member) -> Response:
         return Response(catalog.file(name, path), media_type="text/plain; charset=utf-8")
 
-    # harnesses: repositories
+    # harnesses: repositories; every member runs them, owners change them
     def view(name: str, who: Member) -> dict[str, Any]:
         h = harnesses.get(who.org, name)
-        return {**h.public(), "editable": who.owner or (bool(h.team) and teams.includes(who, h.team)),
-                "files": [asdict(e) for e in harnesses.files(who.org, name)]}
-
-    def may_create(who: Member, team: str) -> None:
-        if not who.owner and (not team or not teams.includes(who, team)):
-            raise HTTPException(403, "a member creates harnesses for their teams (name the team); an owner for the organization")
+        return {**h.public(), "editable": who.owner, "files": [asdict(e) for e in harnesses.files(who.org, name)]}
 
     @r.post("/harnesses/{name}")
-    async def create_harness(name: str, body: NewHarnessBody, request: Request, who: Member = member) -> dict:
+    async def create_harness(name: str, body: NewHarnessBody, request: Request, who: Member = owner) -> dict:
         """A new harness: from the catalog (`catalog`), from a harness of this organization (`fork`), or
-        from an archive (`archive`, base64 of a tar). A member may create a harness for a team they are
-        in; an owner for the whole organization."""
-        may_create(who, body.team)
+        from an archive (`archive`, base64 of a tar)."""
         author = author_of(who, request)
         if sum(bool(x) for x in (body.catalog, body.fork, body.archive)) != 1:
             raise Invalid("name one source: catalog, fork or archive")
         if body.catalog:
-            await asyncio.to_thread(catalog.fork, harnesses, who.org, body.catalog, name, author, body.team)
+            await asyncio.to_thread(catalog.fork, harnesses, who.org, body.catalog, name, author)
         elif body.fork:
-            harnesses.usable(who, body.fork)
-            await asyncio.to_thread(harnesses.fork, who.org, body.fork, name, author, body.team)
+            await asyncio.to_thread(harnesses.fork, who.org, body.fork, name, author)
         else:
             try:
                 archive = base64.b64decode(body.archive, validate=True)
             except ValueError:
                 raise Invalid("archive is base64 of a tar") from None
-            await asyncio.to_thread(harnesses.create_from_archive, who.org, name, archive, author, body.team, "", body.message or "import")
+            await asyncio.to_thread(harnesses.create_from_archive, who.org, name, archive, author, "", body.message or "import")
         return view(name, who)
 
     @r.put("/harnesses/{name}")
-    async def replace_harness(name: str, request: Request, who: Member = member) -> dict:
+    async def replace_harness(name: str, request: Request, who: Member = owner) -> dict:
         """The body is the whole package as a tar archive: the next commit, files not in it removed.
-        A harness that does not exist yet is created (an owner's, or for `?team=`)."""
-        team = request.query_params.get("team", "")
+        A harness that does not exist yet is created."""
         archive = await request.body()
         if not archive:
             raise Invalid("send the package as a tar archive in the request body")
@@ -282,51 +201,30 @@ def router(service) -> APIRouter:
         try:
             harnesses.get(who.org, name)
         except NotFound:
-            may_create(who, team)
-            await asyncio.to_thread(harnesses.create_from_archive, who.org, name, archive, author, team, "", message)
+            await asyncio.to_thread(harnesses.create_from_archive, who.org, name, archive, author, "", message)
             return view(name, who)
-        try:
-            harnesses.editable(who, name)
-        except Invalid as e:
-            raise HTTPException(403, str(e)) from None
         await asyncio.to_thread(harnesses.replace, who.org, name, archive, message, author)
         return view(name, who)
 
-    def editor(who: Member, name: str) -> None:
-        try:
-            harnesses.editable(who, name)
-        except Invalid as e:
-            raise HTTPException(403, str(e)) from None
-
     @r.get("/harnesses")
     def list_harnesses(who: Member = member) -> dict:
-        return {"object": "list", "data": [{**h.public(), "editable": who.owner or (bool(h.team) and teams.includes(who, h.team))}
-                                           for h in harnesses.visible(who)]}
+        return {"object": "list", "data": [{**h.public(), "editable": who.owner} for h in harnesses.list(who.org)]}
 
     @r.get("/harnesses/{name}")
     def get_harness(name: str, who: Member = member) -> dict:
-        harnesses.usable(who, name)
-        return view(name, who)
-
-    @r.patch("/harnesses/{name}")
-    def move_harness(name: str, body: MoveBody, who: Member = owner) -> dict:
-        harnesses.move(who.org, name, body.team)
         return view(name, who)
 
     @r.delete("/harnesses/{name}")
-    def delete_harness(name: str, who: Member = member) -> dict:
-        editor(who, name)
+    def delete_harness(name: str, who: Member = owner) -> dict:
         harnesses.delete(who.org, name)
         return {"deleted": name}
 
     @r.get("/harnesses/{name}/files/{path:path}")
     def get_harness_file(name: str, path: str, at: str = "", who: Member = member) -> Response:
-        harnesses.usable(who, name)
         return Response(harnesses.file(who.org, name, path, at or None), media_type="text/plain; charset=utf-8")
 
     @r.post("/harnesses/{name}/commits")
-    def commit(name: str, body: CommitBody, request: Request, who: Member = member) -> dict:
-        editor(who, name)
+    def commit(name: str, body: CommitBody, request: Request, who: Member = owner) -> dict:
         if body.encoding not in ("text", "base64"):
             raise Invalid("encoding is text or base64")
         changes: dict[str, bytes | None] = {}
@@ -345,12 +243,10 @@ def router(service) -> APIRouter:
 
     @r.get("/harnesses/{name}/commits")
     def commits(name: str, who: Member = member) -> dict:
-        harnesses.usable(who, name)
         return {"object": "list", "data": [asdict(c) for c in harnesses.log(who.org, name)]}
 
     @r.get("/harnesses/{name}/archive")
     def harness_archive(name: str, at: str = "", who: Member = member) -> Response:
-        harnesses.usable(who, name)
         return Response(harnesses.export(who.org, name, at or None), media_type="application/gzip",
                         headers={"Content-Disposition": f'attachment; filename="{name}.tar.gz"'})
 

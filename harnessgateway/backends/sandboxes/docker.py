@@ -6,7 +6,6 @@ Its guarantees, on every run:
   sandboxed runtime when the node has one (`runtime`), and the tenant's own unprivileged user when the
   server runs as root (it hands the writable paths over), else the server's own user;
 - tini as PID 1, so a stop (SIGTERM) reaches the command's whole process group, and a kill follows;
-  any other signal reaches PID 1 and is forwarded the same way;
 - no route out but the door, which tunnels only to the hosts it is given, refuses private addresses,
   and has no DNS to give; provider calls go through the door's forwarder to the platform's gateway,
   which is where the keys are. The run reads its session token from `TOKEN_PATH`; it never sees a key;
@@ -220,15 +219,6 @@ class Names:
         return cls(f"{PREFIX}run-{rid}", f"{PREFIX}door-{rid}", f"{PREFIX}net-{rid}", secrets / f"{PREFIX}{owner}-{rid}")
 
 
-class ContainerExecution(ProcessExecution):
-    """A run's process, plus the name of its container, so a signal other than a stop can reach it:
-    it goes to the container's PID 1, which forwards it to the turn runner."""
-    container: str = ""
-
-    async def interrupt(self, name: str) -> bool:
-        return bool(self.container) and not self._ended and await signal(self.container, name)
-
-
 async def signal(container: str, name: str) -> bool:
     return (await docker("kill", "--signal", name, container))[0] == 0
 
@@ -279,13 +269,11 @@ class DockerRuntime:
             await self._step("network", "connect", self.host.network, names.door)
             env = {**spec.env, "HTTPS_PROXY": PROXY, "https_proxy": PROXY, "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY,
                    **({v: CA_PATH for v in CA_VARS} if self.ca_file else {})}
-            execution = await ContainerExecution.spawn(
+            execution = await ProcessExecution.spawn(
                 [run_bin, *self.run_argv(spec, names, env)], env=client_env(env), cwd=None, input=spec.input,
                 interactive=spec.interactive, timeout_s=spec.timeout_s,
                 signal=lambda: interrupt(names.run), kill=lambda: docker("kill", names.run),
                 cleanup=lambda: teardown(names, door), sidecars={"door": door.stdout})
-            if isinstance(execution, ContainerExecution):
-                execution.container = names.run
             return execution
         except asyncio.CancelledError:
             await asyncio.shield(teardown(names, door))

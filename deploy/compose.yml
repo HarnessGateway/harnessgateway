@@ -23,21 +23,8 @@ x-env: &env
   HG_BASE_IMAGE: ${HG_BASE_IMAGE:-}
   HG_RUNTIME: ${HG_RUNTIME:-}
   HG_ALLOW_PRIVATE: ${HG_ALLOW_PRIVATE:-0}
-  HG_SMTP_URL: ${HG_SMTP_URL:-}
-  HG_MAIL_FROM: ${HG_MAIL_FROM:-}
-  HG_GITHUB_CLIENT_ID: ${HG_GITHUB_CLIENT_ID:-}
-  HG_GITHUB_CLIENT_SECRET: ${HG_GITHUB_CLIENT_SECRET:-}
-  HG_GOOGLE_CLIENT_ID: ${HG_GOOGLE_CLIENT_ID:-}
-  HG_GOOGLE_CLIENT_SECRET: ${HG_GOOGLE_CLIENT_SECRET:-}
-  HG_OIDC_ISSUER: ${HG_OIDC_ISSUER:-}
-  HG_OIDC_CLIENT_ID: ${HG_OIDC_CLIENT_ID:-}
-  HG_OIDC_CLIENT_SECRET: ${HG_OIDC_CLIENT_SECRET:-}
-  HG_OIDC_NAME: ${HG_OIDC_NAME:-sso}
   HG_KMS: ${HG_KMS:-local}
   HG_KMS_KEY_ID: ${HG_KMS_KEY_ID:-}
-  HG_BILLING: ${HG_BILLING:-none}
-  HG_STRIPE_KEY: ${HG_STRIPE_KEY:-}
-  HG_TRACE_SHARING: ${HG_TRACE_SHARING:-0}
 
 services:
   caddy:
@@ -52,7 +39,7 @@ services:
 
   # one box
   platform:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}
     profiles: [one-box]
     restart: unless-stopped
     command: ["serve", "--role", "all"]
@@ -65,7 +52,7 @@ services:
 
   # the default: a control plane over Postgres and S3, nodes that join
   api:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}
     restart: unless-stopped
     command: ["serve", "--role", "api,gateway"]
     deploy: {replicas: 2}
@@ -82,7 +69,7 @@ services:
     depends_on: [postgres, minio]
 
   worker:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:8}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}
     restart: unless-stopped
     command: ["serve", "--role", "worker"]
     environment:

@@ -31,8 +31,7 @@ def page(name: str, meta: dict, cfg: dict) -> str:
               f"| Provider shape | `{meta.get('api', '')}` |" if meta.get("api") else None,
               f"| Accepts | {', '.join(f'`{a}`' for a in cfg.get('accepts', []))} |",
               f"| Egress, install | {', '.join(f'`{e}`' for e in cfg['install']['egress']) or 'none'} |",
-              f"| Egress, run | {', '.join(f'`{e}`' for e in cfg['run']['egress']) or 'none'} |",
-              f"| Steer signal | `{cfg.get('interrupt', 'SIGUSR1')}` |", ""]
+              f"| Egress, run | {', '.join(f'`{e}`' for e in cfg['run']['egress']) or 'none'} |", ""]
     lines = [x for x in lines if x is not None]
     if v:
         passed = [c for c in CHECKS if checks.get(c)]
@@ -50,8 +49,8 @@ def page(name: str, meta: dict, cfg: dict) -> str:
               f"hg harness new {name} --catalog {name}        # fork it into your organization",
               f"hg ask {name} \"Create hello.txt containing hello, then say done.\"",
               f"hg ask {name}/myprovider/some-model \"…\"       # another provider and model", "```", "",
-              f"In the console: Catalog, then Fork on **{meta['title']}**. The fork's first commit is the catalog's package; "
-              "edit it as your own from there.", ""]
+              f"In the app: Providers and harnesses, Add a harness, **{meta['title']}**. The fork's first commit is the catalog's package; "
+              "pull it, change it and push it as your own from there.", ""]
     return "\n".join(lines)
 
 
@@ -68,7 +67,7 @@ def main() -> None:
     index = ["# The catalog", "",
              "Twelve packages ship with the platform, one per CLI (and one for any CLI), each built from that CLI's own help and documentation "
              "(the research is in [the Responses wire](../responses-wire.md)). Fork one into your organization from the "
-             "console or with `hg harness new NAME --catalog PACKAGE`; the fork is a git repository of your own whose first "
+             "app or with `hg harness new NAME --catalog PACKAGE`; the fork is a git repository of your own whose first "
              "commit is the catalog's package.", "",
              "Each package was run against a live provider on the day it shipped: a first turn that writes a file, a second "
              "turn that recalls it through `previous_response_id`, and a streamed turn. The results are recorded in the "

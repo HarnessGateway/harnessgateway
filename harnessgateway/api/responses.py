@@ -1,6 +1,7 @@
-"""The OpenAI Responses API and what hangs off a response: sessions, their workspaces and traces, and
-rodeos. `POST /v1/responses` hands the body to the harness package whole; a foreground turn belongs
-to the request that made it and stops when the request closes."""
+"""The OpenAI Responses API and what hangs off a response: sessions, their workspaces and traces.
+`POST /v1/responses` hands the body to the harness package whole; a foreground turn belongs to the
+request that made it and stops when the request closes; a request on a session that is running a
+turn supersedes that turn."""
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
 
 from ..contract import wire
 from ..domain.members import Member
@@ -16,27 +16,14 @@ from ..domain.sessions import Session, Turn
 from ..errors import Invalid
 
 
-class RodeoBody(BaseModel):
-    task: str = ""
-    entries: list[dict[str, Any]]
-
-
-class WinnerBody(BaseModel):
-    winner: str = ""
-
-
-class SteerBody(BaseModel):
-    input: str
-
-
 def session_view(s: Session) -> dict[str, Any]:
-    return {"id": s.id, "object": "session", "harness": s.harness, "version": s.version, "team": s.team, "member": s.member,
+    return {"id": s.id, "object": "session", "harness": s.harness, "version": s.version, "member": s.member,
             "title": s.title, "created_at": int(s.created), "stored": s.stored, "status": "running" if s.running else "idle",
             "responses": list(s.responses), "workspace": bool(s.snapshot_key)}
 
 
 def router(service) -> APIRouter:
-    principals, sessions, rodeos = service.principals, service.sessions, service.rodeos
+    principals, sessions = service.principals, service.sessions
     r = APIRouter(prefix="/v1")
     member = Depends(principals.member)
 
@@ -120,10 +107,6 @@ def router(service) -> APIRouter:
         s = sessions.session(who, sid)
         return {**session_view(s), "turns": [{**sessions.response_object(t), "text": t.text} for t in sessions.turns_of(who, sid)]}
 
-    @r.post("/sessions/{sid}/interrupt")
-    def interrupt(sid: str, body: SteerBody, who: Member = member) -> dict:
-        return sessions.response_object(sessions.interrupt(who, sid, body.input))
-
     @r.get("/sessions/{sid}/trace")
     def trace(sid: str, who: Member = member) -> dict:
         return {"object": "list", "data": sessions.trace(who, sid)}
@@ -145,27 +128,5 @@ def router(service) -> APIRouter:
     def delete_session(sid: str, who: Member = member) -> dict:
         sessions.delete(who, sid)
         return {"deleted": sid}
-
-    # rodeos
-    @r.post("/rodeos")
-    def create_rodeo(body: RodeoBody, who: Member = member) -> dict:
-        return rodeos.create(who, body.task, body.entries)
-
-    @r.get("/rodeos")
-    def list_rodeos(who: Member = member) -> dict:
-        return {"object": "list", "data": rodeos.list(who), "leaderboard": rodeos.leaderboard(who)}
-
-    @r.get("/rodeos/{aid}")
-    def get_rodeo(aid: str, who: Member = member) -> dict:
-        return rodeos.get(who, aid)
-
-    @r.patch("/rodeos/{aid}")
-    def pick_winner(aid: str, body: WinnerBody, who: Member = member) -> dict:
-        return rodeos.pick(who, aid, body.winner)
-
-    @r.delete("/rodeos/{aid}")
-    def delete_rodeo(aid: str, who: Member = member) -> dict:
-        rodeos.delete(who, aid)
-        return {"deleted": aid}
 
     return r

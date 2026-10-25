@@ -51,7 +51,7 @@ class Catalog:
             raise NotFound(f"no file {rel}")
         return target.read_bytes()
 
-    def fork(self, harnesses: Harnesses, org: str, name: str, into: str, author: str, team: str = "") -> Harness:
+    def fork(self, harnesses: Harnesses, org: str, name: str, into: str, author: str) -> Harness:
         """The catalog package `name` as the organization's harness `into`."""
-        return harnesses.create_from_folder(org, into, self.path(name), author, team=team, origin=f"catalog/{name}",
+        return harnesses.create_from_folder(org, into, self.path(name), author, origin=f"catalog/{name}",
                                             message=f"fork of the catalog package {name}")
