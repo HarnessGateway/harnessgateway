@@ -6,7 +6,7 @@ sandbox sees a per-turn session token and the gateway's address, never the key.
 
 ## Add one
 
-In the app, "Add or replace a provider"; or:
+From the command line, or the API:
 
 ```bash
 hg providers put deepseek --url https://api.deepseek.com/anthropic --api anthropic-messages --key sk-…

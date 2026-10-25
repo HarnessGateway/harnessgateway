@@ -2,12 +2,11 @@
 
 **The first boot's keys are gone from the log.** `harnessgateway init` (or `docker exec
 harnessgateway harnessgateway init`) makes a new deployer key; `init --org NAME` a new
-organization with its owner's key. For an existing organization, mint a key from the console as
-an owner, or as the deployer `PATCH` the organization and invite a new owner.
+organization with its owner's key. For an existing organization, an owner mints a key with `hg keys new`, or the deployer invites a
+new owner.
 
 **`no provider: name one in the request's model path`.** The package has no default provider and
-the request named none. Pick one in the app's Provider dropdown, or use `harness/provider` as
-the model.
+the request named none. Use `harness/provider` as the model.
 
 **A turn fails with `package_output_invalid`.** The package printed a stream event the SDK cannot
 parse; the log at `GET /v1/responses/{id}/detail` names the event and the field. Run the package
@@ -43,5 +42,4 @@ translates the mounts. If you run the API outside Docker (`uv run harnessgateway
 daemon in Docker Desktop, that translation does not apply; use `--dev` for development, or run the
 image.
 
-**The app shows an old version.** It is served by the API; restart after an upgrade. The
-browser caches nothing across versions.
+**`/healthz` shows an old version.** Restart after an upgrade; the image is one process per role.

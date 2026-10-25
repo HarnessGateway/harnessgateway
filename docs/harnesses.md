@@ -7,7 +7,7 @@ upload. Owners add and change them; every member runs them.
 
 ## From the catalog
 
-"Add a harness" in the app, from the catalog; or:
+From the catalog:
 
 ```bash
 hg harness new claude-code --catalog claude-code
@@ -27,8 +27,8 @@ hg harness push my-harness ./pkg -m "tune the mapper"   # the next commit, from 
 hg harness log my-harness                        # the history
 ```
 
-`push` on a name that does not exist creates the harness from the directory; so does the app's
-"Add a harness" with an archive. `hg harness new NAME --dir DIR` does the same explicitly. An
+`push` on a name that does not exist creates the harness from the directory. `hg harness new NAME
+--dir DIR` does the same explicitly. An
 archive uploaded to `PUT /v1/harnesses/{name}` (gzip accepted) is the same operation over the API;
 the `x-commit-message` header goes with it. A commit through `POST /v1/harnesses/{name}/commits`
 is made against the head you read; two people committing at once get a conflict on the second

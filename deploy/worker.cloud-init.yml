@@ -13,4 +13,4 @@ runcmd:
     -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data
     -e HG_CONTROL_URL=https://hg.example.com -e HG_JOIN_TOKEN=CHANGE-ME
     -e HG_GATEWAY_URL=https://gateway.hg.example.com -e HG_RUNTIME=runsc -e HG_WORKER_SLOTS=4
-    ghcr.io/harnessgateway/harnessgateway:9 serve --role worker
+    ghcr.io/harnessgateway/harnessgateway:10 serve --role worker

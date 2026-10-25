@@ -4,6 +4,12 @@ Every release is a section here, newest first, and the newest section's heading 
 A merge to `main` that adds a section releases it: the release workflow tags that version, builds
 the wheel and the image, and publishes the section as its notes.
 
+## [10.0.0]
+
+- **No web UI.** The home page and the app are gone, for now; the platform is the API, the `hg`
+  command line and the documentation site. `/` redirects to `/docs/`. The accounts routes under
+  `/auth` stay for a browser client: sign up, log in, the session cookie on every member route.
+
 ## [9.0.1]
 
 - The app's sidebar is Setup and Sessions. Sessions lists every session the member can see (an

@@ -1,4 +1,4 @@
-"""Accounts, the people who sign in to the app. An account has an email, a name, a password (hashed,
+"""Accounts, the people who sign in with an email. An account has an email, a name, a password (hashed,
 scrypt) and memberships: the organizations it belongs to and its member name in each. Members and
 API keys are unchanged; an account is one more way to be a member. Platform-level records, so an
 email is one account across orgs.
@@ -7,7 +7,7 @@ email is one account across orgs.
     email/<digest(email)>          email -> account id
     invite/<org>/<digest>          an org's invitation to an email: the role it gets
 
-The app's session token is signed with a key derived from the master key and carries its purpose
+The session token is signed with a key derived from the master key and carries its purpose
 and expiry; nothing is stored for it.
 """
 from __future__ import annotations
@@ -226,7 +226,7 @@ class Accounts:
             return None
 
     def session(self, a: Account, org: str, ttl_s: float = SESSION_TTL_S) -> str:
-        """The app's session: this account, as its member of this org, until the expiry."""
+        """A session: this account, as its member of this org, until the expiry."""
         return self.token("session", a.id, ttl_s, t=org)
 
     def resolve_session(self, token: str) -> tuple[Account, Member] | None:

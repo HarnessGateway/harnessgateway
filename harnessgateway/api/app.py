@@ -1,7 +1,6 @@
 """The HTTP application: the platform's parts built from its settings (`Service`), and the routes
-mounted on one FastAPI app. The console's files are served too: the home page at `/`, the app at
-`/app`, the documentation at `/docs`. A refusal is 400, 401, 403, 404 or 409 with `{"detail": …}`; a
-malformed body 422."""
+mounted on one FastAPI app. The documentation site is served at `/docs` and the OpenAPI reference
+at `/reference`. A refusal is 400, 401, 403, 404 or 409 with `{"detail": …}`; a malformed body 422."""
 from __future__ import annotations
 
 import asyncio
@@ -12,8 +11,8 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..backends.blobs import open_blobs
@@ -40,9 +39,6 @@ from . import control, deployer, internal, responses, signin
 from .auth import Principals
 
 STATUS = {Invalid: 400, NotFound: 404, Conflict: 409, TooMany: 429}
-WEB = Path(__file__).resolve().parents[1] / "web"              # inside the wheel; a checkout has it at the repository root
-if not WEB.is_dir():
-    WEB = Path(__file__).resolve().parents[2] / "web"
 DOCS = Path(__file__).resolve().parents[1] / "docs"            # the built documentation site (mkdocs build), when present
 VERSION = version("harnessgateway")
 
@@ -98,23 +94,11 @@ def create_app(service: Service) -> FastAPI:
     app.include_router(deployer.router(service))
     app.include_router(internal.router(service, VERSION))
 
-    if (WEB / "index.html").is_file():
-        @app.get("/", include_in_schema=False)
-        def home() -> FileResponse:
-            return FileResponse(WEB / "index.html")
-
-        @app.get("/app", include_in_schema=False)
-        def application() -> FileResponse:
-            return FileResponse(WEB / "app.html")
-
-        @app.get("/web/{path:path}", include_in_schema=False)
-        def web_file(path: str) -> FileResponse:
-            target = (WEB / path).resolve()
-            if not target.is_file() or WEB not in target.parents:
-                raise HTTPException(404)
-            return FileResponse(target)
-
     if (DOCS / "index.html").is_file():
         app.mount("/docs", StaticFiles(directory=DOCS, html=True), name="docs")
+
+        @app.get("/", include_in_schema=False)
+        def home() -> RedirectResponse:
+            return RedirectResponse("/docs/", status_code=302)
 
     return app

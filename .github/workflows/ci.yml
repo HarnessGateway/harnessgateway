@@ -1,6 +1,6 @@
 # Every pull request and every push to main: the suite on both backends (SQLite and a directory;
 # Postgres and a local S3 through moto), the Docker tests against a real daemon, the layer rule,
-# lint, the console's scripts parsed, and the documentation site built strictly.
+# lint, and the documentation site built strictly.
 name: ci
 on:
   push:
@@ -36,10 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-node@v4
-        with: {node-version: "22"}
       - run: uvx ruff check --select F,E9 --target-version py312 .
-      - run: for f in web/*.js; do node --check "$f"; done
       - run: for d in catalog/*/; do bash -n "$d/install.sh" && bash -n "$d/request.sh"; done
   docs:
     runs-on: ubuntu-latest

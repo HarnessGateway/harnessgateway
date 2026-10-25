@@ -5,7 +5,7 @@ git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
 uv sync --extra dev
 uv run pytest -q                     # the suite without Docker (SQLite, a directory, moto for S3)
 uv run pytest -q -m docker           # the Docker tests, against a real daemon
-uv run harnessgateway serve --dev    # the platform without Docker, for the console and packages
+uv run harnessgateway serve --dev    # the platform without Docker, for packages
 uvx --from mkdocs-material mkdocs serve   # this documentation at :8000/docs/
 ```
 
@@ -39,8 +39,7 @@ shaping, the harness repository, members, idempotency keys and the rate ceiling 
 `tests/test_docker.py` runs a real sandbox: uid, capabilities, the token, the door, a stop.
 `tests/test_upgrade.py` boots the previous major's data directory (`tests/fixtures/`).
 `tests/test_invariants.py` checks that every promise on the [Security](security.md) page names a
-test that exists. CI runs all of it, on SQLite and Postgres, plus lint, the console's scripts and a
-strict docs build.
+test that exists. CI runs all of it, on SQLite and Postgres, plus lint and a strict docs build.
 
 ## Packages
 
@@ -63,5 +62,5 @@ pushed as `ghcr.io/harnessgateway/harnessgateway-base`.
 
 ## Conventions
 
-No framework and no build step in the app. Every public number has a ceiling. Nothing secret
+Every public number has a ceiling. Nothing secret
 in the repository, ever; scan a diff before committing. Comments say why, not what.

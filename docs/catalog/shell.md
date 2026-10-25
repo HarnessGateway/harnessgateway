@@ -40,4 +40,4 @@ hg ask shell "Create hello.txt containing hello, then say done."
 hg ask shell/myprovider/some-model "…"       # another provider and model
 ```
 
-In the app: Providers and harnesses, Add a harness, **Shell**. The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.
+The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.

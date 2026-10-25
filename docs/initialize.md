@@ -26,23 +26,21 @@ key (replacing the old) and, with `--org`, that organization and its owner's key
 ## Two ways in
 
 **Accounts.** An account is an email and a password, and it belongs to one or more organizations
-as a member. The app signs in with an account. Sign-up creates an account and, when sign-up is open, an organization
+as a member. Sign-up (`POST /auth/signup`) creates an account and, when sign-up is open, an organization
 of its own; when sign-up is closed, only an invited email can sign up, and it lands in the
 organization that invited it.
 
 **API keys.** A key (`hg_…`) names one member of one organization. Any OpenAI SDK uses it as
-`api_key`; `hg login URL KEY` uses it for the command line; the app accepts it on the sign-in
-page too ("Use an API key instead"). Owners mint keys for any member; members mint their own. A
+`api_key`; `hg login URL KEY` uses it for the command line. Owners mint keys for any member;
+members mint their own. A
 member without an account, such as a service or a CI job, is a name and a key, added with
 `POST /v1/members` ([Members and keys](members.md)).
 
 ## Sign in
 
-Open `/app`. With an account: email and password. With a key: "Use an API key instead" and paste
-it. The deployer's key (`hgd_…`) opens no organization; it is for the deployer's routes.
-
-An account can belong to several organizations; the switcher at the top of the sidebar moves
-between them, and `POST /auth/orgs` creates another.
+`POST /auth/login` with the email and password sets the session cookie; `POST /auth/switch` moves
+an account between its organizations and `POST /auth/orgs` creates another. The deployer's key
+(`hgd_…`) opens no organization; it is for the deployer's routes.
 
 ## Next
 

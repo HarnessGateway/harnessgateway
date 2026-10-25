@@ -49,8 +49,7 @@ def page(name: str, meta: dict, cfg: dict) -> str:
               f"hg harness new {name} --catalog {name}        # fork it into your organization",
               f"hg ask {name} \"Create hello.txt containing hello, then say done.\"",
               f"hg ask {name}/myprovider/some-model \"…\"       # another provider and model", "```", "",
-              f"In the app: Providers and harnesses, Add a harness, **{meta['title']}**. The fork's first commit is the catalog's package; "
-              "pull it, change it and push it as your own from there.", ""]
+              "The fork's first commit is the catalog's package; pull it, change it and push it as your own from there.", ""]
     return "\n".join(lines)
 
 

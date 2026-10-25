@@ -1,6 +1,6 @@
-"""The app's sign-in, under /auth. An account signs up with an email and a password. A session is a
-signed cookie naming the account as its member of one org; every member route accepts it in place
-of an API key. Sign-up is open to anyone when HG_SIGNUP is open, and to invited emails always. An
+"""Accounts, under /auth. An account signs up with an email and a password. A session is a signed
+cookie naming the account as its member of one org; every member route accepts it in place of an
+API key, so a browser client needs no key. Sign-up is open to anyone when HG_SIGNUP is open, and to invited emails always. An
 account with no org gets one of its own, named after it."""
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def router(service, settings: Settings) -> APIRouter:
 
     @r.get("/providers")
     def providers() -> dict:
-        """What this platform's sign-in offers, for the app to draw."""
+        """What this platform's sign-in offers."""
         return {"signup": settings.signup, "password": True}
 
     @r.post("/signup")

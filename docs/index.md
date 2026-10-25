@@ -38,7 +38,7 @@ key or a KMS) and in who the deployer is.
 | You want to | Read |
 |---|---|
 | run it | [Deploy](deploy.md), [First boot and sign-in](initialize.md) |
-| use it | [The app](app.md), [Providers](providers.md), [Harnesses](harnesses.md), [Sessions](sessions.md), [Requests](requests.md) |
+| use it | [Providers](providers.md), [Harnesses](harnesses.md), [Sessions](sessions.md), [Requests](requests.md) |
 | script it, call it from an agent | [The hg command line](cli.md), [The API](api.md) |
 | write or change a package, wrap a CLI | [Write a package](packages.md), [Any CLI](any-cli.md), [The catalog](catalog/index.md), [The Responses wire](responses-wire.md) |
 | operate it | [Members and keys](members.md), [Organizations and limits](organizations.md), [Nodes and scale](workers.md), [Configuration](configuration.md), [Security](security.md) |

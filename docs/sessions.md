@@ -13,17 +13,17 @@ process group, then `stop_timeout_s` of grace, then `response.sh` if there is on
 response ends `cancelled` with `metadata.incomplete_reason: superseded` and whatever it produced,
 and the new turn is queued behind it: it runs when the stopped one has ended, on the workspace and
 state the stopped one left, as turn n+1. The trace records the supersede. A turn still queued when
-the next request arrives ends at once, with no response. This is what the app does when you press
-Enter while the agent works, and what `hg ask --previous` does from a second shell; there is no
-separate steer or interrupt call.
+the next request arrives ends at once, with no response. This is what `hg ask --previous` does
+from a second shell while the first is still running, and what a client does when its user types
+the next message; there is no separate steer or interrupt call.
 
 ## Cancel, and closing the request
 
 A turn belongs to the request that made it. Close that request, by closing the stream or by giving
 up on a blocking call, and the turn is stopped the same way: no endpoint to call, nothing left
 running for nobody. The response ends `cancelled` with `metadata.incomplete_reason:
-client_disconnected` and the items produced so far, and the session is idle again. Closing the
-app's tab mid-turn does this; so does `Ctrl-C` on `hg ask`.
+client_disconnected` and the items produced so far, and the session is idle again. `Ctrl-C` on
+`hg ask` does this.
 
 A turn made with `background: true` was asked to outlive its request: following it
 (`GET /v1/responses/{id}?stream=true`) and closing the stream changes nothing. It ends when the

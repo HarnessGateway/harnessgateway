@@ -146,7 +146,7 @@ and your keys: set `HG_PROVIDER_URL`, `HG_PROVIDER_KEY` and `HG_PROVIDER_API` an
 `provider_env` names are filled from them. `--state` keeps the workspace, the home, the tools and the
 CLI's state between runs; each run is the next turn, and a request file with `previous_response_id`
 (the previous run's id, `resp_0…1` for the first) exercises continuation. The platform's `serve --dev` runs whole
-sessions the same way, without Docker. Then push, and start a session with it in the app.
+sessions the same way, without Docker. Then push, and `hg ask` it.
 
 ## Egress
 

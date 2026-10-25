@@ -1,4 +1,4 @@
-<p align="center"><img src="web/picky.png" width="140" alt=""></p>
+<p align="center"><img src="docs/assets/picky.png" width="140" alt=""></p>
 
 # HarnessGateway
 
@@ -29,26 +29,25 @@ One container, every role, the data on a volume, sandboxes through the Docker so
 ```bash
 docker run -d --name harnessgateway --restart unless-stopped -p 8000:8000 \
   -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data \
-  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:9
+  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:10
 docker logs harnessgateway         # the first boot's keys, shown once
 ```
 
 `deploy/compose.yml` is the shape that grows: Postgres, S3 (MinIO), two API replicas behind Caddy
 and nodes that join; `--profile one-box` is the same behind TLS in one container.
 `harnessgateway doctor` checks every backend. The documentation is served by the platform at
-`/docs/`, and the app at `/app`.
+`/docs/`, the OpenAPI reference at `/reference`.
 
 ## Then
 
-1. **Sign in** at `/app` with the owner's key from the log, or create an account when sign-up is open.
-2. **Add a provider**: an endpoint and its key (Anthropic, OpenAI, DeepSeek, any compatible).
-   The key is sealed on arrival; no sandbox ever sees it.
-3. **Add a harness** from the catalog, or upload one. A harness is a git repository the platform
-   hosts: `hg harness pull`, change, `hg harness push`.
-4. **Start a session**: pick the harness, type, press Enter. The items stream in; the workspace
-   persists across turns. A message sent while the agent works stops it and runs the new message on
-   the same workspace, like a coding agent's web view. Continue the same session from any client
-   with `previous_response_id`.
+1. **Sign in**: `hg login URL KEY` with the owner's key from the log.
+2. **Add a provider**: `hg providers put NAME --url U --api A --key K`, an endpoint and its key
+   (Anthropic, OpenAI, DeepSeek, any compatible). The key is sealed on arrival; no sandbox ever sees it.
+3. **Add a harness**: `hg harness new NAME --catalog PACKAGE`, or push one of your own. A harness is
+   a git repository the platform hosts: `hg harness pull`, change, `hg harness push`.
+4. **Ask**: `hg ask NAME "…" --stream`, or any OpenAI SDK. The workspace persists across turns;
+   continue with `previous_response_id`. A request sent while the session runs a turn stops that
+   turn and runs the new request on the same workspace, like a coding agent's web view.
 
 ## The division of labour
 
@@ -98,7 +97,7 @@ for researching a CLI first.
 uv sync --extra dev
 uv run pytest -q                          # without Docker
 uv run pytest -q -m docker                # a real sandbox
-uv run harnessgateway serve --dev         # the platform without Docker, for the app and packages
+uv run harnessgateway serve --dev         # the platform without Docker, for packages
 ```
 
 [Contributing and releases](docs/contributing.md) has the layers (kernel, contract, backends,

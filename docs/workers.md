@@ -10,8 +10,7 @@ A node presents `HG_JOIN_TOKEN` to `HG_CONTROL_URL` and receives a credential of
 keeps under its data directory and uses from then on. It heartbeats every few seconds with its
 slots and its running turns; one that stops heartbeating for 45 seconds is lost, its turns fail
 with a message that says so, and its sessions go on with the next node from their last snapshot.
-`GET /v1/workers` lists them; `DELETE /v1/workers/{id}` forgets one. The deployer's console shows
-them under Nodes.
+`GET /v1/workers` lists them; `DELETE /v1/workers/{id}` forgets one.
 
 ## Claiming and affinity
 

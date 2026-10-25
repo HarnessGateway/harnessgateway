@@ -47,7 +47,6 @@ nav:
   - Get started:
       - Deploy: deploy.md
       - First boot and sign-in: initialize.md
-      - The app: app.md
       - Providers: providers.md
       - Harnesses: harnesses.md
       - Sessions: sessions.md

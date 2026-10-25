@@ -8,10 +8,10 @@
 #   HG_PORT (8000)        where the API listens on this machine; put a TLS proxy in front for the internet
 #   HG_PUBLIC_URL         how browsers and workers reach it (default http://<this host>:<port>)
 #   HG_SIGNUP (closed)    open: anyone may create an organization from the sign-up page
-#   HG_IMAGE              the image (default ghcr.io/harnessgateway/harnessgateway:9)
+#   HG_IMAGE              the image (default ghcr.io/harnessgateway/harnessgateway:10)
 set -euo pipefail
 PORT="${HG_PORT:-8000}"
-IMAGE="${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}"
+IMAGE="${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:10}"
 NAME="${HG_NAME:-harnessgateway}"
 PUBLIC="${HG_PUBLIC_URL:-http://$(hostname -f 2>/dev/null || hostname):$PORT}"
 
@@ -39,7 +39,7 @@ for _ in $(seq 1 60); do
   echo -n .; sleep 1
 done
 echo
-echo "HarnessGateway is up at $PUBLIC  (console: $PUBLIC/app, docs: $PUBLIC/docs/)"
+echo "HarnessGateway is up at $PUBLIC  (docs: $PUBLIC/docs/, API reference: $PUBLIC/reference)"
 echo
 echo "the first boot's keys, shown once (also in: docker logs $NAME):"
 docker logs "$NAME" 2>&1 | sed -n '/^first boot/,/API key/p' | sed 's/^/  /'

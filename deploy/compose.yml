@@ -39,7 +39,7 @@ services:
 
   # one box
   platform:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:10}
     profiles: [one-box]
     restart: unless-stopped
     command: ["serve", "--role", "all"]
@@ -52,7 +52,7 @@ services:
 
   # the default: a control plane over Postgres and S3, nodes that join
   api:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:10}
     restart: unless-stopped
     command: ["serve", "--role", "api,gateway"]
     deploy: {replicas: 2}
@@ -69,7 +69,7 @@ services:
     depends_on: [postgres, minio]
 
   worker:
-    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:9}
+    image: ${HG_IMAGE:-ghcr.io/harnessgateway/harnessgateway:10}
     restart: unless-stopped
     command: ["serve", "--role", "worker"]
     environment:

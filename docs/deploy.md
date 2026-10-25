@@ -21,14 +21,13 @@ prints the keys the first boot made. By hand, it is:
 ```bash
 docker run -d --name harnessgateway --restart unless-stopped -p 8000:8000 \
   -v /var/run/docker.sock:/var/run/docker.sock -v hg:/data \
-  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:9
+  -e HG_PUBLIC_URL=http://hg.example.com:8000 ghcr.io/harnessgateway/harnessgateway:10
 ```
 
 That runs `serve --role all`: the API on 8000, the gateway, and a worker that pulls the sandbox
 base image and then takes turns. The first boot makes the deployer key and, with sign-up closed,
-an organization and its owner's key, and prints them once: `docker logs harnessgateway`. The home
-page is at `/`, the console at `/app`, this documentation at `/docs/`, the OpenAPI reference at
-`/reference`. The app is one page: providers, harnesses, sessions.
+an organization and its owner's key, and prints them once: `docker logs harnessgateway`. This
+documentation is at `/docs/` and the OpenAPI reference at `/reference`.
 
 Everything the platform keeps is on the `hg` volume at `/data`: the master key, the records (SQLite),
 the blobs, the harness repositories, the worker's caches. The sandboxes are started by the host's
@@ -62,7 +61,7 @@ by invitation.
 
 | Role | Does | Holds | Scales |
 |---|---|---|---|
-| `api` | the Responses API, the organization and deployer routes, the console, the workers' routes | the master key | any number behind a load balancer |
+| `api` | the Responses API, the organization and deployer routes, the documentation, the nodes' routes | the master key | any number behind a load balancer |
 | `gateway` | relays sandboxes' provider calls, swaps the session token for the key, meters, captures | the master key | any number behind a load balancer |
 | `worker` | a node: joins with a token, pulls turns, runs them in sandboxes on its Docker host, pushes snapshots | a node credential and a cache | one per machine, any number of machines |
 | `all` | the three in one process | | one box |
@@ -99,6 +98,6 @@ platform; see [Write a package](packages.md).
 Pull the new image and restart the container; a data directory from the previous major boots as
 it is (`tests/test_upgrade.py` proves it on 7.1's). `harnessgateway doctor` afterwards says every
 backend is reachable. A release is
-tagged `vX.Y.Z` and pushed as `:X.Y.Z`, `:X` and `:latest`; pin the major (`:9`) to take fixes
+tagged `vX.Y.Z` and pushed as `:X.Y.Z`, `:X` and `:latest`; pin the major (`:10`) to take fixes
 without a contract change. The package contract is versioned in `harness.json` (`"contract": 8`;
 a contract-7 package still runs) and a new major of the platform is the only thing that changes it.

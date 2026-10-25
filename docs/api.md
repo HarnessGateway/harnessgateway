@@ -1,7 +1,7 @@
 # The API
 
 Every route takes `Authorization: Bearer <key>`: an organization member's key (`hg_…`) for the
-organization's routes, the deployer's key (`hgd_…`) for the deployer's, or the app's cookie. The
+organization's routes, the deployer's key (`hgd_…`) for the deployer's, or an account's cookie. The
 interactive reference is at `/reference`. Bodies and responses are JSON; lists are
 `{"object": "list", "data": […]}`; errors are `{"detail": "…"}` with the status that fits (400 a
 bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 429 the ceiling).
@@ -54,8 +54,8 @@ bad request, 401 no credential, 403 the wrong one, 404 not reachable, 409 busy, 
 ## Accounts
 
 `GET /auth/providers` (what sign-in offers), `POST /auth/signup`, `POST /auth/login`, `POST
-/auth/logout`, `GET /auth/me`, `POST /auth/orgs`, `POST /auth/switch`. The app uses these; a
-script uses a key.
+/auth/logout`, `GET /auth/me`, `POST /auth/orgs`, `POST /auth/switch`. A browser client uses
+these; a script uses a key.
 
 ## The deployer
 

@@ -1,5 +1,5 @@
 # The platform image: every role in one image, chosen at run time with `--role`. Python, the package,
-# the console, the catalog and the documentation site; git for the harness repositories; the Docker
+# the catalog and the documentation site; git for the harness repositories; the Docker
 # CLI for the worker role (it talks to the host's daemon through the socket you mount). Nothing of
 # any harness is in it: packages install their CLI into the tools layer, under the organization's
 # terms, at first use.
@@ -9,7 +9,6 @@ WORKDIR /src
 COPY pyproject.toml uv.lock README.md CHANGELOG.md mkdocs.yml ./
 COPY harnessgateway ./harnessgateway
 COPY catalog ./catalog
-COPY web ./web
 COPY docs ./docs
 RUN uvx --from mkdocs-material mkdocs build --strict && uv build --wheel --out-dir /dist
 

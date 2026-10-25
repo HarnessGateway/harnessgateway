@@ -34,7 +34,6 @@ artifacts = ["harnessgateway/docs"]        # the built documentation site is ign
 
 [tool.hatch.build.targets.wheel.force-include]
 catalog = "harnessgateway/catalog"
-web = "harnessgateway/web"
 # The documentation site is built into harnessgateway/docs by `mkdocs build` (see mkdocs.yml) and
 # ships in the wheel from there; the API serves it at /docs.
 

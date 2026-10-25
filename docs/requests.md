@@ -44,8 +44,7 @@ when you fork one.
 `response.in_progress`, then whatever the package emits (`response.output_item.added`,
 `response.output_text.delta`, `response.output_item.done`, …) with sequence numbers the platform
 assigns, and `response.completed` (or `failed`, `incomplete`) carrying the final response object.
-`GET /v1/responses/{id}?stream=true` re-streams a running turn from its start, for a second client
-or a reopened console. The `x-session-id` response header names the session either way.
+`GET /v1/responses/{id}?stream=true` re-streams a running turn from its start, for a second client. The `x-session-id` response header names the session either way.
 
 ## Continuing
 

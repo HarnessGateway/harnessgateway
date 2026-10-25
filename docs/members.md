@@ -19,7 +19,7 @@ organization keeps at least one owner.
 
 ## Keys
 
-A key (`hg_…`) opens the organization as its member from any OpenAI SDK, `hg`, or the app. Mint
+A key (`hg_…`) opens the organization as its member from any OpenAI SDK or `hg`. Mint
 one per place it is used and revoke the one that leaks. `hg keys new --label laptop`; owners mint
 for any member (`--member NAME`). A key is shown once. `GET /v1/keys` lists them by label, member
 and creation; `DELETE /v1/keys/{id}` revokes.
