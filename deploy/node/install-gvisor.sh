@@ -22,13 +22,15 @@ install -m 0755 "$tmp/runsc" "$tmp/containerd-shim-runsc-v1" /usr/local/bin/
 rm -rf /usr/local/bin/gvisor-bin && cp -r "$tmp/gvisor-bin" /usr/local/bin/gvisor-bin
 /usr/local/bin/runsc install -- --platform=systrap
 # Every session box gets a network of its own. Docker's default pools hold about 30 networks; small /28 subnets from
-# one /16 hold 4096. Set HG_DOCKER_POOL to a range your hosts do not route elsewhere.
-python3 - "${HG_DOCKER_POOL:-10.200.0.0/16}" <<'PY'
+# one /16 hold 4096. Set HG_DOCKER_POOL to a range your hosts do not route elsewhere. The default bridge, which every
+# box's egress door joins, keeps a /16 of its own (HG_DOCKER_BIP), or the pools would shrink it to a /28.
+python3 - "${HG_DOCKER_POOL:-10.200.0.0/16}" "${HG_DOCKER_BIP:-172.17.0.1/16}" <<'PY'
 import json, sys
 from pathlib import Path
 p = Path("/etc/docker/daemon.json")
 cfg = json.loads(p.read_text()) if p.exists() else {}
 cfg.setdefault("default-address-pools", [{"base": sys.argv[1], "size": 28}])
+cfg.setdefault("bip", sys.argv[2])
 p.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 systemctl restart docker 2>/dev/null || service docker restart

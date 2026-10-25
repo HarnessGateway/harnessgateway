@@ -75,8 +75,11 @@ services:
       api: {condition: service_healthy}
 
 networks:
-  harnessgateway:
+  harnessgateway:                     # every session's egress door joins it too, so it needs room
     name: harnessgateway
+    ipam:
+      config:
+        - subnet: ${HG_UPLINK_SUBNET:-172.30.0.0/16}
 
 volumes:
   postgres:
