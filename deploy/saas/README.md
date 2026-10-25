@@ -63,6 +63,16 @@ A customer runs nodes in their own network; sandboxes, workspaces and outbound t
 Compute on dedicated nodes is still metered; price it with a deployment-specific `HG_PRICES` (for example, a platform
 fee per vCPU-second) if the customer pays for their own machines.
 
+## Verify
+
+`deploy/verify-harnesses.py` signs up a throwaway organization through an invite, installs the built-in harnesses and
+runs eight checks on each (file in the sandbox, recall, streaming, instructions, usage, cancel, provider error, traces):
+
+```bash
+pip install openai httpx
+HG_API=https://api.example.com HG_OPERATOR_KEY=... DEEPSEEK_API_KEY=... OPENAI_API_KEY=... python deploy/verify-harnesses.py
+```
+
 ## Invite-only pilot
 
 ```bash

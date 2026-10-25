@@ -105,4 +105,4 @@ OpenAI set is reported as `server_error` with the package's code in `metadata.hg
   placed in the workspace; `request.sh` runs with stdin = the request.
 - **After a turn:** the workspace, `$HOME` and `$HG_STATE` are snapshotted (unless the request had `store: false`). The
   sandbox stays warm until the organization's idle time passes.
-- **Cancel/timeout:** SIGTERM to `request.sh`'s process group, then SIGKILL after `run.stop_grace_s`.
+- **Cancel/timeout:** SIGTERM to `request.sh`'s process group; after `run.stop_grace_s`, SIGKILL to every process in the sandbox, whatever group it is in. Trap SIGTERM to stop your harness cleanly (and pass it on to children your harness moved into groups of their own); a cancelled turn keeps the output items it had finished, and you need not print a terminal event.

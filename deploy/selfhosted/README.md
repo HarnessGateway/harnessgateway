@@ -33,6 +33,16 @@ print(c.responses.create(model="claude-code/anthropic/claude-sonnet-4-5", input=
 PY
 ```
 
+## Verify
+
+`deploy/verify-harnesses.py` signs up a throwaway organization through an invite, installs the built-in harnesses and
+runs eight checks on each (file in the sandbox, recall, streaming, instructions, usage, cancel, provider error, traces):
+
+```bash
+pip install openai httpx
+HG_API=http://localhost:8000 HG_OPERATOR_KEY=... DEEPSEEK_API_KEY=... OPENAI_API_KEY=... python deploy/verify-harnesses.py
+```
+
 ## TLS and exposure
 
 The api binds to 127.0.0.1 by default. To serve other machines, put a TLS-terminating proxy in front (Caddy, nginx,
