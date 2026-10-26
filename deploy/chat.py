@@ -17,6 +17,7 @@ from openai import OpenAI
 
 DIM, RED, CYAN, RESET = ("\033[2m", "\033[31m", "\033[36m", "\033[0m") if sys.stdout.isatty() else ("",) * 4
 OUTPUT_LINES = 6
+THINK = "✻"                                   # marks the agent's thinking
 
 
 def out(text: str) -> None:
@@ -40,27 +41,32 @@ class Turn:
     def __init__(self) -> None:
         self.at_line_start = True
         self.in_text = False
+        self.in_reasoning = False
 
     def _line(self, text: str) -> None:
         if not self.at_line_start:
             out("\n")
         out(text + "\n")
-        self.at_line_start, self.in_text = True, False
+        self.at_line_start, self.in_text, self.in_reasoning = True, False, False
 
     def text(self, delta: str) -> None:
         if not self.in_text:
             if not self.at_line_start:
                 out("\n")
             out(f"{CYAN}>{RESET} ")
-            self.in_text = True
+            self.in_text, self.in_reasoning = True, False
         out(delta)
         self.at_line_start = delta.endswith("\n")
 
     def reasoning(self, delta: str) -> None:
-        if self.in_text:
-            self._line("")
-        out(f"{DIM}{delta}{RESET}")
-        self.at_line_start = delta.endswith("\n")
+        """Thinking, dimmed, marked with ✻ where a block starts and indented under it."""
+        if not self.in_reasoning:
+            if not self.at_line_start:
+                out("\n")
+            out(f"{DIM}{THINK} ")
+            self.in_reasoning, self.in_text = True, False
+        out(f"{DIM}{delta.replace(chr(10), chr(10) + '  ')}{RESET}")
+        self.at_line_start = False
 
     def item(self, item: dict) -> None:
         kind = item.get("type")
