@@ -3,7 +3,11 @@ markdown, the agent's thinking and steps folded under each reply, and a side pan
 (browse, preview, download) that opens what the agent builds: HTML pages run live, images, PDFs, markdown, CSV and
 code render in place. Files you attach go to the agent with your message. The header picks the harness and the
 provider from what your organization has installed and connected; type the model, or leave it empty for the
-harness's default.
+harness's default. A chat keeps its harness; its provider and model can change from one message to the next.
+
+Turns run in the background on the platform: move to another chat or start a new one while the agent works, and come
+back to it (a running chat pulses in the sidebar); a reload picks running turns up again. Stop ends a turn; sending a
+message while the agent works interrupts it, and the agent continues from where it stopped, with its work and memory.
 
     HG_KEY=sk-hg-... python chatgui.py [--api http://localhost:8000] [--host 127.0.0.1] [--port 8800]
 
@@ -11,7 +15,7 @@ Then open http://localhost:8800 (from a Mac with the platform in an OrbStack VM:
 http://hg.orb.local:8800). This server holds your key; the page never sees it. Each conversation is one session: its
 workspace, files and the agent's memory carry from message to message. Workspace files are read from the session's
 last snapshot, so they appear when a turn finishes. Agent-made pages run sandboxed, in an origin of their own.
-Conversations are kept in the browser. Needs: pip install openai (httpx comes with it).
+Conversations are kept in the browser. Needs: pip install httpx.
 """
 # ruff: noqa: E501  (the page below is HTML and JavaScript, not Python)
 from __future__ import annotations
@@ -33,11 +37,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import httpx
-from openai import OpenAI
 
 BODY_MAX = 32 * 1024 * 1024                    # an attachment (20 MB) as base64, with room to spare
 ATTACH_MAX = 20 * 1024 * 1024
 SESSION = re.compile(r"cntr_[0-9a-f]{8,64}")
+RESPONSE = re.compile(r"resp_[0-9a-f]{8,64}")
 # what the agent made runs in an origin of its own: it cannot read this page or call this server as the page
 SANDBOX = ("sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; "
            "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'")
@@ -113,7 +117,6 @@ class Workspace:
 
 
 class Handler(BaseHTTPRequestHandler):
-    client: OpenAI
     http: httpx.Client
     workspace: Workspace
     default_model: str
@@ -186,6 +189,12 @@ class Handler(BaseHTTPRequestHandler):
                                                "img-src 'self' data: blob:; frame-src 'self'; object-src 'none'"})
             elif url.path == "/api/catalog":
                 self._json(200, self.catalog())
+            elif url.path == "/api/follow":
+                rid = (query.get("id") or [""])[0]
+                if not RESPONSE.fullmatch(rid):
+                    self._json(400, {"error": "a response id (resp_...)"})
+                    return
+                self._relay("GET", f"/v1/responses/{rid}", params={"stream": "true", "starting_after": "-1"})
             elif url.path == "/api/files":
                 sid = (query.get("session") or [""])[0]
                 if not SESSION.fullmatch(sid):
@@ -231,8 +240,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/chat":
             self._chat(doc)
         elif self.path == "/api/cancel":
-            with contextlib.suppress(Exception):
-                self.client.responses.cancel(str(doc.get("id", "")))
+            rid = str(doc.get("id", ""))
+            if RESPONSE.fullmatch(rid):
+                with contextlib.suppress(httpx.HTTPError):
+                    self.http.post(f"/v1/responses/{rid}/cancel")
             self._json(200, {"ok": True})
         elif self.path == "/api/attach":
             self._attach(doc)
@@ -269,48 +280,67 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _chat(self, doc: dict) -> None:
-        """One turn, relayed to the page as server-sent events. If the page goes away, the turn is cancelled."""
+        """One turn, started in the background (it runs whether or not a page watches it) and relayed to the page."""
         model, text, previous = str(doc.get("model") or self.default_model), str(doc.get("input") or ""), doc.get("previous")
         files = [f for f in doc.get("attachments") or [] if isinstance(f, str) and f.startswith("file")]
         request_input: object = text
         if files:
             request_input = [{"role": "user", "content": [{"type": "input_text", "text": text},
                                                           *({"type": "input_file", "file_id": f} for f in files)]}]
+        body = {"model": model, "input": request_input, "stream": True, "background": True}
+        if isinstance(previous, str) and RESPONSE.fullmatch(previous):
+            body["previous_response_id"] = previous
+        print(f"{model}: {'continues ' + previous if previous else 'new session'}", file=sys.stderr)
+        self._relay("POST", "/v1/responses", json=body)
+
+    def _relay(self, method: str, path: str, **kwargs) -> None:
+        """The platform's event stream for one turn, as the page's events (start, text, thinking, tool, tool_output,
+        end). Leaving early (the page closed or switched away) stops only the relay: the turn keeps running and the page
+        can follow it again from the start with /api/follow."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
-        rid = None
         try:
-            kwargs = {"previous_response_id": previous} if previous else {}
-            for event in self.client.responses.create(model=model, input=request_input, stream=True, **kwargs):
-                kind = event.type
-                if kind == "response.created":
-                    rid = event.response.id
-                    self._send({"type": "start", "id": rid, "session": (event.response.metadata or {}).get("session_id")})
-                elif kind == "response.output_text.delta":
-                    self._send({"type": "text", "delta": event.delta})
-                elif kind in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
-                    self._send({"type": "thinking", "delta": event.delta})
-                elif kind == "response.output_item.done":
-                    shown = describe(event.item.model_dump())
-                    if shown:
-                        self._send(shown)
-                elif kind in ("response.completed", "response.failed", "response.incomplete"):
-                    r = event.response
-                    error = None
-                    if r.status == "failed" and r.error:
-                        error = f"{(r.metadata or {}).get('hg_error_code') or r.error.code}: {r.error.message}"
-                    self._send({"type": "end", "status": r.status, "error": error})
-            print(f"{model}: {rid}", file=sys.stderr)
+            with self.http.stream(method, path, timeout=httpx.Timeout(60, read=300), **kwargs) as r:
+                if r.status_code >= 400:
+                    r.read()
+                    try:
+                        message = r.json()["error"]["message"]
+                    except (ValueError, KeyError, TypeError):
+                        message = r.text[:500]
+                    self._send({"type": "end", "status": "failed", "error": message})
+                    return
+                for line in r.iter_lines():
+                    if line.startswith("data: "):
+                        self._event(json.loads(line[6:]))
         except (BrokenPipeError, ConnectionResetError):
-            if rid:                                       # the page stopped or closed: stop the turn too
-                with contextlib.suppress(Exception):
-                    self.client.responses.cancel(rid)
-        except Exception as e:                            # refused (unknown model, no provider, ...)
+            pass                                          # the page went away; the turn goes on
+        except Exception as e:                            # the platform went away mid-turn
             with contextlib.suppress(Exception):
-                self._send({"type": "end", "status": "failed", "error": str(getattr(e, "message", None) or e)})
+                self._send({"type": "end", "status": "failed", "error": f"lost the platform: {e}"})
+
+    def _event(self, event: dict) -> None:
+        kind = event.get("type")
+        if kind == "response.created":
+            r = event["response"]
+            self._send({"type": "start", "id": r["id"], "session": (r.get("metadata") or {}).get("session_id")})
+        elif kind == "response.output_text.delta":
+            self._send({"type": "text", "delta": event.get("delta", "")})
+        elif kind in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+            self._send({"type": "thinking", "delta": event.get("delta", "")})
+        elif kind == "response.output_item.done":
+            shown = describe(event.get("item") or {})
+            if shown:
+                self._send(shown)
+        elif kind in ("response.completed", "response.failed", "response.incomplete"):
+            r = event["response"]
+            error = None
+            if r.get("status") == "failed" and r.get("error"):
+                code = (r.get("metadata") or {}).get("hg_error_code") or r["error"].get("code")
+                error = f"{code}: {r['error'].get('message', '')}"
+            self._send({"type": "end", "status": r.get("status"), "error": error})
 
 
 PAGE = r"""<!doctype html>
@@ -349,6 +379,8 @@ aside { width:260px; flex:none; background:var(--side); display:flex; flex-direc
 .chat:hover { background:var(--hover); }
 .chat.active { background:var(--hover); }
 .chat span { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.chat .working { width:7px; height:7px; border-radius:50%; background:var(--soft); flex:none; animation:blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity:.25; } }
 .chat button { opacity:0; color:var(--muted); width:22px; height:22px; border-radius:6px; display:flex; align-items:center; justify-content:center; }
 .chat:hover button { opacity:1; }
 .chat button:hover { color:var(--text); background:var(--bg); }
@@ -363,6 +395,9 @@ header { display:flex; align-items:center; gap:8px; padding:8px 12px; height:56p
 .pick select, .pick input { border:0; outline:0; background:transparent; color:var(--text); font-family:inherit; font-size:15px; padding:8px 10px; }
 .pick select { appearance:none; -webkit-appearance:none; padding-right:26px; cursor:pointer; font-weight:600; max-width:200px; }
 .pick select option { color:#0d0d0d; background:#fff; }
+.pick.locked select { cursor:default; padding-right:10px; }
+.pick.locked svg { display:none; }
+.pick.locked:hover { background:transparent; }
 .pick svg { position:absolute; right:6px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
 .pick input { width:220px; }
 .pick input::placeholder { color:var(--muted); }
@@ -532,7 +567,7 @@ table.csv th { font-weight:600; }
 const DEFAULT_MODEL = __DEFAULT_MODEL__;
 const STORE = "hg-chatgui";
 const $ = id => document.getElementById(id);
-let chats = [], current = null, running = null, pending = [], files = [];
+let chats = [], current = null, pending = [], files = [];
 const panel = { open: false, tab: "files", view: null };   // view: {kind: "file", path} | {kind: "snippet", url, lang}
 
 // ── icons ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -559,7 +594,7 @@ const I = {
 
 // ── storage ─────────────────────────────────────────────────────────────────────────────────────────────────
 function load() { try { chats = JSON.parse(localStorage.getItem(STORE)) || []; } catch { chats = []; } }
-function save() { try { localStorage.setItem(STORE, JSON.stringify(chats)); } catch {} }
+function save() { try { localStorage.setItem(STORE, JSON.stringify(chats)); localStorage.setItem(STORE + "-open", current || ""); } catch {} }
 function chat() { return chats.find(c => c.id === current); }
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 
@@ -664,20 +699,31 @@ function renderAssistant(turn, live, ti) {
   });
   if (turn.files && turn.files.length) html += tiles(turn.files);
   if (turn.error) html += `<div class="error">${esc(turn.error)}</div>`;
-  else if (turn.status && turn.status !== "completed") html += `<div class="status">${esc(turn.status === "cancelled" ? "Stopped" : turn.status)}</div>`;
+  else if (turn.status && turn.status !== "completed") html += `<div class="status">${esc(turn.status === "cancelled" ? (turn.interrupted ? "Interrupted" : "Stopped") : turn.status)}</div>`;
   if (live && (!turn.segments.length || turn.segments.at(-1).t === "text")) html += `<span class="dot"></span>`;
   return html;
+}
+function renderChats() {
+  $("chats").innerHTML = chats.map(x => `<div class="chat${x.id === current ? " active" : ""}" data-id="${x.id}"><span>${esc(x.title)}</span>` +
+    (liveTurn(x) ? `<i class="working" title="Working"></i>` : "") + `<button data-del="${x.id}" title="Delete">${ic(I.close, 14)}</button></div>`).join("");
+  updateSend();
 }
 function render() {
   const c = chat(), col = $("col"), blank = !c || !c.turns.length;
   $("main").classList.toggle("blank", blank);
-  $("chats").innerHTML = chats.map(x => `<div class="chat${x.id === current ? " active" : ""}" data-id="${x.id}"><span>${esc(x.title)}</span><button data-del="${x.id}" title="Delete">${ic(I.close, 14)}</button></div>`).join("");
+  renderChats();
   $("session").textContent = c && c.session ? c.session : "";
   if (shownChat !== current) { shownChat = current; if (c) setPick(c.model); }
+  const locked = !blank;                              // a session keeps its harness; provider and model may change
+  const hv = $("harness").value, all = catalog.harnesses.map(h => h.name);
+  if (locked) options($("harness"), [], hv);          // only its own harness, so the label is as wide as its name
+  else if ($("harness").options.length !== all.length) options($("harness"), all, hv);
+  $("harness").disabled = locked; $("harness").parentElement.classList.toggle("locked", locked);
+  $("harness").parentElement.title = locked ? "A chat keeps its harness: start a new chat for another" : "Harness";
   if (blank) col.innerHTML = `<div class="hello"><h1>What should we build?</h1><p>The agent works in its own sandbox. What it makes opens on the right.</p></div>`;
   else col.innerHTML = c.turns.map((t, i) => t.role === "user"
     ? `<div class="msg user"><div class="bubble">${esc(t.text)}</div>` + (t.attachments && t.attachments.length ? `<div class="attached">` + t.attachments.map(a => `<span class="tile" style="cursor:default">${badge(a.name)}<span class="nm">${esc(a.name)}</span></span>`).join("") + `</div>` : "") + `</div>`
-    : `<div class="msg assistant" id="t${i}">${renderAssistant(t, running && i === c.turns.length - 1, i)}</div>`).join("");
+    : `<div class="msg assistant" id="t${i}">${renderAssistant(t, isLive(t), i)}</div>`).join("");
   $("log").scrollTop = $("log").scrollHeight;
   renderPanel();
 }
@@ -686,10 +732,15 @@ function renderLive() {                               // at most once a frame wh
   if (frame) return;
   frame = requestAnimationFrame(() => {
     frame = 0;
-    const c = chat(); if (!c) return;
-    const i = c.turns.length - 1, el = $("t" + i), log = $("log");
+    const c = chat(), log = $("log");
+    if (!c) return;
     const stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
-    if (el) el.innerHTML = renderAssistant(c.turns[i], !!running, i); else render();
+    for (const turn of dirty) {
+      const i = c.turns.indexOf(turn), el = $("t" + i);
+      if (i < 0) continue;
+      if (el) el.innerHTML = renderAssistant(turn, isLive(turn), i); else { render(); break; }
+    }
+    dirty.clear();
     if (stick) log.scrollTop = log.scrollHeight;
   });
 }
@@ -697,9 +748,8 @@ function renderLive() {                               // at most once a frame wh
 // ── the side panel: workspace files and the preview ────────────────────────────────────────────────────────
 async function refreshFiles() {
   const c = chat();
-  if (!c || !c.session) { files = []; return; }
-  try { files = (await (await fetch(`/api/files?session=${encodeURIComponent(c.session)}`)).json()).files || []; }
-  catch { files = []; }
+  const list = c && c.session ? await filesOf(c.session) : [];
+  if (chat() === c) files = list;                     // the reader may have moved to another chat meanwhile
 }
 function openPanel(tab, view) { panel.open = true; panel.tab = tab; if (view) panel.view = view; renderPanel(); }
 function renderPanel() {
@@ -772,6 +822,13 @@ function csvTable(text, sep) {
 function openFile(path) { openPanel("view", { kind: "file", path: rel(path) }); }
 
 // ── a turn ──────────────────────────────────────────────────────────────────────────────────────────────────
+// Turns run in the background on the platform; the page follows each one's events while it is open. A turn without a
+// status has not ended: it shows as working, and after a reload the page follows it again from its first event.
+const streams = new Map();                            // turn -> AbortController, for the turns this page is following
+const dirty = new Set();                              // turns with events not yet drawn
+const isLive = t => t.role === "assistant" && !t.status;
+const liveTurn = c => c ? [...c.turns].reverse().find(isLive) : undefined;
+const lastAssistant = c => [...c.turns].reverse().find(t => t.role === "assistant");
 function apply(turn, ev) {
   let last = turn.segments.at(-1);
   if (last && last.t === "thinking" && !last.ended && ev.type !== "thinking") last.ended = Date.now();
@@ -782,41 +839,31 @@ function apply(turn, ev) {
     if (last && last.t === "steps") last.steps.push(step); else turn.segments.push({ t: "steps", steps: [step] });
   } else if (ev.type === "tool_output") {
     for (const seg of turn.segments) if (seg.t === "steps") for (const s of seg.steps) if (s.id === ev.id) { s.output = ev.text; s.exit_code = ev.exit_code; }
-  } else if (ev.type === "end") { turn.status = ev.status; turn.error = ev.error; }
+  } else if (ev.type === "end") { turn.status = ev.status || "failed"; turn.error = ev.error; }
+}
+async function filesOf(sid) {
+  try { return (await (await fetch(`/api/files?session=${encodeURIComponent(sid)}`)).json()).files || []; } catch { return []; }
 }
 async function afterTurn(c, turn, before) {
   // The workspace as the turn left it: tiles for what it made or changed, and a page it built opens in the panel.
-  await refreshFiles();
-  if (chat() !== c) return;
+  const list = await filesOf(c.session);
+  if (chat() === c) files = list;
   const edited = new Set();
   for (const seg of turn.segments) if (seg.t === "steps") for (const s of seg.steps) if (s.path && s.verb !== "Deleted") edited.add(rel(s.path));
-  for (const f of files) { const b = before[f.path]; if (!b || b.bytes !== f.bytes || b.at !== f.at) edited.add(f.path); }
-  turn.files = files.map(f => f.path).filter(p => edited.has(p)).slice(0, 12);
+  if (before) for (const f of list) { const b = before[f.path]; if (!b || b.bytes !== f.bytes || b.at !== f.at) edited.add(f.path); }
+  turn.files = list.map(f => f.path).filter(p => edited.has(p)).slice(0, 12);
   const show = turn.files.find(p => ["html", "htm", "svg"].includes(ext(p))) || turn.files.find(p => SHOWN.includes(ext(p)));
-  if (show && turn.status === "completed") openFile(show);
-  save(); render();
+  save();
+  if (chat() !== c) return;
+  if (show && turn.status === "completed" && turn === lastAssistant(c)) openFile(show);
+  render();
 }
-async function send() {
-  const text = $("input").value.trim();
-  if (!text || running || pending.some(p => p.uploading)) return;
-  let c = chat();
-  const model = pickedModel(), picked = { provider: $("provider").value, model: $("model").value.trim() };
-  if (!c || (c.model !== model && c.turns.length)) {
-    c = { id: newId(), title: text.slice(0, 60), model, previous: null, session: null, turns: [] };
-    chats.unshift(c); current = c.id; files = [];
-  }
-  c.model = model;
-  const attachments = pending.filter(p => p.id).map(p => ({ id: p.id, name: p.name })); pending = []; renderPending();
-  c.turns.push({ role: "user", text, attachments });
-  const turn = { role: "assistant", segments: [], status: null, error: null };
-  c.turns.push(turn);
-  const before = Object.fromEntries(files.map(f => [f.path, f]));
-  $("input").value = ""; grow();
-  running = { controller: new AbortController(), id: null };
-  setBusy(true); render(); save();
+async function follow(c, turn, url, init, before) {
+  // Read one turn's events into the conversation, whichever chat is on screen.
+  const controller = new AbortController();
+  streams.set(turn, controller);
   try {
-    const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: text, previous: c.previous, attachments: attachments.map(a => a.id) }), signal: running.controller.signal });
+    const res = await fetch(url, { ...init, signal: controller.signal });
     const reader = res.body.getReader(), decoder = new TextDecoder();
     let buffer = "";
     for (;;) {
@@ -828,25 +875,73 @@ async function send() {
         const frameText = buffer.slice(0, cut); buffer = buffer.slice(cut + 2);
         if (!frameText.startsWith("data: ")) continue;
         const ev = JSON.parse(frameText.slice(6));
-        if (ev.type === "start") { running.id = ev.id; c.previous = ev.id; c.session = ev.session || c.session; $("session").textContent = c.session || ""; }
-        else apply(turn, ev);
-        renderLive();
+        if (ev.type === "start") {
+          turn.rid = ev.id; c.session = ev.session || c.session;
+          if (turn === lastAssistant(c)) c.previous = ev.id;
+          if (turn.stopping) post("/api/cancel", { id: ev.id }).catch(() => {});
+          save(); renderChats();
+          if (chat() === c) $("session").textContent = c.session || "";
+        } else apply(turn, ev);
+        if (chat() === c) { dirty.add(turn); renderLive(); }
       }
     }
+    if (!turn.status && !turn.rid) { turn.status = "failed"; turn.error = "the turn did not start"; }
   } catch (e) {
-    if (e.name === "AbortError") turn.status = "cancelled"; else turn.error = String(e);
+    if (e.name === "AbortError") return;             // its chat was deleted
+    if (!turn.rid) { turn.status = "failed"; turn.error = String(e); }
+  } finally {
+    streams.delete(turn);
+    for (const seg of turn.segments) if (seg.t === "thinking" && !seg.ended) seg.ended = Date.now();
+    save(); renderChats();
+    if (chat() === c) render();
   }
-  for (const seg of turn.segments) if (seg.t === "thinking" && !seg.ended) seg.ended = Date.now();
-  running = null; setBusy(false); save(); render();
+  if (!turn.status && turn.rid && chats.includes(c)) setTimeout(() => reattach(c, turn), 2000);   // the relay broke: follow again
+  else if (turn.status && c.session && chats.includes(c)) await afterTurn(c, turn, before);
+}
+function reattach(c, turn) {
+  // Follow a turn this page lost (a reload, a dropped connection) from its first event.
+  if (streams.has(turn) || turn.status || !chats.includes(c)) return;
+  turn.segments = []; turn.error = null;
+  follow(c, turn, `/api/follow?id=${encodeURIComponent(turn.rid)}`, {}, null);
+}
+async function send() {
+  const text = $("input").value.trim();
+  if (!text || pending.some(p => p.uploading)) return;
+  let c = chat();
+  const model = pickedModel(), picked = { provider: $("provider").value, model: $("model").value.trim() };
+  if (!c) {
+    c = { id: newId(), title: text.slice(0, 60), model, previous: null, session: null, turns: [] };
+    chats.unshift(c); current = c.id; files = [];
+  }
+  const running = liveTurn(c);
+  if (running && !running.rid) return;               // still starting: a moment later it can be interrupted
+  if (running) {                                      // interrupt: stop it; this message continues from where it stopped
+    running.interrupted = true;
+    post("/api/cancel", { id: running.rid }).catch(() => {});
+  }
+  c.model = model;
+  const attachments = pending.filter(p => p.id).map(p => ({ id: p.id, name: p.name })); pending = []; renderPending();
+  c.turns.push({ role: "user", text, attachments });
+  const turn = { role: "assistant", segments: [], status: null, error: null, rid: null };
+  c.turns.push(turn);
+  const before = Object.fromEntries(files.map(f => [f.path, f]));
+  $("input").value = ""; grow();
+  save(); render();
+  await follow(c, turn, "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, input: text, previous: running ? running.rid : c.previous, attachments: attachments.map(a => a.id) }) }, before);
   if (turn.status === "completed") remember(picked.provider, picked.model);
-  if (c.session) await afterTurn(c, turn, before);
 }
 function stop() {
-  if (!running) return;
-  if (running.id) post("/api/cancel", { id: running.id }).catch(() => {});
-  running.controller.abort();
+  const t = liveTurn(chat());
+  if (!t) return;
+  t.stopping = true;                                  // before it starts: cancelled as soon as it has an id
+  if (t.rid) post("/api/cancel", { id: t.rid }).catch(() => {});
 }
-function setBusy(busy) { $("send").innerHTML = ic(busy ? I.stop : I.up, busy ? 18 : 18); $("send").title = busy ? "Stop" : "Send"; }
+function updateSend() {
+  const b = !!liveTurn(chat());
+  $("send").innerHTML = ic(b ? I.stop : I.up, 18); $("send").title = b ? "Stop" : "Send";
+  $("input").placeholder = b ? "Send a message to interrupt and steer" : "Ask the agent to build something";
+}
 
 // ── attachments ─────────────────────────────────────────────────────────────────────────────────────────────
 function renderPending() {
@@ -872,12 +967,12 @@ function attach(list) {
 // ── wiring ──────────────────────────────────────────────────────────────────────────────────────────────────
 $("new").innerHTML = ic(I.edit); $("attach").innerHTML = ic(I.clip); $("filesbtn").innerHTML = ic(I.panel); document.querySelectorAll(".dd").forEach(e => e.innerHTML = ic(I.down2, 16));
 $("pnew").innerHTML = ic(I.ext, 16); $("pdl").innerHTML = ic(I.down, 16); $("prefresh").innerHTML = ic(I.refresh, 16); $("pclose").innerHTML = ic(I.close, 16);
-setBusy(false);
+updateSend();
 function grow() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 220) + "px"; }
 $("input").addEventListener("input", grow);
 $("input").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 $("input").addEventListener("paste", e => { if (e.clipboardData && e.clipboardData.files.length) { e.preventDefault(); attach(e.clipboardData.files); } });
-$("send").addEventListener("click", () => running ? stop() : send());
+$("send").addEventListener("click", () => liveTurn(chat()) ? stop() : send());
 $("attach").addEventListener("click", () => $("picker").click());
 $("picker").addEventListener("change", e => { attach(e.target.files); e.target.value = ""; });
 $("pending").addEventListener("click", e => { const b = e.target.closest("[data-unpend]"); if (b) { pending.splice(+b.dataset.unpend, 1); renderPending(); } });
@@ -907,13 +1002,21 @@ $("tabfiles").addEventListener("click", async () => { await refreshFiles(); open
 $("tabview").addEventListener("click", () => openPanel("view"));
 $("prefresh").addEventListener("click", async () => { await refreshFiles(); renderPanel(); });
 $("pclose").addEventListener("click", () => { panel.open = false; renderPanel(); });
-$("new").addEventListener("click", () => { if (running) return; current = null; files = []; panel.view = null; render(); $("input").focus(); });
+$("new").addEventListener("click", () => { current = null; files = []; panel.view = null; save(); render(); $("input").focus(); });
 $("chats").addEventListener("click", async e => {
-  if (running) return;
   const del = e.target.closest("[data-del]");
-  if (del) { chats = chats.filter(c => c.id !== del.dataset.del); if (current === del.dataset.del) { current = null; files = []; panel.view = null; } save(); render(); return; }
+  if (del) {
+    const gone = chats.find(c => c.id === del.dataset.del);
+    for (const t of gone.turns) if (isLive(t)) {     // a deleted chat's work stops too
+      if (t.rid) post("/api/cancel", { id: t.rid }).catch(() => {});
+      streams.get(t)?.abort();
+    }
+    chats = chats.filter(c => c !== gone);
+    if (current === gone.id) { current = null; files = []; panel.view = null; }
+    save(); render(); return;
+  }
   const row = e.target.closest(".chat"); if (!row) return;
-  current = row.dataset.id; panel.view = null; panel.tab = "files"; render(); await refreshFiles(); renderPanel();
+  current = row.dataset.id; panel.view = null; panel.tab = "files"; save(); render(); await refreshFiles(); renderPanel();
 });
 // ── the picker: harness / provider / model, from what the organization has ─────────────────────────────────────
 const MODELS = "hg-chatgui-models";                   // models you've used, per provider, offered again
@@ -962,7 +1065,13 @@ fetch("/api/catalog").then(r => r.json()).then(d => {
   if (d.harnesses) catalog = d;
   const c = chat(); setPick(c ? c.model : pickedModel());
 }).catch(() => {});
-load(); current = chats[0] ? chats[0].id : null; setPick(DEFAULT_MODEL); render(); refreshFiles().then(renderPanel); $("input").focus();
+load();
+try { const open = localStorage.getItem(STORE + "-open"); current = chats.some(c => c.id === open) ? open : null; } catch { current = null; }
+setPick(DEFAULT_MODEL); render(); refreshFiles().then(renderPanel); $("input").focus();
+for (const c of chats) for (const t of c.turns) if (isLive(t)) {         // turns still running when the page last closed
+  if (t.rid) reattach(c, t); else { t.status = "failed"; t.error = "the page closed before the turn started"; }
+}
+save(); render();
 </script>
 </body>
 </html>
@@ -980,7 +1089,6 @@ def main() -> None:
     if not args.key:
         sys.exit("set HG_KEY (or pass --key) to your organization's sk-hg-... key")
     api = args.api.rstrip("/")
-    Handler.client = OpenAI(base_url=f"{api}/v1", api_key=args.key, timeout=3600, max_retries=0)
     Handler.http = httpx.Client(base_url=api, headers={"Authorization": f"Bearer {args.key}"}, timeout=120)
     Handler.workspace = Workspace(Handler.http)
     Handler.default_model = args.model
