@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/picky.png" width="140" alt="Picky, the HarnessGateway hermit crab"></p>
+
 # HarnessGateway
 
 Run any coding-agent harness (Claude Code, Codex, Hermes, Pi, or your own) in a platform-owned gVisor sandbox, behind
