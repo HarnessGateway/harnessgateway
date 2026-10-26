@@ -156,8 +156,9 @@ class Scheduler:
         await tx.notify(CHANNEL, rid)
         timeout = min(manifest.run.timeout_s, limits.turn_timeout_s)
         provider = None
-        if session["provider_id"]:
-            p = await tx.one("SELECT id, name, api FROM providers WHERE id = %s", session["provider_id"])
+        provider_id = turn["provider_id"] or session["provider_id"]      # the turn's own provider (a continuation may switch)
+        if provider_id:
+            p = await tx.one("SELECT id, name, api FROM providers WHERE id = %s", provider_id)
             if p:
                 token = ids.new_secret("turn")
                 await tx.run("INSERT INTO turn_tokens (digest, turn_id, org_id, session_id, provider_id, capture, expires_at) "

@@ -146,9 +146,10 @@ class Turns:
                                "WHERE i.name = %s", path.harness)
         if not install:
             raise NotFound(f"no harness {path.harness} installed", param="model", code="model_not_found")
-        prev_model, session = "", None
+        prev, session = None, None
         if routing.previous_response_id:
-            prev = await tx.one("SELECT session_id, provider_model FROM turns WHERE id = %s", routing.previous_response_id)
+            prev = await tx.one("SELECT session_id, provider_id, provider_model FROM turns WHERE id = %s",
+                                routing.previous_response_id)
             if not prev:
                 raise NotFound(f"no response {routing.previous_response_id}", param="previous_response_id")
             session = await tx.one("SELECT * FROM sessions WHERE id = %s FOR UPDATE", prev["session_id"])
@@ -158,13 +159,15 @@ class Turns:
                               param="previous_response_id")
             if session["install_name"] != path.harness:
                 raise Invalid(f"that session runs {session['install_name']}, not {path.harness}", param="model")
-            prev_model = prev["provider_model"]
             manifest = Manifest.model_validate((await tx.one("SELECT manifest FROM package_blobs WHERE digest = %s",
                                                              session["digest"]))["manifest"])
         else:
             manifest = Manifest.model_validate(install["manifest"])
         provider = await self._provider(tx, manifest, path, install, session)
-        model = path.model or prev_model or install["default_model"] or manifest.defaults.model
+        provider_id = provider["id"] if provider else None
+        # a continuation keeps its model unless it names another, or moves to another provider (which may not have it)
+        kept = prev["provider_model"] if prev and (prev["provider_id"] or session["provider_id"]) == provider_id else ""
+        model = path.model or kept or install["default_model"] or manifest.defaults.model
         if routing.file_ids:
             found = {r["id"] for r in await tx.all("SELECT id FROM files WHERE id = ANY(%s) AND deleted_at IS NULL",
                                                    list(routing.file_ids))}
@@ -175,14 +178,16 @@ class Turns:
             sid = ids.new("session")
             await tx.run("INSERT INTO sessions (id, org_id, install_name, digest, provider_id, store) "
                          "VALUES (%s, %s, %s, %s, %s, %s)", sid, p.org_id, path.harness, install["digest"],
-                         provider["id"] if provider else None, routing.store)
+                         provider_id, routing.store)
             session = {"id": sid, "turns": 0}
         seq = session["turns"] + 1
-        await tx.run("UPDATE sessions SET turns = %s, last_active_at = now() WHERE id = %s", seq, session["id"])
-        await tx.run("INSERT INTO turns (id, org_id, session_id, seq, status, model, provider_model, stream, background, "
-                     "request_key, previous_id) VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s)",
-                     rid, p.org_id, session["id"], seq, body["model"], model, routing.stream, routing.background,
-                     request_key, routing.previous_response_id)
+        # the session follows the provider its latest turn chose, so a continuation that names none stays on it
+        await tx.run("UPDATE sessions SET turns = %s, provider_id = %s, last_active_at = now() WHERE id = %s",
+                     seq, provider_id, session["id"])
+        await tx.run("INSERT INTO turns (id, org_id, session_id, seq, status, model, provider_id, provider_model, stream, "
+                     "background, request_key, previous_id) VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s)",
+                     rid, p.org_id, session["id"], seq, body["model"], provider_id, model, routing.stream,
+                     routing.background, request_key, routing.previous_response_id)
         turn = await tx.one("SELECT * FROM turns WHERE id = %s", rid)
         assert turn is not None
         partial = wire.response(rid=rid, body=body, created=_ts(turn["created_at"]), status="queued",

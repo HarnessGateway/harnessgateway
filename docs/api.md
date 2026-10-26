@@ -8,7 +8,7 @@ Errors use the OpenAI envelope: `{"error": {"message", "type", "param", "code"}}
 
 | Method and path | Notes |
 |---|---|
-| `POST /responses` | Run a turn. `model` is `harness`, `harness/provider` or `harness/provider/model`. `stream: true` returns SSE; `background: true` returns immediately; otherwise the request waits for the end. `previous_response_id` continues the session. `store: false` discards the session after the turn. Header `Idempotency-Key` makes retries safe. A foreground turn is cancelled if the client disconnects. |
+| `POST /responses` | Run a turn. `model` is `harness`, `harness/provider` or `harness/provider/model`. `stream: true` returns SSE; `background: true` returns immediately; otherwise the request waits for the end. `previous_response_id` continues the session: same harness, and any provider or model (naming none keeps the previous turn's; a new provider without a model gets the default). `store: false` discards the session after the turn. Header `Idempotency-Key` makes retries safe. A foreground turn is cancelled if the client disconnects. |
 | `GET /responses/{id}` | The response. `?stream=true&starting_after=N` replays events after sequence number N, then follows live. |
 | `POST /responses/{id}/cancel` | Stops a queued or running turn: SIGTERM to the package, then SIGKILL to everything in the sandbox after the package's grace. The response keeps the output items finished before the cancel. |
 | `DELETE /responses/{id}` | Deletes a finished response and its stored request. |

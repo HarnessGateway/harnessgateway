@@ -44,8 +44,9 @@ def http(key: str) -> httpx.Client:
     return httpx.Client(base_url=f"{API}/v1", headers={"Authorization": f"Bearer {key}"}, timeout=300)
 
 
-def package(name: str, request_sh: str, run: dict | None = None) -> bytes:
-    files = {"harness.json": json.dumps({"contract": 1, "name": name, "version": "1", "run": run or {"timeout_s": 120}}),
+def package(name: str, request_sh: str, run: dict | None = None, **manifest: object) -> bytes:
+    files = {"harness.json": json.dumps({"contract": 1, "name": name, "version": "1", "run": run or {"timeout_s": 120},
+                                         **manifest}),
              "install.sh": "#!/bin/bash\nmkdir -p \"$HG_TOOLS/bin\"\n", "request.sh": "#!/bin/bash\n" + request_sh}
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w:gz") as tar:
@@ -142,6 +143,29 @@ def test_row_level_security_in_the_database(org):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             cx.execute("INSERT INTO providers (id, org_id, name, api, base_url, sealed_key) VALUES "
                        "('prv_x', 'org_other', 'x', 'openai', 'https://x', 'v1:x')")
+
+
+def test_a_continuation_can_switch_provider_and_model_but_not_harness(org):
+    key = org[1]
+    h = http(key)
+    for name, api, url in (("it-ant", "anthropic", "https://api.anthropic.com"), ("it-oai", "openai", "https://api.openai.com")):
+        assert h.put(f"/providers/{name}", json={"api": api, "base_url": url, "key": "unused"}).status_code == 200
+    report = ("exec python3 -c 'import os; from hgkit import Emitter; o = Emitter(); "
+              "o.message(os.environ[\"HG_PROVIDER_API\"] + \" \" + os.environ[\"HG_MODEL\"]); o.completed()'\n")
+    archive = package("it-route", report, provider={"apis": ["anthropic", "openai"]}, defaults={"model": "dm"})
+    assert h.post("/harnesses", files={"package": ("it-route.tgz", archive)}).status_code == 200
+    c = client(key)
+    r1 = c.responses.create(model="it-route/it-ant/m1", input="go")
+    assert r1.output_text == "anthropic m1"
+    r2 = c.responses.create(model="it-route/it-oai/m2", input="go", previous_response_id=r1.id)
+    assert r2.output_text == "openai m2" and r2.metadata["session_id"] == r1.metadata["session_id"]
+    r3 = c.responses.create(model="it-route", input="go", previous_response_id=r2.id)
+    assert r3.output_text == "openai m2"                              # stays on the provider and model it moved to
+    r4 = c.responses.create(model="it-route/it-ant", input="go", previous_response_id=r3.id)
+    assert r4.output_text == "anthropic dm"                           # another provider: its model is the default
+    with pytest.raises(APIStatusError) as e:
+        c.responses.create(model="shell", input="echo x", previous_response_id=r4.id)
+    assert e.value.status_code == 400
 
 
 def test_files_and_container_files(org):
