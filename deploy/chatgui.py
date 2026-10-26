@@ -353,7 +353,7 @@ async function send() {
   let c = chat();
   const model = $("model").value.trim() || DEFAULT_MODEL;
   if (!c || (c.model !== model && c.turns.length)) {
-    c = { id: crypto.randomUUID(), title: text.slice(0, 60), model, previous: null, session: null, turns: [] };
+    c = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), title: text.slice(0, 60), model, previous: null, session: null, turns: [] };
     chats.unshift(c); current = c.id;
   }
   c.model = model;
