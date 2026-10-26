@@ -6,11 +6,11 @@
     python3 validate.py ./my-harness --prompt "hi" --provider-url https://api.anthropic.com \\
         --provider-api anthropic --provider-key "$ANTHROPIC_API_KEY" --model claude-sonnet-4-5 [--install]
 
-Static checks: required files, the manifest (contract 1), bash syntax. A local run sets up the turn environment the
-platform provides (HG_* variables, a workspace, home and state seeded from the package), runs request.sh with the
-request on stdin and validates every printed event with the OpenAI SDK's models, as the platform does. A provider
-fixture is a recorded SSE stream served to the package for any provider call. A local run executes the package on
-this machine, without the sandbox: run only packages you trust. Requires: pip install openai.
+Static checks: required files, the manifest (contract 1), bash syntax, no CPU named in the scripts. A local run sets
+up the turn environment the platform provides (HG_* variables, a workspace, home and state seeded from the package),
+runs request.sh with the request on stdin and validates every printed event with the OpenAI SDK's models, as the
+platform does. A provider fixture is a recorded SSE stream served to the package for any provider call. A local run
+executes the package on this machine, without the sandbox: run only packages you trust. Requires: pip install openai.
 """
 from __future__ import annotations
 
@@ -33,6 +33,14 @@ HOST = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61
 KEYS = {"contract", "name", "version", "description", "provider", "defaults", "install", "run", "settings"}
 TERMINAL = {"response.completed", "response.incomplete", "response.failed"}
 ENVELOPE = {"response.created", "response.in_progress", "response.queued"}
+# a CPU named in a script ties the package to one kind of worker; npm and pip pick the build for the machine instead
+CPU = re.compile(r"x86_64|x86-64|\bamd64\b|\bx64\b|aarch64|\barm64\b|\bi[3-6]86\b|uname\s+-[a-z]*m")
+
+
+def cpu_names(script: Path) -> list[str]:
+    """Lines (comments aside) of a script that name a CPU architecture."""
+    return [f"{script.name}:{n}: {line.strip()}" for n, line in enumerate(script.read_text().splitlines(), 1)
+            if not line.lstrip().startswith("#") and CPU.search(line)]
 
 
 def fail(msg: str) -> typing.NoReturn:
@@ -83,6 +91,11 @@ def check_static(pkg: Path) -> dict:
         if r.returncode:
             fail(f"{script} is not valid bash: {r.stderr.strip()}")
     ok("install.sh and request.sh parse")
+    named = [hit for script in ("install.sh", "request.sh") for hit in cpu_names(pkg / script)]
+    if named:
+        fail("a script names a CPU; install from the published npm/PyPI package and let it pick the build for the "
+             "machine:\n      " + "\n      ".join(named))
+    ok("no CPU named: installs on x86_64 and ARM64 workers alike")
     seeds = pkg / "seeds"
     if seeds.exists() and {p.name for p in seeds.iterdir()} - {"workspace", "home"}:
         fail("seeds holds only workspace/ and home/")

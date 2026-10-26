@@ -5,7 +5,7 @@ workspace, with permissions skipped (the gVisor sandbox is the boundary), and ma
 Responses stream events.
 
 - **CLI:** `@anthropic-ai/claude-code` **2.1.310**, pinned in `install.sh` (npm, egress `registry.npmjs.org`). The npm
-  postinstall places the native linux-x64 binary at `$HG_TOOLS/bin/claude`. `install.sh` fails if `claude --version`
+  postinstall places the native binary for the machine's CPU (npm picks it) at `$HG_TOOLS/bin/claude`. `install.sh` fails if `claude --version`
   is anything other than 2.1.310.
 - **Provider:** any Anthropic Messages endpoint (`provider.apis: ["anthropic"]`). Verified with `deepseek`
   (DeepSeek's Anthropic-compatible endpoint) using `deepseek-flash` (the default) and `deepseek-v4-pro`.

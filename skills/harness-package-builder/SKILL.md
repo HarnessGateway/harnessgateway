@@ -59,9 +59,12 @@ Follow these steps in order. Do not skip verification.
 2. **Write `harness.json`** (`reference/contract.md` §Manifest). Pick `provider.apis` from the wire formats the CLI can
    speak (`anthropic`: Messages API; `openai`: Chat Completions and/or Responses). Keep `run.egress` empty unless the CLI
    needs a host at run time; put registries in `install.egress`.
-3. **Write `install.sh`**: install the pinned CLI into `$HG_TOOLS` (`npm install -g --prefix "$HG_TOOLS" pkg@1.2.3`,
-   `python3 -m venv "$HG_TOOLS/venv" && .../pip install pkg==1.2.3`, or download a checksummed binary into
-   `$HG_TOOLS/bin`). It must be self-contained (the tools layer is cached by its hash) and end by printing the version.
+3. **Write `install.sh`**: install the pinned CLI into `$HG_TOOLS` from its published package
+   (`npm install -g --prefix "$HG_TOOLS" pkg@1.2.3`, or `python3 -m venv "$HG_TOOLS/venv" && .../pip install pkg==1.2.3`).
+   **Never name a CPU** (no `x86_64`/`x64`/`amd64`/`arm64`/`aarch64`, no `uname -m`, no per-CPU paths or downloads):
+   npm and pip pick the build for the machine they run on, so the same package installs on every worker. Check the
+   result by running the CLI, not by looking for a file in a CPU-specific folder. It must be self-contained (the tools
+   layer is cached by its hash) and end by checking and printing the version.
 4. **Write `request.sh` and the mapper.** Configure the CLI from the request and the environment, run it, and turn its
    output into events. Use **hgkit** (in the sandbox image): `Request` reads the request; `Emitter` prints a correct
    event sequence; `State` keeps the CLI's session id for resume. See `reference/events.md` for the event cookbook and

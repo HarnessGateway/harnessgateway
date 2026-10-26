@@ -11,7 +11,7 @@ landlock/seccomp sandbox would not work under gVisor anyway.
 | file | role |
 |---|---|
 | `harness.json` | manifest: provider `openai`, default model `gpt-5.4-mini`, install egress `registry.npmjs.org`, no run egress |
-| `install.sh` | `npm install -g @openai/codex@0.164.0` into `$HG_TOOLS`. It checks that the native linux x64 binary (the optional dependency `@openai/codex-linux-x64`) is installed and runs, then writes `$HG_TOOLS/codex-models.json` (see *Models*) |
+| `install.sh` | `npm install -g @openai/codex@0.164.0` into `$HG_TOOLS`. npm installs the native binary built for the machine's CPU (an optional dependency) and `install.sh` checks that `codex` runs at the pinned version, then writes `$HG_TOOLS/codex-models.json` (see *Models*) |
 | `request.sh` | runs `run.py` |
 | `run.py` | Responses request → `$HOME/.codex/config.toml` + `codex exec` arguments; runs Codex and feeds its JSONL to the mapper; on SIGTERM it stops Codex and exits |
 | `map.py` | Codex `exec --json` events → Responses events through `hgkit.Emitter` (`CodexMapper`) |

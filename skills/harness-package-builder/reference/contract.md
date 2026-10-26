@@ -7,7 +7,7 @@ This is the complete contract between HarnessGateway and a harness package. The 
 | Path | Required | Purpose |
 |---|---|---|
 | `harness.json` | yes | The manifest (below). Unknown keys are refused. |
-| `install.sh` | yes | Installs the CLI into `$HG_TOOLS`. Runs once per tools key (hash of `install.sh` + the `install` section), in a sandbox with egress to `install.egress` only. Must be self-contained. |
+| `install.sh` | yes | Installs the CLI into `$HG_TOOLS`. Runs once per tools key (hash of `install.sh`, the `install` section and the sandbox image), in a sandbox with egress to `install.egress` only. Must be self-contained. |
 | `request.sh` | yes | Runs one turn. Must parse as bash. |
 | `seeds/workspace/` | no | Copied into `/workspace` when a session starts. |
 | `seeds/home/` | no | Copied into `$HOME` when a session starts. |
@@ -78,7 +78,12 @@ The sandbox image (Wolfi, glibc) provides bash (also `/bin/sh`), coreutils, find
 patch, tar, gzip, xz, unzip, file, procps, setsid, which, flock, git, curl, jq, ripgrep, python3 (3.12, venv, pip), node 24 LTS (npm 12) and
 the hgkit library. It has no package manager, BusyBox, sudo or setuid files: whatever else your harness needs,
 `install.sh` installs into `$HG_TOOLS`. npm 12 runs no dependency install scripts unless allowed, so name the ones you
-need (`npm install --allow-scripts=<package> ...`) or pass `--ignore-scripts`. The root filesystem is read-only; write
+need (`npm install --allow-scripts=<package> ...`) or pass `--ignore-scripts`.
+
+Workers may be x86_64 or ARM64, and the same package must install on both. Install the CLI from its published npm or
+PyPI package and let the package manager pick the build for the machine; never name a CPU in `install.sh` or
+`request.sh` (no `x86_64`, `x64`, `amd64`, `arm64`, `aarch64` or `uname -m`), and never reach into a CPU-specific path
+to find a binary: run the CLI to check it. `scripts/validate.py` refuses a package that names a CPU. The root filesystem is read-only; write
 only to the workspace, `$HOME`, `$HG_STATE` and `/tmp`. The tools a package installs are cached per sandbox image, so a
 new image reinstalls them.
 
