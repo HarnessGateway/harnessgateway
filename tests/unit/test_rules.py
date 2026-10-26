@@ -60,7 +60,7 @@ def test_netguard():
 
 
 def test_settings_refuse_unsafe_runtime_and_missing_values():
-    base = {"HG_DATABASE_URL": "postgresql://x", "HG_SECRET_KEY": "00" * 32, "HG_S3_BUCKET": "b"}
+    base = {"HG_DATABASE_URL": "postgresql://x", "HG_SECRET_KEY": "00" * 32, "HG_S3_BUCKET": "hg-test"}
     assert Settings.from_env(("api", "gateway"), base).roles == ("api", "gateway")
     with pytest.raises(ConfigError):
         Settings.from_env(("api",), {**base, "HG_SECRET_KEY": "short"})
@@ -70,3 +70,6 @@ def test_settings_refuse_unsafe_runtime_and_missing_values():
     assert Settings.from_env(("node",), {**node, "HG_RUNTIME": "runc", "HG_INSECURE_RUNTIME": "1"}).runtime == "runc"
     with pytest.raises(ConfigError):
         Settings.from_env(("bogus",), base)
+    for bad in ("ci", "Has_Caps", "-edge", "a" * 64):          # S3 refuses these, so the api would crash at start
+        with pytest.raises(ConfigError, match="HG_S3_BUCKET"):
+            Settings.from_env(("api",), {**base, "HG_S3_BUCKET": bad})

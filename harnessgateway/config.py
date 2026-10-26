@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 from dataclasses import dataclass, field
 from pathlib import Path
+
+BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 
 ROLES = ("api", "gateway", "node")
 _HERE = Path(__file__).resolve().parent
@@ -142,6 +145,9 @@ class Settings:
                     raise ConfigError(f"{name} is required for the api and gateway roles")
         if {"api", "gateway"} & set(self.roles) and not self.s3_bucket:
             raise ConfigError("HG_S3_BUCKET is required for the api and gateway roles")
+        if self.s3_bucket and not BUCKET.fullmatch(self.s3_bucket):
+            raise ConfigError(f"HG_S3_BUCKET {self.s3_bucket!r} is not an S3 bucket name: 3-63 lowercase letters, digits, "
+                              "dots and hyphens, starting and ending with a letter or digit")
         if "node" in self.roles:
             if not self.api_url:
                 raise ConfigError("HG_API_URL is required for the node role")
