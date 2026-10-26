@@ -1,104 +1,88 @@
-"""The HTTP application: the platform's parts built from its settings (`Service`), and the routes
-mounted on one FastAPI app. The documentation site is served at `/docs` and the OpenAPI reference
-at `/reference`. A refusal is 400, 401, 403, 404 or 409 with `{"detail": …}`; a malformed body 422."""
+"""The api role's application: routers, error envelope, guard middleware and the background loops (event bus,
+housekeeping, the traffic meter's flusher), all bound to one `Platform`."""
 from __future__ import annotations
 
 import asyncio
-import os
-import secrets
+import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from importlib.metadata import version
-from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
-from ..backends.blobs import open_blobs
-from ..backends.events import open_events
-from ..backends.kms import open_sealer
-from ..backends.records import open_records
-from ..config import Settings
-from ..contract.package import CONTRACT
-from ..domain.accounts import Accounts
-from ..domain.catalog import Catalog
-from ..domain.harnesses import Harnesses
-from ..domain.keys import Keys
-from ..domain.members import Members
-from ..domain.nodes import Nodes
-from ..domain.orgs import Orgs
-from ..domain.providers import Providers
-from ..domain.sessions import Sessions
-from ..errors import Conflict, Invalid, NotFound, TooMany
-from ..kernel.vault import Sealer
-from ..services.housekeeping import Housekeeping
-from ..services.intake import Intake
-from ..services.scheduler import Scheduler
-from . import control, deployer, internal, responses, signin
-from .auth import Principals
+from .. import __version__
+from ..errors import Invalid, Refusal
+from ..services.platform import Platform
+from . import admin, internal, org, responses, storage
+from .http import Guard, error_response
 
-STATUS = {Invalid: 400, NotFound: 404, Conflict: 409, TooMany: 429}
-DOCS = Path(__file__).resolve().parents[1] / "docs"            # the built documentation site (mkdocs build), when present
-VERSION = version("harnessgateway")
+log = logging.getLogger("harnessgateway.api")
 
 
-class Service:
-    """The platform's parts, built from its settings; shared by every role in a process."""
-
-    def __init__(self, settings: Settings, vault: Optional[Sealer] = None):
-        self.settings = settings
-        self.records = open_records(settings.records_url)
-        self.vault = vault or open_sealer(settings.kms, os.environ, self.records)
-        self.blobs = open_blobs(settings.blobs_url, base_url=settings.public_url, secret=self.vault.derive("blobs"))
-        self.events = open_events(self.records, settings.records_url)
-        self.orgs = Orgs(self.records, self.blobs)
-        self.members = Members(self.records, self.orgs)
-        self.keys = Keys(self.records, self.orgs, self.members)
-        self.providers = Providers(self.records, self.vault, self.orgs, settings.allow_private)
-        self.harnesses = Harnesses(self.records, self.blobs, settings.data_dir / "git", self.orgs, settings.allow_private)
-        self.nodes = Nodes(self.records)
-        self.sessions = Sessions(self.records, self.blobs, self.events, self.orgs, self.harnesses, self.providers)
-        self.intake = Intake(self.records, self.orgs, self.sessions)
-        self.scheduler = Scheduler(self.sessions, self.harnesses, self.providers, self.orgs, self.nodes, settings.gateway_url)
-        self.catalog = Catalog()
-        self.accounts = Accounts(self.records, self.vault, self.orgs, self.members)
-        self.housekeeping = Housekeeping(self.scheduler)
-        self.join_token = settings.join_token or secrets.token_urlsafe(32)   # an in-process node joins with it
-        self.principals = Principals(self.keys, self.nodes, settings.deployer_key, self.join_token, self.accounts)
-
-
-def create_app(service: Service) -> FastAPI:
-    settings = service.settings
-
+def create_app(plat: Platform, *, background: bool = True) -> FastAPI:
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        task = asyncio.create_task(service.housekeeping.run())
-        yield
-        task.cancel()
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        await plat.open()
+        await plat.blobs.ensure_bucket()
+        if plat.settings.node_join_token:
+            await plat.scheduler.ensure_join_token(plat.settings.node_join_token)
+        published = await plat.packages.publish_builtins()
+        log.info("built-in harnesses: %s", ", ".join(sorted(published)) or "none")
+        plat.bus.start()
+        tasks = [asyncio.create_task(plat.housekeeping.run()), asyncio.create_task(plat.metering.flusher())] \
+            if background else []
+        try:
+            yield
+        finally:
+            for t in tasks:
+                t.cancel()
+            await plat.bus.stop()
+            await plat.metering.flush()
+            await plat.close()
 
-    app = FastAPI(title="HarnessGateway", version=VERSION, lifespan=lifespan, docs_url="/reference", redoc_url=None)
+    app = FastAPI(title="HarnessGateway", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
+                  openapi_url="/v1/openapi.json")
+    app.state.platform = plat
 
-    for error, code in STATUS.items():
-        @app.exception_handler(error)
-        async def refused(_: Request, e: Exception, code: int = code) -> JSONResponse:
-            return JSONResponse({"detail": str(e)}, status_code=code, headers={"Retry-After": "60"} if code == 429 else None)
+    @app.exception_handler(Refusal)
+    async def refusal(_: Request, e: Refusal) -> JSONResponse:
+        return error_response(e)
 
-    @app.get("/healthz")
-    def healthz() -> dict:
-        return {"status": "ok", "version": VERSION, "contract": CONTRACT, "roles": list(settings.roles), "signup": settings.signup}
+    @app.exception_handler(RequestValidationError)
+    async def invalid(_: Request, e: RequestValidationError) -> JSONResponse:
+        err = e.errors()[0] if e.errors() else {}
+        return error_response(Invalid(f"{'.'.join(map(str, err.get('loc', ())))}: {err.get('msg', 'invalid')}"))
 
-    app.include_router(responses.router(service))
-    app.include_router(control.router(service))
-    app.include_router(signin.router(service, settings))
-    app.include_router(deployer.router(service))
-    app.include_router(internal.router(service, VERSION))
+    @app.exception_handler(Exception)
+    async def crash(request: Request, e: Exception) -> JSONResponse:
+        log.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse({"error": {"message": "internal error", "type": "server_error", "param": None,
+                                       "code": None}}, status_code=500)
 
-    if (DOCS / "index.html").is_file():
-        app.mount("/docs", StaticFiles(directory=DOCS, html=True), name="docs")
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz() -> dict[str, Any]:
+        return {"ok": True, "version": __version__}
 
-        @app.get("/", include_in_schema=False)
-        def home() -> RedirectResponse:
-            return RedirectResponse("/docs/", status_code=302)
+    @app.get("/readyz", include_in_schema=False)
+    async def readyz() -> JSONResponse:
+        checks: dict[str, str] = {}
+        try:
+            async with plat.db.platform() as tx:
+                await tx.value("SELECT 1")
+            checks["database"] = "ok"
+        except Exception as e:                            # readiness reports which dependency fails, never raises
+            checks["database"] = f"failed: {type(e).__name__}"
+        try:
+            await plat.blobs.probe()
+            checks["storage"] = "ok"
+        except Exception as e:
+            checks["storage"] = f"failed: {type(e).__name__}"
+        ok = all(v == "ok" for v in checks.values())
+        return JSONResponse({"ok": ok, **checks}, status_code=200 if ok else 503)
 
+    for module in (responses, storage, org, admin, internal):
+        app.include_router(module.router)
+    app.add_middleware(Guard, platform=plat)
     return app

@@ -1,11 +1,15 @@
-"""HarnessGateway: any command-line harness, run in sandboxes the platform owns, behind the OpenAI
-Responses API. The request payload goes to the harness package whole; the package drives its program
-and maps what comes back onto the response. Layers, lowest first; a module imports its layer or below:
+"""HarnessGateway: run any coding-agent harness in a platform-owned sandbox behind the OpenAI Responses API.
 
-0 kernel      execution, files, vault, ids, limits
-1 contract    package, wire, turn.sh
-2 backends    records, blobs, repos, sandboxes, egress, events, kms (one protocol each, one module per implementation)
-3 domain      orgs, members, keys, providers, harnesses, nodes, sessions, catalog, accounts
-4 services    scheduler, intake, worker, gateway, housekeeping
-5 api, cli    the HTTP routes; the hg command; config and __main__
+The platform reads a Responses request, hands it whole to a harness package inside a sandbox, and returns the
+Responses events the package prints. It owns three things: the tenant boundary, sandboxed execution, and metering.
+
+Layers, lowest first (a module imports only its own layer or below):
+
+    errors, ids, limits      vocabulary
+    domain                   pure rules: manifests, the wire, turn states, pricing, org limits
+    crypto, db, blobs        infrastructure adapters
+    services                 one use case per class
+    api, gateway, node       the three processes
 """
+
+__version__ = "1.0.0"

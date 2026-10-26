@@ -1,0 +1,98 @@
+# The platform-managed images (sandbox and platform): built, checked for hardening and scanned with Trivy whenever
+# anything that goes into them changes, and weekly, since new CVEs land in images that did not change.
+#
+# A fixable HIGH or CRITICAL vulnerability fails the job. Accepted risks go in .trivyignore, each with a reason and
+# an expiry. Every run uploads the full report and a CycloneDX SBOM per image.
+name: images
+on:
+  push:
+    branches: [main]
+    paths:
+      - sandbox/**
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - harnessgateway/**
+      - packages/**
+      - .trivyignore
+      - .github/workflows/images.yml
+  pull_request:
+    paths:
+      - sandbox/**
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - harnessgateway/**
+      - packages/**
+      - .trivyignore
+      - .github/workflows/images.yml
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Trivy from its official image, pinned by digest (no third-party action in the supply chain)
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+
+jobs:
+  scan:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {image: sandbox, context: sandbox}
+          - {image: platform, context: .}
+    env:
+      IMAGE: harnessgateway/${{ matrix.image }}:scan
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: build
+        run: docker build --pull -t "$IMAGE" "${{ matrix.context }}"
+
+      - name: hardening
+        run: |
+          set -euo pipefail
+          user=$(docker inspect -f '{{.Config.User}}' "$IMAGE")
+          case "$user" in ""|0|root|0:*|root:*) echo "::error::$IMAGE runs as root by default"; exit 1 ;; esac
+          cid=$(docker create "$IMAGE")
+          docker export "$cid" | tar -tvf - > files.txt
+          docker rm "$cid" > /dev/null
+          if awk '$1 ~ /^-..[sS]|^-.....[sS]/' files.txt | grep .; then
+            echo "::error::$IMAGE has setuid or setgid files"; exit 1
+          fi
+          if awk '{print $6}' files.txt | grep -E '^(usr/)?s?bin/(apk|busybox|su|sudo|doas)$'; then
+            echo "::error::$IMAGE ships a package manager, BusyBox or a privilege tool"; exit 1
+          fi
+          echo "$IMAGE: user $user, $(wc -l < files.txt) files, no setuid/setgid, no apk/busybox/su/sudo"
+
+      - name: trivy gate (fixable HIGH and CRITICAL)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" -w /work \
+            -v trivy-cache:/root/.cache "$TRIVY_IMAGE" image --scanners vuln,secret --severity HIGH,CRITICAL \
+            --ignore-unfixed --ignorefile .trivyignore --exit-code 1 --format table "$IMAGE"
+
+      - name: report and SBOM
+        if: always()
+        run: |
+          mkdir -p out
+          trivy() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/work" -w /work \
+            -v trivy-cache:/root/.cache "$TRIVY_IMAGE" "$@"; }
+          trivy image --scanners vuln --format json -o "out/trivy-${{ matrix.image }}.json" "$IMAGE"
+          trivy image --format cyclonedx -o "out/sbom-${{ matrix.image }}.cdx.json" "$IMAGE"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.image }}-scan
+          path: out/
+          retention-days: 90

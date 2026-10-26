@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a174d9-bb5b-7823-8ff9-7720a2ac4630"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `no-such-model` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... 1/2 (unexpected status 404 Not Found: The model `no-such-model` does not exist or you do not have access to it., url: http://hg-egress:8080/v1/responses, cf-ray: a50420ce0faec792-IAD, request id: req_c9280f798006400198549a726cbaa96c)"}
+{"type":"error","message":"Reconnecting... 2/2 (unexpected status 404 Not Found: The model `no-such-model` does not exist or you do not have access to it., url: http://hg-egress:8080/v1/responses, cf-ray: a50420d11f2ac792-IAD, request id: req_e76862a3187d408b9fbdef615b7de9a4)"}
+{"type":"error","message":"unexpected status 404 Not Found: The model `no-such-model` does not exist or you do not have access to it., url: http://hg-egress:8080/v1/responses, cf-ray: a504211bfec9c792-IAD, request id: req_1840e51858e54758b9abf02132247bfe"}
+{"type":"turn.failed","error":{"message":"unexpected status 404 Not Found: The model `no-such-model` does not exist or you do not have access to it., url: http://hg-egress:8080/v1/responses, cf-ray: a504211bfec9c792-IAD, request id: req_1840e51858e54758b9abf02132247bfe"}}

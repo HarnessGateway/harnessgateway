@@ -1,9 +1,0 @@
-# TLS and routing. HG_DOMAIN=localhost gives a self-signed certificate; a real name gets one from
-# Let's Encrypt. The gateway (8081) is reached by the doors over the compose network, never through Caddy.
-{$HG_DOMAIN:localhost} {
-	reverse_proxy platform:8000 api:8000 {
-		lb_policy round_robin
-		health_uri /healthz
-	}
-	encode gzip
-}

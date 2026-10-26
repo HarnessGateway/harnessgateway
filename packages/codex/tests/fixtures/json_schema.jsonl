@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a174dc-b4a6-70f0-a6dc-9a7fc353ddf3"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"**Formatting JSON response**"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"{\"country\":\"France\",\"capital\":\"Paris\"}"}}
+{"type":"turn.completed","usage":{"input_tokens":7281,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":60,"reasoning_output_tokens":39}}

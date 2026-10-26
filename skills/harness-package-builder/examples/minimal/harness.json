@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "name": "minimal",
+  "version": "1.0.0",
+  "description": "The smallest useful harness: one model call per turn, streamed, with the conversation kept in the session's state. It speaks both provider shapes and shows every part of the contract: request mapping, streaming output, usage, errors, state, settings and seeds.",
+  "provider": {"apis": ["anthropic", "openai"]},
+  "defaults": {"model": "claude-sonnet-4-5"},
+  "install": {"egress": [], "timeout_s": 60},
+  "run": {"egress": [], "timeout_s": 600, "stop_grace_s": 5},
+  "settings": {"PERSONA": {"secret": false, "required": false, "description": "A line prepended to the system prompt."}}
+}
