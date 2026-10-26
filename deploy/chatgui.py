@@ -1,7 +1,9 @@
 """A ChatGPT-style page for talking to a harness, with artifacts: conversations in a sidebar, replies streamed with
 markdown, the agent's thinking and steps folded under each reply, and a side panel with the session's workspace files
 (browse, preview, download) that opens what the agent builds: HTML pages run live, images, PDFs, markdown, CSV and
-code render in place. Files you attach go to the agent with your message.
+code render in place. Files you attach go to the agent with your message. The header picks the harness and the
+provider from what your organization has installed and connected; type the model, or leave it empty for the
+harness's default.
 
     HG_KEY=sk-hg-... python chatgui.py [--api http://localhost:8000] [--host 127.0.0.1] [--port 8800]
 
@@ -161,6 +163,17 @@ class Handler(BaseHTTPRequestHandler):
             headers["Content-Disposition"] = f'attachment; filename="{name.rsplit("/", 1)[-1].replace(chr(34), "")}"'
         self._reply(200, data, kind, headers)
 
+    def catalog(self) -> dict:
+        """What the picker offers: the organization's harnesses and its providers (no keys: the API never returns them)."""
+        def listing(path: str) -> list[dict]:
+            r = self.http.get(path)
+            r.raise_for_status()
+            return r.json()["data"]
+        harnesses = [{k: h.get(k) for k in ("name", "description", "provider_apis", "default_provider", "default_model")}
+                     for h in listing("/v1/harnesses")]
+        providers = [{"name": p["name"], "api": p["api"]} for p in listing("/v1/providers")]
+        return {"harnesses": harnesses, "providers": providers}
+
     # ── GET ──────────────────────────────────────────────────────────────────────────────────────────────────────
     def do_GET(self) -> None:
         url = urlsplit(self.path)
@@ -171,8 +184,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._reply(200, page, "text/html; charset=utf-8", {
                     "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
                                                "img-src 'self' data: blob:; frame-src 'self'; object-src 'none'"})
-            elif url.path == "/api/models":
-                self._json(200, {"models": sorted(m.id for m in self.client.models.list())})
+            elif url.path == "/api/catalog":
+                self._json(200, self.catalog())
             elif url.path == "/api/files":
                 sid = (query.get("session") or [""])[0]
                 if not SESSION.fullmatch(sid):
@@ -343,10 +356,17 @@ aside { width:260px; flex:none; background:var(--side); display:flex; flex-direc
 /* main */
 main { flex:1; display:flex; flex-direction:column; min-width:0; position:relative; }
 header { display:flex; align-items:center; gap:8px; padding:8px 12px; height:56px; }
-.model { display:flex; align-items:center; gap:4px; border-radius:10px; padding:0 4px 0 12px; }
-.model:hover, .model:focus-within { background:var(--hover); }
-.model input { border:0; outline:0; background:transparent; color:var(--text); font-family:inherit; font-size:15px; font-weight:600; width:300px; padding:8px 0; }
-.model svg { color:var(--muted); }
+.route { display:flex; align-items:center; min-width:0; }
+.route .sep { color:var(--muted); padding:0 1px; }
+.pick { position:relative; display:flex; align-items:center; border-radius:10px; }
+.pick:hover, .pick:focus-within { background:var(--hover); }
+.pick select, .pick input { border:0; outline:0; background:transparent; color:var(--text); font-family:inherit; font-size:15px; padding:8px 10px; }
+.pick select { appearance:none; -webkit-appearance:none; padding-right:26px; cursor:pointer; font-weight:600; max-width:200px; }
+.pick select option { color:#0d0d0d; background:#fff; }
+.pick svg { position:absolute; right:6px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
+.pick input { width:220px; }
+.pick input::placeholder { color:var(--muted); }
+.route.solo .provider, .route.solo .model, .route.solo .sep { display:none; }
 header .session { margin-left:auto; color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 header .ib.on { background:var(--hover); color:var(--text); }
 #log { flex:1; overflow-y:auto; }
@@ -461,7 +481,7 @@ table.csv { border-collapse:collapse; font-size:13px; margin:16px; }
 table.csv td, table.csv th { border-bottom:1px solid var(--line); padding:6px 14px 6px 0; text-align:left; white-space:nowrap; }
 table.csv th { font-weight:600; }
 @media (max-width:1100px) { aside { display:none; } }
-@media (max-width:840px) { #panel { position:fixed; inset:0; width:auto; max-width:none; min-width:0; z-index:5; } .model input { width:180px; } }
+@media (max-width:840px) { #panel { position:fixed; inset:0; width:auto; max-width:none; min-width:0; z-index:5; } .pick input { width:120px; } .pick select { max-width:120px; } }
 </style>
 </head>
 <body>
@@ -472,8 +492,14 @@ table.csv th { font-weight:600; }
 </aside>
 <main id="main">
   <header>
-    <label class="model" title="harness/provider/model"><input id="model" list="models" spellcheck="false"><span id="chev"></span></label>
-    <datalist id="models"></datalist>
+    <div class="route" id="route">
+      <label class="pick" title="Harness"><select id="harness"></select><span class="dd"></span></label>
+      <span class="sep">/</span>
+      <label class="pick provider" title="Provider"><select id="provider"></select><span class="dd"></span></label>
+      <span class="sep">/</span>
+      <label class="pick model" title="Model (empty: the harness's default)"><input id="model" list="models" spellcheck="false" autocomplete="off"></label>
+      <datalist id="models"></datalist>
+    </div>
     <span class="session mono" id="session"></span>
     <button class="ib" id="filesbtn" title="Workspace files"></button>
   </header>
@@ -647,7 +673,7 @@ function render() {
   $("main").classList.toggle("blank", blank);
   $("chats").innerHTML = chats.map(x => `<div class="chat${x.id === current ? " active" : ""}" data-id="${x.id}"><span>${esc(x.title)}</span><button data-del="${x.id}" title="Delete">${ic(I.close, 14)}</button></div>`).join("");
   $("session").textContent = c && c.session ? c.session : "";
-  $("model").value = c ? c.model : ($("model").value || DEFAULT_MODEL);
+  if (shownChat !== current) { shownChat = current; if (c) setPick(c.model); }
   if (blank) col.innerHTML = `<div class="hello"><h1>What should we build?</h1><p>The agent works in its own sandbox. What it makes opens on the right.</p></div>`;
   else col.innerHTML = c.turns.map((t, i) => t.role === "user"
     ? `<div class="msg user"><div class="bubble">${esc(t.text)}</div>` + (t.attachments && t.attachments.length ? `<div class="attached">` + t.attachments.map(a => `<span class="tile" style="cursor:default">${badge(a.name)}<span class="nm">${esc(a.name)}</span></span>`).join("") + `</div>` : "") + `</div>`
@@ -774,7 +800,7 @@ async function send() {
   const text = $("input").value.trim();
   if (!text || running || pending.some(p => p.uploading)) return;
   let c = chat();
-  const model = $("model").value.trim() || DEFAULT_MODEL;
+  const model = pickedModel(), picked = { provider: $("provider").value, model: $("model").value.trim() };
   if (!c || (c.model !== model && c.turns.length)) {
     c = { id: newId(), title: text.slice(0, 60), model, previous: null, session: null, turns: [] };
     chats.unshift(c); current = c.id; files = [];
@@ -812,6 +838,7 @@ async function send() {
   }
   for (const seg of turn.segments) if (seg.t === "thinking" && !seg.ended) seg.ended = Date.now();
   running = null; setBusy(false); save(); render();
+  if (turn.status === "completed") remember(picked.provider, picked.model);
   if (c.session) await afterTurn(c, turn, before);
 }
 function stop() {
@@ -843,7 +870,7 @@ function attach(list) {
 }
 
 // ── wiring ──────────────────────────────────────────────────────────────────────────────────────────────────
-$("new").innerHTML = ic(I.edit); $("attach").innerHTML = ic(I.clip); $("filesbtn").innerHTML = ic(I.panel); $("chev").innerHTML = ic(I.down2, 16);
+$("new").innerHTML = ic(I.edit); $("attach").innerHTML = ic(I.clip); $("filesbtn").innerHTML = ic(I.panel); document.querySelectorAll(".dd").forEach(e => e.innerHTML = ic(I.down2, 16));
 $("pnew").innerHTML = ic(I.ext, 16); $("pdl").innerHTML = ic(I.down, 16); $("prefresh").innerHTML = ic(I.refresh, 16); $("pclose").innerHTML = ic(I.close, 16);
 setBusy(false);
 function grow() { const t = $("input"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 220) + "px"; }
@@ -888,10 +915,54 @@ $("chats").addEventListener("click", async e => {
   const row = e.target.closest(".chat"); if (!row) return;
   current = row.dataset.id; panel.view = null; panel.tab = "files"; render(); await refreshFiles(); renderPanel();
 });
-fetch("/api/models").then(r => r.json()).then(d => {
-  $("models").innerHTML = (d.models || []).map(m => `<option value="${esc(m)}">`).join("");
+// ── the picker: harness / provider / model, from what the organization has ─────────────────────────────────────
+const MODELS = "hg-chatgui-models";                   // models you've used, per provider, offered again
+let catalog = { harnesses: [], providers: [] }, shownChat;
+function used() { try { return JSON.parse(localStorage.getItem(MODELS)) || {}; } catch { return {}; } }
+function remember(provider, model) {
+  if (!provider || !model) return;
+  const u = used(); u[provider] = [model, ...(u[provider] || []).filter(m => m !== model)].slice(0, 12);
+  try { localStorage.setItem(MODELS, JSON.stringify(u)); } catch {}
+}
+function harnessOf(name) { return catalog.harnesses.find(h => h.name === name); }
+function options(sel, names, value) {
+  if (value && !names.includes(value)) names = [value, ...names];   // a chat's model the catalog no longer has
+  sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+  sel.value = value || names[0] || "";
+}
+function fillProviders(want, keep) {        // keep: a chat's own provider stays even if the catalog lacks it
+  const h = harnessOf($("harness").value), apis = h ? h.provider_apis || [] : null;
+  const fits = catalog.providers.filter(p => !apis || apis.includes(p.api)).map(p => p.name);
+  $("route").classList.toggle("solo", !!h && !apis.length);      // a harness that calls no model (shell)
+  const pick = [want, h && h.default_provider].find(n => n && fits.includes(n)) || (keep && want) || fits[0];
+  options($("provider"), fits, pick);
+  fillModels();
+}
+function fillModels() {
+  const h = harnessOf($("harness").value), def = h ? h.default_model || "" : "";
+  $("model").placeholder = def ? `${def} (default)` : "model";
+  const list = [...new Set([def, ...(used()[$("provider").value] || [])].filter(Boolean))];
+  $("models").innerHTML = list.map(m => `<option value="${esc(m)}">`).join("");
+}
+function setPick(id) {
+  const [harness = "", provider = "", ...rest] = (id || "").split("/"), model = rest.join("/");   // the model may hold a /
+  options($("harness"), catalog.harnesses.map(h => h.name), harness);
+  fillProviders(provider, true);
+  $("model").value = model;
+}
+function pickedModel() {
+  const h = harnessOf($("harness").value), harness = $("harness").value;
+  if (h && !(h.provider_apis || []).length) return harness;
+  const provider = $("provider").value, model = $("model").value.trim();
+  return [harness, provider, model].filter(Boolean).join("/") || DEFAULT_MODEL;
+}
+$("harness").addEventListener("change", () => { fillProviders($("provider").value); $("model").value = ""; });
+$("provider").addEventListener("change", fillModels);
+fetch("/api/catalog").then(r => r.json()).then(d => {
+  if (d.harnesses) catalog = d;
+  const c = chat(); setPick(c ? c.model : pickedModel());
 }).catch(() => {});
-load(); current = chats[0] ? chats[0].id : null; render(); refreshFiles().then(renderPanel); $("input").focus();
+load(); current = chats[0] ? chats[0].id : null; setPick(DEFAULT_MODEL); render(); refreshFiles().then(renderPanel); $("input").focus();
 </script>
 </body>
 </html>
