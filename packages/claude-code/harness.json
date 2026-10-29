@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "name": "claude-code",
+  "version": "2.1.310-4",
+  "description": "Anthropic's Claude Code CLI (@anthropic-ai/claude-code 2.1.310), run headless (claude -p --output-format stream-json --include-partial-messages) with permissions skipped inside the sandbox, on any Anthropic Messages-shaped provider (the default model is claude-sonnet-5-5, Anthropic's newest mid-tier model). The request's user input becomes the prompt and its files are placed in the workspace; instructions and system/developer messages are appended to the system prompt; reasoning.effort, text.format json_schema and max_tool_calls map to the CLI's own flags; the turn's MCP servers become its MCP config, narrowed by allowed_tools; turns after the first resume the CLI's session. Assistant text streams token by token; thinking becomes reasoning items, Bash runs become shell_call items, Write/Edit/MultiEdit become apply_patch_call items, MCP tools become mcp_call items and every other tool a function_call, each with its output; token usage is reported on the final response and unsupported request fields in metadata.hg_ignored_fields.",
+  "provider": {"apis": ["anthropic"]},
+  "defaults": {"model": "claude-sonnet-5-5"},
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "stop_grace_s": 10},
+  "persist": [".claude/projects"]
+}

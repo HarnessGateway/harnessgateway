@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "name": "gemini-cli",
+  "version": "0.65.0-4",
+  "description": "Google's Gemini CLI (@google/gemini-cli 0.65.0), run headless (gemini -o stream-json --approval-mode yolo --skip-trust, prompt on stdin) against the organization's Gemini API provider at the platform's gateway (GOOGLE_GEMINI_BASE_URL with the per-turn token as GEMINI_API_KEY); the CLI speaks only the Gemini API. Assistant text streams as output_text deltas; shell runs become shell_call items, write_file/replace become apply_patch_call items, MCP tools become mcp_call items and every other tool a function_call, each with its output; usage comes from the run's stats. Turns after the first resume the CLI's own session; instructions and system/developer messages (a user-level context file), reasoning.effort, text.format, input files and images, the turn's MCP servers, max_tool_calls and max_output_tokens are mapped, every helper model the CLI uses is pinned to the requested one, and request fields the CLI cannot honour are named in metadata.hg_ignored_fields.",
+  "provider": {"apis": ["google"]},
+  "defaults": {"model": "gemini-3.8-flash"},
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "stop_grace_s": 10},
+  "persist": [".gemini/tmp", ".gemini/projects.json"]
+}

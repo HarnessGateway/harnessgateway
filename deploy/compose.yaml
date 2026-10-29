@@ -1,0 +1,122 @@
+# HarnessGateway self-hosted on one host (SPEC §10.4): `install.sh` sets it up; by hand:
+#
+#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:1.0.0 keygen >> .env
+#   docker compose up -d
+#   docker compose up -d --wait postgres harnessgateway node
+#   docker compose exec harnessgateway harnessgateway init      # prints the admin key, once → HG_CONSOLE_KEY in .env
+#   docker compose run --rm console init                        # the consoles' first users, once
+#   docker compose up -d --wait console
+#
+# Services: postgres (all state), harnessgateway (the API and the provider gateway on one port, objects on a volume),
+# node (runs each session's sandbox under gVisor) and console (the web consoles on :8800, holding the admin key). The node drives the host's Docker: sandboxes are sibling
+# containers that bind-mount their session directories from the host, so the node directory is mounted at the SAME
+# path inside and out. Each sandbox's egress door joins `hg-uplink`, where it reaches the gateway and the internet;
+# postgres stays on `backend`, which no door joins.
+name: harnessgateway
+
+x-platform: &platform
+  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:1.0.0}
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD:?set POSTGRES_ROOT_PASSWORD in .env}
+      HG_DB_PASSWORD: ${HG_DB_PASSWORD:?set HG_DB_PASSWORD in .env}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-harnessgateway.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d harnessgateway"]
+      interval: 5s
+      retries: 30
+    networks: [backend]
+
+  harnessgateway:
+    <<: *platform
+    command: ["serve", "--role", "api,gateway"]
+    environment:
+      HG_DATABASE_URL: postgresql://harnessgateway:${HG_DB_PASSWORD}@postgres:5432/harnessgateway
+      HG_SECRET_KEY: ${HG_SECRET_KEY:?set HG_SECRET_KEY in .env (harnessgateway keygen)}
+      HG_OPERATOR_KEY: ${HG_OPERATOR_KEY:-}
+      HG_NODE_JOIN_TOKEN: ${HG_NODE_JOIN_TOKEN:-}      # the default pool's shared token, registered at start
+      HG_BLOB_URL: ${HG_BLOB_URL:-file:///var/lib/harnessgateway-objects}
+      HG_API_URL: http://harnessgateway:8000
+      HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
+      HG_EXTENSIONS: ${HG_EXTENSIONS:-}
+      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - objects:/var/lib/harnessgateway-objects
+    ports:
+      - "${HG_BIND:-127.0.0.1}:${HG_HTTP_PORT:-8000}:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 5s
+      retries: 60
+    networks: [backend, uplink]
+
+  node:
+    <<: *platform
+    command: ["node"]
+    user: "0:0"
+    stop_grace_period: 2m       # saves under way finish before the node removes its boxes
+    environment:
+      HG_NODE_JOIN_TOKEN: ${HG_NODE_JOIN_TOKEN:?set HG_NODE_JOIN_TOKEN in .env (harnessgateway keygen)}
+      HG_API_URL: http://harnessgateway:8000
+      HG_GATEWAY_URL: http://harnessgateway:8000/gateway
+      HG_UPLINK_NETWORK: hg-uplink
+      HG_NODE_DIR: ${HG_NODE_DIR:-/var/lib/harnessgateway}
+      HG_NODE_NAME: ${HG_NODE_NAME:-node-1}
+      HG_NODE_SLOTS: ${HG_NODE_SLOTS:-4}
+      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:1.0.0}
+      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:1.0.0}
+      HG_UPSTREAM_PROXY: ${HG_UPSTREAM_PROXY:-}
+      HG_CA_FILE: ${HG_CA_FILE:-}
+      HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
+      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HG_NODE_DIR:-/var/lib/harnessgateway}:${HG_NODE_DIR:-/var/lib/harnessgateway}
+    depends_on:
+      harnessgateway: {condition: service_healthy}
+    networks: [backend]
+
+  console:
+    <<: *platform
+    entrypoint: ["python", "/opt/harnessgateway/console/server.py"]
+    command: ["--host", "0.0.0.0", "--port", "8800"]
+    environment:
+      HG_API: http://harnessgateway:8000
+      HG_KEY: ${HG_CONSOLE_KEY:-}                      # an admin key: install.sh writes it after init
+      HG_OPERATOR_KEY: ${HG_OPERATOR_KEY:-}
+      HG_CONSOLE_DIR: /var/lib/harnessgateway-console
+    volumes:
+      - console:/var/lib/harnessgateway-console
+    ports:
+      - "${HG_BIND:-127.0.0.1}:${HG_CONSOLE_PORT:-8800}:8800"
+    depends_on:
+      harnessgateway: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8800/login')"]
+      interval: 5s
+      retries: 30
+    networks: [backend]
+
+networks:
+  backend:
+  uplink:                       # every sandbox's door joins it too, so it needs room
+    name: hg-uplink
+    ipam:
+      config:
+        - subnet: ${HG_UPLINK_SUBNET:-172.30.0.0/16}
+
+volumes:
+  postgres:
+  objects:
+  console:

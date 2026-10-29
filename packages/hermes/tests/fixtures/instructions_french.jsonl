@@ -1,0 +1,11 @@
+{"type": "system", "subtype": "init", "model": "", "session_id": "", "timestamp": 1793077022969}
+{"type": "text", "text": "Bon", "timestamp": 1793077032806}
+{"type": "text", "text": "jour", "timestamp": 1793077032817}
+{"type": "text", "text": " !", "timestamp": 1793077032818}
+{"type": "text", "text": " Comment", "timestamp": 1793077032818}
+{"type": "text", "text": " puis", "timestamp": 1793077032832}
+{"type": "text", "text": "-je", "timestamp": 1793077032832}
+{"type": "text", "text": " vous", "timestamp": 1793077032832}
+{"type": "text", "text": " aider", "timestamp": 1793077032851}
+{"type": "text", "text": " ?", "timestamp": 1793077032852}
+{"type": "result", "session_id": "local-cfcd42941558c1c2981a309511d72f0c27802e85636aed1c803298ee73819072", "exit_code": 0, "text": "Bonjour ! Comment puis-je vous aider ?", "tokens": {"input": 11231, "output": 10, "total": 11241, "cache_read": 2176, "cache_write": 0}, "duration_ms": 11243, "timestamp": 1793077034213}

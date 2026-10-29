@@ -1,0 +1,30 @@
+name: ci
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
+      - run: scripts/version-check
+      - run: .venv/bin/ruff check .
+      - run: .venv/bin/mypy
+      - run: .venv/bin/pytest -q tests/unit packages
+      - name: no forbidden words
+        run: '! grep -rIil "harness""router" --exclude-dir=.git --exclude-dir=.venv . | grep -v "^./AGENTS.md$"'
+
+  images:
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t harnessgateway:ci .
+      - run: docker build -t harnessgateway-sandbox:ci sandbox/
+      - run: docker run --rm harnessgateway:ci --version

@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "name": "codex",
+  "version": "0.164.0-3",
+  "description": "OpenAI Codex CLI 0.164.0, run headless with `codex exec --json` against the organization's OpenAI-shaped provider over the Responses API (wire_api = responses). Each turn passes Codex its configuration as `-c` overrides (provider, model, reasoning effort and summary, verbosity, the request's instructions as developer instructions, the turn's MCP servers) on top of the organization's own ~/.codex, and runs Codex fully autonomous (approval never, danger-full-access: the gVisor sandbox is the boundary); continuation resumes Codex's own thread with `codex exec resume`. Codex's JSONL events become Responses events: assistant text as an output_text message, reasoning summaries as reasoning items, shell commands as shell_call + shell_call_output, file changes as apply_patch_call + apply_patch_call_output, MCP tools as mcp_call, web searches as web_search_call, plans and other tools as function_call, and token usage (cached and reasoning tokens included) on the terminal event.",
+  "provider": {"apis": ["openai"]},
+  "defaults": {"model": "gpt-6.1-sol"},
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "stop_grace_s": 10},
+  "persist": [".codex/sessions"]
+}

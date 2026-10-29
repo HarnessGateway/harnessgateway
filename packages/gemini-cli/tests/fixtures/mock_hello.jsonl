@@ -1,0 +1,11 @@
+{"type":"init","timestamp":"2026-10-27T01:38:00.639Z","session_id":"8e3b03b4-1610-4bec-b088-cd93f9cec022","model":"gemini-2.5-flash"}
+{"type":"message","timestamp":"2026-10-27T01:38:00.640Z","role":"user","content":"Create hello.py and run it."}
+{"type":"message","timestamp":"2026-10-27T01:38:00.682Z","role":"assistant","content":"I'll create the file.","delta":true}
+{"type":"tool_use","timestamp":"2026-10-27T01:38:00.711Z","tool_name":"write_file","tool_id":"write_file__write_file_1793065080682_0","parameters":{"file_path":"hello.py","content":"print('hello')\n"}}
+{"type":"tool_result","timestamp":"2026-10-27T01:38:00.854Z","tool_id":"write_file__write_file_1793065080682_0","status":"success"}
+{"type":"tool_use","timestamp":"2026-10-27T01:38:00.873Z","tool_name":"run_shell_command","tool_id":"run_shell_command__run_shell_command_1793065080870_0","parameters":{"command":"python3 hello.py","description":"run it"}}
+{"type":"tool_result","timestamp":"2026-10-27T01:38:01.290Z","tool_id":"run_shell_command__run_shell_command_1793065080870_0","status":"success","output":"hello"}
+{"type":"message","timestamp":"2026-10-27T01:38:01.298Z","role":"assistant","content":"It printed","delta":true}
+{"type":"message","timestamp":"2026-10-27T01:38:01.355Z","role":"assistant","content":" `hello`","delta":true}
+{"type":"message","timestamp":"2026-10-27T01:38:01.405Z","role":"assistant","content":".","delta":true}
+{"type":"result","timestamp":"2026-10-27T01:38:01.457Z","status":"success","stats":{"total_tokens":3287,"input_tokens":3200,"output_tokens":63,"cached":1600,"input":1600,"duration_ms":818,"tool_calls":2,"models":{"gemini-2.5-flash":{"total_tokens":3287,"input_tokens":3200,"output_tokens":63,"cached":1600,"input":1600}}}}

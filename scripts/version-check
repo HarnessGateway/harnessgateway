@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""The one version, everywhere it is written: pyproject, the package, the changelog's top entry, compose, the installer,
+the ops doc and the Dockerfile comments. CI runs this; a release is the changelog's top entry."""
+import re
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+pyproject = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M)[1]
+package = re.search(r'^__version__ = "([^"]+)"', (root / "harnessgateway/__init__.py").read_text(), re.M)[1]
+changelog = re.search(r"^## \[(\d[^\]]*)\]", (root / "CHANGELOG.md").read_text(), re.M)[1]
+problems = []
+if not pyproject == package == changelog:
+    problems.append(f"pyproject {pyproject}, harnessgateway.__version__ {package}, CHANGELOG top entry {changelog} differ")
+for rel in ("deploy/compose.yaml", "deploy/install.sh", "docs/operations.md", "Dockerfile", "sandbox/Dockerfile"):
+    text = (root / rel).read_text()
+    others = sorted(set(re.findall(r"harnessgateway(?:/harnessgateway|/sandbox)?:(\d+\.\d+\.\d+)", text)) - {pyproject})
+    if others:
+        problems.append(f"{rel} names version(s) {', '.join(others)}, not {pyproject}")
+    if rel == "deploy/install.sh" and f"VERSION={pyproject}\n" not in text:
+        problems.append(f"{rel}: VERSION is not {pyproject}")
+if problems:
+    print("version check failed:\n  " + "\n  ".join(problems))
+    sys.exit(1)
+print(f"version {pyproject} is consistent")

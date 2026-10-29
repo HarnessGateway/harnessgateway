@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HarnessGateway</title>
+<link rel="icon" href="static/mascot.png">
+<link rel="stylesheet" href="static/app.css">
+<script type="module" src="static/app.js"></script>
+</head>
+<body>
+<aside>
+  <div class="brand"><b>HarnessGateway</b><span class="bb"><button class="ib" id="sideclose" title="Hide chats"></button><button class="ib" id="new" title="New chat"></button></span></div>
+  <div class="label">Chats</div>
+  <div class="chats" id="chats"></div>
+</aside>
+<main id="main">
+  <header>
+    <button class="ib" id="sideopen" title="Show chats" hidden></button>
+    <button class="ib" id="hnew" title="New chat" hidden></button>
+    <div class="route" id="route">
+      <label class="pick" title="Harness"><select id="harness"></select><span class="dd"></span></label>
+      <span class="sep">/</span>
+      <label class="pick provider" title="Provider"><select id="provider"></select><span class="dd"></span></label>
+      <span class="sep">/</span>
+      <label class="pick model" title="Model (empty: the harness's default)"><input id="model" list="models" spellcheck="false" autocomplete="off"></label>
+      <datalist id="models"></datalist>
+    </div>
+    <span class="session mono" id="session"></span>
+    <button class="ib" id="filesbtn" title="Workspace files"></button>
+  </header>
+  <div id="log"><div class="col" id="col"></div></div>
+  <footer>
+    <div class="composer">
+      <div class="pending" id="pending"></div>
+      <div class="row">
+        <button class="ib" id="attach" title="Attach files"></button>
+        <input type="file" id="picker" multiple hidden>
+        <textarea id="input" rows="1" placeholder="Ask the agent to build something"></textarea>
+        <button class="send" id="send" title="Send"></button>
+      </div>
+    </div>
+    <div class="hint">Each chat is one sandbox session. Its files and the agent's memory carry from message to message.</div>
+  </footer>
+</main>
+<section id="panel" hidden>
+  <div class="ph">
+    <div class="seg"><button id="tabfiles">Files</button><button id="tabview">Preview</button></div>
+    <span class="title mono" id="ptitle"></span>
+    <button class="ib" id="pmode" hidden></button>
+    <a class="ib" id="pnew" target="_blank" rel="noopener" title="Open in a new tab"></a>
+    <a class="ib" id="pdl" title="Download"></a>
+    <button class="ib" id="prefresh" title="Refresh"></button>
+    <button class="ib" id="pwide" title="Widen"></button>
+    <button class="ib" id="pclose" title="Close"></button>
+  </div>
+  <div id="pbody"></div>
+</section>
+</body>
+</html>

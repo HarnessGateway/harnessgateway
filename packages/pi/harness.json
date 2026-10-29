@@ -1,0 +1,15 @@
+{
+  "contract": 1,
+  "name": "pi",
+  "version": "1.4.0-4",
+  "description": "Pi (@earendil-works/pi-coding-agent 1.4.0), the minimal coding agent with read, bash, edit and write tools, run headless with `pi -p --mode json` against the organization's Anthropic- or OpenAI-shaped provider (written as a custom provider in Pi's models.json). Text and thinking stream token by token as output_text deltas and reasoning items; bash runs become shell_call items with their output and exit code, edit/write become apply_patch_call items, MCP tools become mcp_call items and other tools function_call items; usage is summed over the turn. Pi's own session is opened by the platform's session id, so previous_response_id continues the same conversation; instructions and system/developer messages, reasoning.effort, input files and images (placed in the workspace), the turn's MCP servers with their allowed_tools, text.format and max_output_tokens are mapped, and unsupported request fields are named in metadata.hg_ignored_fields.",
+  "provider": {"apis": ["anthropic", "openai"]},
+  "defaults": {"model": "deepseek-flash"},
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "stop_grace_s": 10},
+  "persist": [".pi/agent/sessions"],
+  "settings": {
+    "PI_OPENAI_API": {"description": "For OpenAI-shaped providers: openai-responses or openai-completions. Default: what Pi's model catalog uses for the model, else openai-completions."},
+    "PI_RAW_EVENTS": {"description": "Set to 1 to copy Pi's raw --mode json stream to the turn's stderr (for debugging and fixtures)."}
+  }
+}

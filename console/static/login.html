@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · HarnessGateway</title>
+<link rel="icon" href="/static/mascot.png">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login">
+<form class="lbox" id="f">
+  <div class="brand"><img class="logo" src="/static/mascot.png" alt=""><b>HarnessGateway</b></div>
+  <div id="msg" class="note" hidden></div>
+  <div id="signin">
+    <div class="field"><label>Username</label><input name="username" autocomplete="username" autofocus required></div>
+    <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
+  </div>
+  <div id="change" hidden>
+    <div class="field"><label>New password</label><input name="new" type="password" autocomplete="new-password" minlength="12"><div class="help">at least 12 characters</div></div>
+    <div class="field"><label>Again</label><input name="again" type="password" autocomplete="new-password"></div>
+  </div>
+  <button class="btn" id="go" style="width:100%;justify-content:center">Sign in</button>
+</form>
+<script type="module" src="/static/login.js"></script>
+</body>
+</html>

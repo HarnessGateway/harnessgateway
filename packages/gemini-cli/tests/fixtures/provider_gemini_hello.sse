@@ -1,0 +1,6 @@
+data: {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "index": 0}], "usageMetadata": {"promptTokenCount": 1200, "candidatesTokenCount": 1, "totalTokenCount": 1201}, "modelVersion": "gemini-2.5-flash", "responseId": "fixture"}
+
+data: {"candidates": [{"content": {"role": "model", "parts": [{"text": " there"}]}, "index": 0}], "usageMetadata": {"promptTokenCount": 1200, "candidatesTokenCount": 2, "totalTokenCount": 1202}, "modelVersion": "gemini-2.5-flash", "responseId": "fixture"}
+
+data: {"candidates": [{"content": {"role": "model", "parts": [{"text": ", friend."}]}, "index": 0, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 1200, "candidatesTokenCount": 3, "totalTokenCount": 1203}, "modelVersion": "gemini-2.5-flash", "responseId": "fixture"}
+

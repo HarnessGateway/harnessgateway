@@ -1,0 +1,15 @@
+{
+  "contract": 1,
+  "name": "opencode",
+  "version": "1.19.4-4",
+  "description": "OpenCode (npm opencode-ai 1.19.4, sst/opencode), the open-source coding agent, run headless as `opencode serve` and driven over its HTTP API and event stream, against the organization's Anthropic Messages or OpenAI (Responses or Chat Completions) provider, written as OpenCode's only provider. Text streams token by token as output_text deltas; reasoning becomes reasoning items; bash runs become shell_call items with their output and exit code, write/edit/apply_patch become apply_patch_call items, MCP tools become mcp_call items and every other tool a function_call; usage is summed over the turn. OpenCode's own session continues across turns (its SQLite store persists), and instructions (as the turn's system prompt), reasoning.effort (as the model variant), text.format json_schema (OpenCode's structured output), input files and images, MCP servers, max_output_tokens, max_tool_calls, temperature and top_p are mapped. Permission asks are approved (the sandbox is the boundary) and a cancel aborts the session.",
+  "provider": {"apis": ["anthropic", "openai"]},
+  "defaults": {"model": "deepseek-flash"},
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
+  "run": {"egress": [], "stop_grace_s": 10},
+  "persist": [".local/share/opencode/opencode.db", ".local/share/opencode/opencode.db-wal", ".local/share/opencode/opencode.db-shm"],
+  "settings": {
+    "OPENCODE_OPENAI_API": {"description": "For OpenAI-shaped providers: responses (@ai-sdk/openai) or chat (@ai-sdk/openai-compatible, Chat Completions). Default: responses for gpt-*, o<digit>* and codex* models, chat for every other model."},
+    "OPENCODE_RAW_EVENTS": {"description": "Set to 1 to copy OpenCode's raw event stream to the turn's stderr (for debugging and fixtures)."}
+  }
+}
