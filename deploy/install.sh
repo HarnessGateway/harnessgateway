@@ -2,7 +2,7 @@
 # HarnessGateway, self-hosted on one Linux host (SPEC §10.4). Run as root; safe to run again (it keeps .env, the data
 # and the admin key already issued).
 #
-#   curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v1.0.0/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v1.0.1/deploy/install.sh | sudo bash
 #   sudo ./deploy/install.sh                  # from a checkout: builds the images locally if they cannot be pulled
 #
 # It checks Docker, installs gVisor (runsc) by its official method if absent and registers it with Docker, writes
@@ -13,7 +13,10 @@
 # HG_NODE_DIR (/var/lib/harnessgateway), HG_DOCKER_POOL (10.200.0.0/16: room for one network per sandbox).
 set -euo pipefail
 
-VERSION=1.0.0
+# Everything runs from main(), called on the last line: bash reads the whole script before executing any of
+# it, so a run piped from curl is not cut short by a command that reads stdin.
+main() {
+VERSION=1.0.1
 RELEASE=${HG_RELEASE_URL:-https://raw.githubusercontent.com/harnessgateway/harnessgateway/v$VERSION/deploy}
 HOME_DIR=${HG_HOME:-/opt/harnessgateway}
 PLATFORM_IMAGE=${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:$VERSION}
@@ -113,13 +116,13 @@ mkdir -p "$(grep -E '^HG_NODE_DIR=' .env | cut -d= -f2-)"
 
 say "starting HarnessGateway"
 docker compose up -d --wait postgres harnessgateway node
-key=$(docker compose exec -T harnessgateway harnessgateway init | sed -n 's/.*"admin_key": "\(hg_[^"]*\)".*/\1/p')
+key=$(docker compose exec -T harnessgateway harnessgateway init </dev/null | sed -n 's/.*"admin_key": "\(hg_[^"]*\)".*/\1/p')
 if [ -n "$key" ]; then
   sed -i "s|^HG_CONSOLE_KEY=.*|HG_CONSOLE_KEY=$key|" .env
 fi
 users=""
 if grep -qE '^HG_CONSOLE_KEY=hg_' .env; then
-  users=$(docker compose run --rm -T console init 2>/dev/null | sed -n 's/^ *"\(deployer\|admin\)": "\([^"]*\)".*/\1: \2/p')
+  users=$(docker compose run --rm -T console init </dev/null 2>/dev/null | sed -n 's/^ *"\(deployer\|admin\)": "\([^"]*\)".*/\1: \2/p')
   docker compose up -d --wait console
 fi
 port=$(grep -E '^HG_HTTP_PORT=' .env | cut -d= -f2-)
@@ -147,3 +150,6 @@ Next:
   curl \$OPENAI_BASE_URL/responses -H "authorization: Bearer \$OPENAI_API_KEY" -H 'content-type: application/json' \\
        -d '{"model": "claude-code", "input": "Write hello.py and run it"}'
 EOF
+}
+
+main "$@"

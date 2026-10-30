@@ -7,6 +7,15 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [1.0.1]
+
+### Fixed
+
+- `deploy/install.sh` run as `curl … | sudo bash` stopped after starting the compose project, without creating the
+  organization's console users or printing the admin key: the `docker compose exec` that runs `init` read the rest of
+  the script from stdin. The script now runs from a function called on its last line, so bash reads all of it before
+  executing any of it, and the compose commands get no stdin.
+
 ## [1.0.0]
 
 The first release of HarnessGateway: coding-agent harnesses as an API.
