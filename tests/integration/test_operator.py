@@ -32,7 +32,7 @@ def test_health_nodes_config_versions(ops):
     c = ops.get("/internal/config").json()
     assert "secret_key" not in c["settings"] and "database_url" not in c["settings"] and c["defaults"]["vcpus"] > 0
     v = ops.get("/internal/versions").json()
-    assert v["platform"] and any(b["name"] == "shell" for b in v["builtins"])
+    assert v["platform"] and v["migrations"]["harnessgateway.migrations"] >= 3
 
 
 def test_an_org_is_configured_and_usage_summed(ops, api):

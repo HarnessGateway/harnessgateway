@@ -34,7 +34,6 @@ organization) and as the base of a multi-tenant SaaS. It is the reference every 
 |---|---|
 | Organization (org) | The tenant. Owns keys, providers, harnesses, files, sessions, usage. Self-hosted has one. |
 | Harness package | A directory (manifest, two scripts, seeds) that teaches the platform one CLI and one agent. |
-| Overlay package | A package that `extends` another, adding seeds, settings, secrets, MCP servers and egress, no scripts. |
 | Harness | A package installed in an org under a name, with the org's settings and secret values. |
 | Provider | An org's model endpoint: an API shape (`anthropic`, `openai`, `google`), a base URL, a sealed key. |
 | Session (container) | The continuing conversation and workspace of one harness. Exposed as an OpenAI container. |
@@ -146,8 +145,8 @@ OpenAI's error shape: `{"error": {"type", "code", "message", "param"}}`. A turn 
 
 ```
 harness.json          the manifest (§5.2)
-install.sh            installs the CLI into $HG_TOOLS (base packages only)
-run.sh                one turn: the request in, Responses events out (base packages only)
+install.sh            installs the CLI into $HG_TOOLS
+run.sh                one turn: the request in, Responses events out
 seeds/home/           laid into $HOME in every new sandbox: the agent's standing configuration
 seeds/workspace/      laid into the workspace of a new session: a starter project
 anything else         the package's own (a mapper module, README, tests): the platform reads none of it
@@ -182,8 +181,7 @@ unpacked. Regular files and directories only; nothing outside the root.
 |---|---|
 | `contract` | `1`. |
 | `name` | `[a-z0-9][a-z0-9._-]{0,62}`. |
-| `version` | `<CLI version>-<package revision>`; free text for overlays. |
-| `extends` | overlays only (§5.3): the name of the harness extended. |
+| `version` | `<CLI version>-<package revision>`. |
 | `provider.apis` | subset of `anthropic`, `openai`, `google`; absent means the harness runs without a model. |
 | `install.egress`, `run.egress` | egress entries (§7.2). `install.timeout_s` 1–3600, default 900. |
 | `run.timeout_s` | the package's own bound on a turn, if any. `run.stop_grace_s` 1–300, default 20. |
@@ -194,23 +192,14 @@ unpacked. Regular files and directories only; nothing outside the root.
 
 Unknown fields are refused, with the field named.
 
-### 5.3 Overlays: an org's IP without copying a CLI's mapping
+### 5.3 One package per harness
 
-An overlay is `harness.json` with `extends`, plus `seeds/` (and its own README). It has no scripts (refused if present).
-At install, `extends` resolves to the org's installed harness of that name (or a built-in) and is pinned by digest.
-
-Composition (one level only; an overlay of an overlay is refused):
-
-| Part | Composed as |
-|---|---|
-| `install.sh`, `run.sh`, tools | the base's (tools are installed once per base digest) |
-| seeds | base, then overlay; overlay files replace base files at the same path |
-| `defaults` | overlay wins |
-| `run.egress`, `persist`, `settings`, `secrets`, `mcp` | union; a name or label defined by both is refused at install |
-| `provider`, `install`, `run.timeout_s`, `run.stop_grace_s` | the base's; an overlay setting them is refused |
-
-The composed harness's identity is the pair (base digest, overlay digest). An org's repository then holds only its IP
-(instruction files, skills, hooks, settings, MCP catalog), version-controlled, installed from git (§14.4).
+A harness is one package: the CLI's install and mapping and, when the org wants it, the org's own agent on that CLI
+(`seeds/home` with its instruction files, skills and hooks; its `mcp` catalog, `settings` and `secrets`). There is no
+composition between packages. An org that wants its own agent on a CLI another package already maps copies that
+package in the console (open it, **Edit**, change `name`) and adds its seeds; the two are then separate harnesses,
+each pinned by its own digest. Packages others start from stay *vanilla*: the CLI as its vendor ships it plus what it
+needs to run headless in the sandbox, nothing an org would want to own.
 
 ### 5.4 Install
 
@@ -254,14 +243,14 @@ A small Python library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), op
   and exactly one terminal event.
 - `State`: key/value under `$HG_STATE`.
 
-### 5.8 Built-in packages
+### 5.8 The template
 
-Shipped in the platform image, installed into a new org by `init`: `claude-code`, `codex`, `gemini-cli`, `hermes`,
-`opencode`, `pi`, and `shell` (no model: the input runs as a bash command; the reference and test package). Each
-follows one layout: `harness.json`, `install.sh`, `run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`),
-`map.py` (helpers, the output mapper, request→CLI, run, main), `README.md` (Files, The command, Request fields, Output
-mapping, Known limits, Tests), `tests/` with fixtures recorded from real runs. A built-in seeds nothing an org would
-want to own; orgs add their IP with overlays.
+The platform ships no harnesses. The repository and the platform image carry one package, `shell` (`packages/shell`;
+no model: the input runs as a bash command; the reference and test package), and the console starts every new
+harness as a copy of it under the name the user gives. Each package follows its layout: `harness.json`, `install.sh`,
+`run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`), `map.py` (helpers, the output mapper, request→CLI, run,
+main), `README.md` (Files, The command, Request fields, Output mapping, Known limits, Tests), `tests/` with fixtures
+recorded from real runs. The template's README says, file by file, what to change for a CLI.
 
 ## 6. Sandboxes and sessions
 
@@ -401,7 +390,8 @@ or URL cannot have it injected; it is refused rather than given the value.
 - Object keys are `orgs/<org_id>/…`.
 - **API keys**: `hg_` + 40 random characters, stored as an HMAC with the server's pepper. Scopes: `admin` (everything)
   and `run` (responses, files, containers, models). Revocable; revocation is immediate.
-- **Self-hosted**: `harnessgateway init` creates the one org, installs the built-ins, and prints the first admin key.
+- **Self-hosted**: `harnessgateway init` creates the one org and prints the first admin key. Harnesses are added
+  afterwards, in the console or with `POST /harnesses`.
   There is no org-management API.
 - **Multi-tenant**: the extension seam (§13) authenticates its own users, creates and suspends orgs, sets each org's
   capacity, and gates turns. The core services (`Orgs`, `Keys`, …) are the API it calls.
@@ -422,7 +412,7 @@ One platform image, one CLI, `harnessgateway <command>`:
 | `serve --role api,gateway` | both in one process (small deployments) | replicas |
 | `node` | runs boxes on its host's Docker with gVisor | more hosts |
 | `migrate` | applies schema migrations (advisory-locked, idempotent; `serve` runs it too) | — |
-| `init` | creates the org, installs built-ins, prints the admin key (idempotent) | — |
+| `init` | creates the org, prints the admin key (idempotent) | — |
 | `door` | the per-box door (started by the node) | — |
 | `node-token create` | prints a join token for a node pool (operator) | — |
 | `keygen` | prints fresh secrets for configuration | — |
@@ -555,10 +545,10 @@ All under `/v1`, JSON, bearer API key. OpenAI-shaped endpoints match OpenAI's re
 | `GET/POST/DELETE /keys` | create returns the key once |
 | `GET/PUT/DELETE /providers/{name}` | `{api, base_url, key}`; the key is write-only |
 | `GET/PUT /egress` | the org's egress entries |
-| `GET /harnesses`, `GET /harnesses/{name}` | composed manifest, digests, which settings and secrets are set (never values) |
-| `POST /harnesses` | install or upgrade: `{"builtin": name}`, `{"git": {url, ref, path}}`, or multipart `package` |
+| `GET /harnesses`, `GET /harnesses/{name}` | manifest, digest, which settings and secrets are set (never values); `GET /harnesses/{name}/files` and `/files/{path}` read the package |
+| `POST /harnesses` | install or upgrade from a multipart `package` archive (the package folder as a tar, gzipped or not) |
 | `PATCH /harnesses/{name}` | `settings`, `secrets` (write-only; null clears), `default_provider`, `default_model` |
-| `DELETE /harnesses/{name}` | refused while an overlay extends it |
+| `DELETE /harnesses/{name}` | existing sessions keep running on their pinned package |
 | `GET /usage` | §12 |
 | `GET /traces/{response_id}` | §11; a session's records together: `GET /containers/{id}/traces` (§14.1) |
 
@@ -569,12 +559,6 @@ Upgrading a harness affects new sessions only.
 `POST /internal/nodes/join`, `/heartbeat`, `/claim`, `/turns/{id}/events` (stdout bytes), `/turns/{id}/finish`,
 `/turns/{id}/saved`, `/usage`, `/traces`; operator: `node-tokens`, `nodes/{id}/drain`.
 
-### 14.4 Installing from git
-
-`{"git": {"url": "https://…", "ref": "v1.2.0", "path": "harness"}}`: a shallow fetch of one ref over HTTPS, no
-prompts, no system git config, then the same validation as an upload. The installed record keeps the URL, ref and
-commit.
-
 ## 15. Data model
 
 | Table | Holds |
@@ -583,9 +567,9 @@ commit.
 | `api_keys` | id, org, digest, scope, label, created, revoked |
 | `providers` | org, name, api, base_url, sealed key |
 | `packages` | digest, manifest, object key (shared across orgs; content-addressed) |
-| `harnesses` | org, name, base digest, overlay digest, source (builtin/upload/git + ref/commit), settings, sealed secrets, default provider, default model |
+| `harnesses` | org, name, package digest, manifest, settings, sealed secrets, default provider, default model |
 | `files` | org, id, filename, bytes, object key |
-| `sessions` | org, id, harness name, base and overlay digests, provider, model, store, status, snapshot key, node, running turn, timestamps |
+| `sessions` | org, id, harness name, package digest, manifest, provider, model, store, status, snapshot key, node, running turn, timestamps |
 | `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the key, or the extension's principal, that created it) |
 | `turn_events` / `live_events` | kept events / deltas (purged after the turn), by (turn, seq) |
 | `turn_bindings` | sealed caller secrets of a turn, deleted at its end |
@@ -625,7 +609,7 @@ commit.
 
 ```
 harnessgateway/
-  domain/      pure rules: the Responses contract, manifests and composition, egress entries, capacity, meters, ids
+  domain/      pure rules: the Responses contract, manifests, packages, egress entries, capacity, meters, ids
   ports/       interfaces: BlobStore, KeyWrapper, SandboxRuntime
   adapters/    blob_fs, blob_s3, keys_local, keys_kms, sandbox_docker (vendor SDKs only here)
   services/    orgs, keys, providers, harnesses, files, sessions, turns, scheduler, secrets, traces, usage, sweeper
@@ -634,7 +618,7 @@ harnessgateway/
   node/        the node agent, the door, the turn runtime script
   extensions.py, config.py, db.py (+ migrations), __main__.py
 sandbox/       the sandbox image and hgkit
-packages/      the built-in packages
+packages/      the template package, shell
 console/       the consoles and the chat: an application on the public API, served by one small server
 deploy/        compose.yaml, install.sh, node.env.example
 docs/          architecture, API, the Responses wire, packages, operations, extensions, security
@@ -654,11 +638,11 @@ tests/         unit, packages, integration (a live stack, driven by the OpenAI S
 
 Each step ends when its check passes.
 
-1. **Domain**: contract (in/out validation, envelope, final Response), manifests and overlay composition, egress
-   entries, capacity, ids. → unit tests for every refusal and every composition rule.
+1. **Domain**: contract (in/out validation, envelope, final Response), manifests, packages, egress entries,
+   capacity, ids. → unit tests for every refusal.
 2. **Persistence and ports**: schema with RLS, migrations, BlobStore (fs, s3), KeyWrapper (local, kms). → tests prove an
    org cannot read another's rows or objects.
-3. **Services and API**: orgs, keys, providers, harnesses (builtin/upload/git, overlays), files, responses
+3. **Services and API**: orgs, keys, providers, harnesses (package upload), files, responses
    (queue, stream, cancel, idempotency), containers, usage, traces, extensions. → API tests with a fake node.
 4. **Gateway**: token + node credential → grant, path allowlist, key swap, streaming, capture. → tests against a stub
    provider, including a token presented without its node credential.
@@ -666,9 +650,9 @@ Each step ends when its check passes.
    door allowlist, private-address refusal, interception and header injection, counters. → integration: a secret
    reaches a test HTTPS server and is absent from the box (`env`, files, `/proc`), the request, the response, traces.
 6. **Sandbox image and hgkit.** → hgkit unit tests; image scan.
-7. **Built-in packages**, ported to §5: shell first, then claude-code, codex, gemini-cli, hermes, opencode, pi. → each
-   package's fixture tests; a live turn per package: file-creating first turn, recall on a new sandbox, streaming,
-   instructions, cancel, a provider error; an overlay adding an instruction file, a skill, a hook and an MCP server.
+7. **The template package**, shell, with its fixture tests; then, for each coding-agent CLI, a package written in the
+   console from the template and verified live: a file-creating first turn, recall on a new sandbox, streaming,
+   instructions, cancel, a provider error.
 8. **Deploy**: images, compose, `install.sh`. → a clean Linux host goes from nothing to a completed turn with one
    command; a second node host joins and takes turns; two API replicas behind a load balancer stream the same turn.
 9. **Docs**: architecture, API, Responses wire, packages (the builder guide), operations, extensions, security.

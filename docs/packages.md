@@ -3,7 +3,18 @@
 A harness package is what turns a coding-agent CLI into an agent HarnessGateway can run: how to install the CLI, how
 to run one turn, and what the agent *is* (its standing instructions, skills, hooks, MCP catalog). The platform knows
 no CLI; everything CLI-specific lives in the package. The contract is [`SPEC.md`](../SPEC.md) §4–§5; this page is the
-walkthrough. `packages/shell` is the smallest complete package; `packages/claude-code` a full one.
+walkthrough. `packages/shell` is the template: the smallest complete package, and the one every new harness starts
+from. Its README says, file by file, what to change.
+
+## In the console
+
+Under **Setup → Harnesses**, **New harness** copies the template into a draft under the name you give. Edit its files
+in the editor (add files for seeds), **Install**, then test it with a request: pick it in **Workbench → Chat**, or
+send `POST /v1/responses` with `"model": "<name>/<provider>/<model>"`. The session under **Observability → Sessions**
+shows every event your mapping produced and, under each turn, what the platform measured: the exit code, the CLI's
+stderr tail, provider calls and door connections. Edit the installed harness (**Edit** opens it as a draft) and
+**Install** again to upgrade it in place; running sessions keep the package they started on. The same package can be
+kept in git and installed with `POST /v1/harnesses` as a tar archive.
 
 ## The split
 
@@ -17,8 +28,8 @@ walkthrough. `packages/shell` is the smallest complete package; `packages/claude
 
 ```
 harness.json          the manifest
-install.sh            installs the CLI into $HG_TOOLS, pinned (base packages only)
-run.sh                one turn: `exec python3 "$HG_PACKAGE_DIR/map.py"` (base packages only)
+install.sh            installs the CLI into $HG_TOOLS, pinned
+run.sh                one turn: `exec python3 "$HG_PACKAGE_DIR/map.py"`
 map.py                request → CLI command; CLI output → Responses events (with hgkit)
 seeds/home/           laid into $HOME of every new sandbox: the agent's standing configuration
 seeds/workspace/      laid into the workspace of a new session
@@ -103,14 +114,14 @@ The workspace and `$HG_STATE` survive across turns and sandboxes; under `$HOME`,
 (use it for the CLI's session store, nothing else). Everything else in `$HOME` is reseeded from `seeds/home` in every
 new sandbox, so the agent's configuration is always the package's.
 
-## Overlays: an organization's agent on a built-in CLI
+## Your organization's agent
 
-An overlay is `harness.json` with `extends` naming the base harness (a built-in or one the organization installed),
-plus `seeds/`: instruction files, skills, hooks, an MCP catalog, settings and secrets of its own. No scripts. At
-install the base is pinned by digest; the overlay's seeds lay over the base's, its defaults win, and its egress,
-persist, settings, secrets and MCP union with the base's (a name both define is refused). Keep overlays in git and
-install them with `{"git": {"url", "ref", "path"}}`: the organization's IP, version-controlled, without copying any
-CLI's mapping.
+A package meant for others to start from stays vanilla: the CLI as its vendor ships it plus what it needs to run
+headless in the sandbox. Your organization's agent on that CLI is a package of its own: open the vanilla one in the
+console, **Edit**, give it a new `name`, and add what makes it yours: instruction files, skills, hooks and settings
+under `seeds/home`, an `mcp` catalog, `settings` and `secrets` in the manifest. Everything under `$HOME` is reseeded
+from the package in every new sandbox, so the agent's configuration is always the package's and takes effect on
+upgrade without migration.
 
 ## Testing
 
@@ -121,6 +132,6 @@ from harnessgateway.domain.contract import check_output
 events, outcome = check_output(stdout_text)      # raises OutputError with the offending field
 ```
 
-Live: install (`POST /v1/harnesses` with a multipart `package` archive, `{"git": …}` or `{"builtin": name}`), then
+Live: install (**Install** on the draft in the console, or `POST /v1/harnesses` with a multipart `package` archive), then
 send a turn with `"model": "my-agent/provider/model"`, and read `GET /v1/traces/{response_id}` for the harness's
 stderr tail, timings and the door's connection log.

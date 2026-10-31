@@ -1,14 +1,15 @@
-"""Against a live stack (an API with a node that runs the `shell` built-in): the contract end to end.
+"""Against a live stack (an API with a node): the contract end to end, on the `shell` package.
 
     HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_... .venv/bin/pytest -q tests/integration
 
-The organization's egress is set by these tests (to `*.npmjs.org`, `!evil.npmjs.org`, `mcp.hg-test.dev`) and the
-harness `hg-test-overlay` is installed and removed."""
+These tests install `shell` from `packages/shell` (upgrading it if installed), install and remove a harness
+`hg-test-seeds`, and set the organization's egress (to `*.npmjs.org`, `!evil.npmjs.org`, `mcp.hg-test.dev`)."""
 import io
 import json
 import os
 import tarfile
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -23,7 +24,21 @@ def api():
                       headers={"authorization": f"Bearer {os.environ['HG_TEST_KEY']}"}, timeout=600) as c:
         r = c.put("/v1/egress", json={"egress": ["*.npmjs.org", "!evil.npmjs.org", "mcp.hg-test.dev"]})
         r.raise_for_status()
+        r = c.post("/v1/harnesses", files={"package": ("shell.tgz", pack(SHELL))})
+        assert r.status_code == 200, r.text
         yield c
+
+
+SHELL = Path(__file__).resolve().parents[2] / "packages" / "shell"
+
+
+def pack(folder: Path) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for p in sorted(folder.rglob("*")):
+            if p.is_file() and "__pycache__" not in p.parts:
+                tar.add(p, arcname=p.relative_to(folder).as_posix())
+    return buf.getvalue()
 
 
 def turn(api: httpx.Client, body: dict) -> dict:
@@ -113,36 +128,41 @@ def test_cancel_stops_a_running_turn(api):
     assert got["status"] == "cancelled" and got["metadata"]["hg_reason"] == "cancelled"
 
 
-def overlay_archive() -> bytes:
-    manifest = {"contract": 1, "name": "hg-test-overlay", "version": "test", "extends": "shell",
+def seeded_archive() -> bytes:
+    """The shell package under another name, with seeds, a setting, a secret and an MCP server: what an organization's
+    own package adds to a CLI."""
+    manifest = {"contract": 1, "name": "hg-test-seeds", "version": "test",
                 "settings": {"GREETING": {"description": "shown", "default": "hello"}},
                 "secrets": {"T": {"description": "an mcp token", "hosts": ["mcp.hg-test.dev"]}},
                 "mcp": {"t": {"url": "https://mcp.hg-test.dev/mcp", "headers": {"Authorization": "Bearer ${T}"}}}}
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for path, data in (("harness.json", json.dumps(manifest).encode()), ("seeds/home/AGENTS.md", b"be kind\n"),
-                           ("seeds/workspace/hello.txt", b"from the overlay\n")):
+        files = [("harness.json", json.dumps(manifest).encode()), ("seeds/home/AGENTS.md", b"be kind\n"),
+                 ("seeds/workspace/hello.txt", b"from the seeds\n")]
+        files += [(n, (SHELL / n).read_bytes()) for n in ("install.sh", "run.sh", "map.py")]
+        for path, data in files:
             info = tarfile.TarInfo(path)
             info.size = len(data)
+            info.mode = 0o755 if path.endswith(".sh") else 0o644
             tar.addfile(info, io.BytesIO(data))
     return buf.getvalue()
 
 
-def test_an_overlay_adds_the_organizations_seeds_settings_secrets_and_mcp(api):
-    r = api.post("/v1/harnesses", files={"package": ("overlay.tgz", overlay_archive())})
+def test_a_package_adds_the_organizations_seeds_settings_secrets_and_mcp(api):
+    r = api.post("/v1/harnesses", files={"package": ("seeds.tgz", seeded_archive())})
     assert r.status_code == 200, r.text
-    assert r.json()["extends"] == "shell" and r.json()["base_digest"]
+    assert r.json()["digest"] and r.json()["name"] == "hg-test-seeds"
     try:
-        r = api.patch("/v1/harnesses/hg-test-overlay", json={"secrets": {"T": "test-token-123"}, "settings": {"GREETING": "hi"}})
+        r = api.patch("/v1/harnesses/hg-test-seeds", json={"secrets": {"T": "test-token-123"}, "settings": {"GREETING": "hi"}})
         assert r.status_code == 200 and r.json()["secrets"]["T"]["set"] is True and "test-token-123" not in r.text
         cmd = ("cat $HOME/AGENTS.md hello.txt; echo $GREETING; echo ${#T}; jq -r '.[0].headers.Authorization' $HG_MCP;"
                " curl -s https://mcp.hg-test.dev/mcp -H \"Authorization: $(jq -r '.[0].headers.Authorization' $HG_MCP)\"")
-        got = api.post("/v1/responses", json={"model": "hg-test-overlay", "input": cmd}).json()
+        got = api.post("/v1/responses", json={"model": "hg-test-seeds", "input": cmd}).json()
         assert got["status"] == "completed", got
         lines = text(got).split("\n")
-        assert lines[:4] == ["be kind", "from the overlay", "hi", str(PLACEHOLDER_LEN)]
+        assert lines[:4] == ["be kind", "from the seeds", "hi", str(PLACEHOLDER_LEN)]
         assert lines[4].startswith("Bearer hgs_") and "test-token-123" not in json.dumps(got)
         if os.environ.get("HG_TEST_MCP_SERVER"):             # a test server answering mcp.hg-test.dev, checking the token
             assert json.loads(lines[5]) == {"authorized": True}
     finally:
-        api.delete("/v1/harnesses/hg-test-overlay")
+        api.delete("/v1/harnesses/hg-test-seeds")

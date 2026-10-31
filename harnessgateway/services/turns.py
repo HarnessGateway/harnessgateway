@@ -220,10 +220,9 @@ class Turns:
         await self.objects.put(request_key, dumps(resolved.body).encode(), org_id=p.org_id, kind="request")
         if session is None:
             session = {"id": ids.new("session"), "turns": 0}
-            await tx.run("INSERT INTO sessions (id, org_id, harness, base_digest, overlay_digest, manifest, provider_id, "
-                         "model, store) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, path.harness,
-                         harness["base_digest"], harness["overlay_digest"], harness["manifest"], provider_id, model,
-                         routing.store)
+            await tx.run("INSERT INTO sessions (id, org_id, harness, digest, manifest, provider_id, model, store) VALUES "
+                         "(%s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, path.harness, harness["digest"],
+                         harness["manifest"], provider_id, model, routing.store)
         seq = session["turns"] + 1
         await tx.run("UPDATE sessions SET turns = %s, provider_id = %s, model = %s, last_active_at = now() WHERE id = %s",
                      seq, provider_id, model, session["id"])

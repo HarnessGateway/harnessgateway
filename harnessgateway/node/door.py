@@ -321,10 +321,15 @@ class Door:
             self.record("gateway", 8080, verdict, False, tally, started)
 
     async def write_counters(self) -> None:
+        """The counters file, rewritten every few seconds. A write that fails (a full disk, say) is logged and tried
+        again next time: the door keeps serving the box."""
         while True:
-            tmp = self.counters_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps({**self.counts, "at": time.time()}))
-            os.replace(tmp, self.counters_file)
+            try:
+                tmp = self.counters_file.with_suffix(".tmp")
+                tmp.write_text(json.dumps({**self.counts, "at": time.time()}))
+                os.replace(tmp, self.counters_file)
+            except OSError as e:
+                print(f"door: counters not written: {e}", file=sys.stderr, flush=True)
             await asyncio.sleep(COUNTERS_EVERY_S)
 
 

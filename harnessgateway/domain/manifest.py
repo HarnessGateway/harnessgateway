@@ -1,10 +1,10 @@
-"""The package manifest, `harness.json` (SPEC §5.2), and how an overlay composes over its base (SPEC §5.3)."""
+"""The package manifest, `harness.json` (SPEC §5.2)."""
 from __future__ import annotations
 
 import json
 import posixpath
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -17,7 +17,6 @@ from .names import NAME, NAME_PATTERN, env_name_ok
 PROVIDER_APIS = ("anthropic", "openai", "google")
 _PATH = re.compile(r"[A-Za-z0-9._@+-][A-Za-z0-9._@+/-]{0,254}")
 _REF = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
-OVERLAY_FORBIDS = ("provider", "install")
 
 
 def _entries(values: list[str]) -> list[str]:
@@ -114,7 +113,6 @@ class Manifest(_Strict):
     name: Annotated[str, Field(pattern=f"^{NAME_PATTERN}$")]
     version: Annotated[str, Field(min_length=1, max_length=64)]
     description: Annotated[str, Field(max_length=4000)] = ""
-    extends: Annotated[str, Field(pattern=f"^{NAME_PATTERN}$")] | None = None
     provider: Provider | None = None
     defaults: Defaults = Defaults()
     install: Install = Install()
@@ -142,12 +140,8 @@ class Manifest(_Strict):
         return self
 
     # ── reading ────────────────────────────────────────────────────────────────────────────────────────────────────
-    @property
-    def is_overlay(self) -> bool:
-        return self.extends is not None
-
     def check_references(self) -> None:
-        """Every ${NAME} in an MCP header names a declared secret (checked on a base and on a composed manifest)."""
+        """Every ${NAME} in an MCP header names a declared secret."""
         for label, server in self.mcp.items():
             unknown = sorted(server.secret_refs() - set(self.secrets))
             if unknown:
@@ -168,12 +162,6 @@ class Manifest(_Strict):
             raise Invalid("harness.json is not JSON", param="harness.json") from None
         if not isinstance(raw, dict):
             raise Invalid("harness.json is a JSON object", param="harness.json")
-        if raw.get("extends") is not None:
-            forbidden = [k for k in OVERLAY_FORBIDS if k in raw]
-            forbidden += [f"run.{k}" for k in (raw.get("run") or {}) if k != "egress"]
-            if forbidden:
-                raise Invalid(f"harness.json: an overlay takes these from its base and may not set them: "
-                              f"{', '.join(forbidden)}", param="harness.json")
         try:
             return cls.model_validate(raw)
         except ValidationError as e:
@@ -181,25 +169,3 @@ class Manifest(_Strict):
             where = ".".join(str(p) for p in err.get("loc", ()))
             raise Invalid(f"harness.json: {where or 'body'}: {err.get('msg', 'invalid')}", param="harness.json") from None
 
-
-def compose(base: Manifest, overlay: Manifest) -> Manifest:
-    """An overlay over its base: the base's scripts, provider, install and run bounds; the overlay's defaults; the union of
-    egress, persist, settings, secrets and MCP servers, where a name both define is refused."""
-    assert overlay.is_overlay and not base.is_overlay
-    for what in ("settings", "secrets", "mcp"):
-        both = sorted(set(getattr(base, what)) & set(getattr(overlay, what)))
-        if both:
-            raise Invalid(f"overlay {overlay.name}: {what} already defined by {base.name}: {', '.join(both)}",
-                          param="harness.json")
-    data: dict[str, Any] = base.model_dump()
-    data.update(name=overlay.name, version=overlay.version, description=overlay.description or base.description,
-                extends=overlay.extends,
-                defaults=(overlay.defaults if overlay.defaults.model else base.defaults).model_dump(),
-                persist=sorted({*base.persist, *overlay.persist}),
-                settings={**data["settings"], **overlay.model_dump()["settings"]},
-                secrets={**data["secrets"], **overlay.model_dump()["secrets"]},
-                mcp={**data["mcp"], **overlay.model_dump()["mcp"]})
-    data["run"]["egress"] = egress.entries([*base.run.egress, *overlay.run.egress])
-    composed = Manifest.model_validate(data)
-    composed.check_references()
-    return composed

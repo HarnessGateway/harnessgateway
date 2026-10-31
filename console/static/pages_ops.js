@@ -104,8 +104,7 @@ const versions = { title: "Versions", async render(el) {
   const v = await api("GET", "/internal/versions");
   el.innerHTML = top("Versions", "What is running, and what the nodes run sandboxes with.") +
     `<div class="grid two">${card("Platform", kv([["Platform", esc(v.platform)], ["Platform image", `<span class="mono">${esc(v.platform_image)}</span>`], ["Sandbox image", `<span class="mono">${esc(v.sandbox_image)}</span>`],
-      ...Object.entries(v.migrations).map(([p, n]) => [`Schema ${p}`, `migration ${n}`]), ["Built-in packages from", `<span class="mono">${esc(v.packages_dir)}</span>`]]))}` +
-    `${card("Built-in packages", table([{ h: "Package", cell: b => esc(b.name) }, { h: "Version", cell: b => `<span class="mono">${esc(b.version)}</span>` }], v.builtins))}</div>`;
+      ...Object.entries(v.migrations).map(([p, n]) => [`Schema ${p}`, `migration ${n}`])]))}</div>`;
 } };
 const config = { title: "Configuration", async render(el) {
   const c = await api("GET", "/internal/config");

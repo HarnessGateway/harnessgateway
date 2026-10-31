@@ -7,7 +7,6 @@ from __future__ import annotations
 import gzip
 import io
 import posixpath
-import shutil
 import subprocess
 import tarfile
 from pathlib import Path
@@ -57,8 +56,8 @@ def unpack(archive: bytes, into: Path) -> None:
 
 
 def validate(folder: Path) -> Manifest:
-    """The folder is a package on the contract, or Invalid says what is wrong. A base package has both scripts, which
-    must parse as bash; an overlay has none."""
+    """The folder is a package on the contract, or Invalid says what is wrong: a manifest, both scripts (which must parse
+    as bash), and nothing under seeds but home and workspace."""
     files = list(folder.rglob("*"))
     if any(p.is_symlink() or not (p.is_file() or p.is_dir()) for p in files):
         raise Invalid("a package holds only regular files and directories", param="package")
@@ -67,18 +66,14 @@ def validate(folder: Path) -> Manifest:
     if not (folder / "harness.json").is_file():
         raise Invalid("a package needs harness.json at its root", param="package")
     manifest = Manifest.parse((folder / "harness.json").read_text(errors="replace"))
-    present = [s for s in SCRIPTS if (folder / s).exists()]
-    if manifest.is_overlay and present:
-        raise Invalid(f"an overlay has no scripts (it runs its base's): remove {', '.join(present)}", param="package")
-    if not manifest.is_overlay:
-        missing = [s for s in SCRIPTS if s not in present]
-        if missing:
-            raise Invalid(f"a package needs {', '.join(SCRIPTS)}: {', '.join(missing)} missing", param="package")
-        for name in SCRIPTS:
-            check = subprocess.run(["bash", "-n", str(folder / name)], capture_output=True, text=True, timeout=30)
-            if check.returncode != 0:
-                raise Invalid(f"{name} is not valid bash: {check.stderr.strip()[-500:]}", param="package")
-        manifest.check_references()
+    missing = [s for s in SCRIPTS if not (folder / s).exists()]
+    if missing:
+        raise Invalid(f"a package needs {', '.join(SCRIPTS)}: {', '.join(missing)} missing", param="package")
+    for name in SCRIPTS:
+        check = subprocess.run(["bash", "-n", str(folder / name)], capture_output=True, text=True, timeout=30)
+        if check.returncode != 0:
+            raise Invalid(f"{name} is not valid bash: {check.stderr.strip()[-500:]}", param="package")
+    manifest.check_references()
     seeds = folder / "seeds"
     if seeds.exists():
         unknown = sorted(p.name for p in seeds.iterdir()) if seeds.is_dir() else ["seeds"]
@@ -125,11 +120,3 @@ def pack(folder: Path) -> bytes:
                 tar.addfile(info, f)
     return gzip.compress(raw.getvalue(), mtime=0)
 
-
-def overlay_onto(base: Path, overlay: Path, into: Path, manifest_json: str) -> None:
-    """The composed package folder a sandbox mounts: the base, the overlay's seeds over the base's, and the composed
-    manifest."""
-    shutil.copytree(base, into)
-    if (overlay / "seeds").is_dir():
-        shutil.copytree(overlay / "seeds", into / "seeds", dirs_exist_ok=True)
-    (into / "harness.json").write_text(manifest_json)

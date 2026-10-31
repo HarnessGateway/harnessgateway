@@ -62,7 +62,7 @@ class Platform:
         self.orgs = Orgs(self.db, self.data_keys, s.defaults)
         self.keys = Keys(self.db, self.pepper)
         self.providers = Providers(self.db, self.vault, allow_private=s.allow_private_egress)
-        self.harnesses = Harnesses(self.db, self.objects, self.vault, s.packages_dir, allow_private=s.allow_private_egress)
+        self.harnesses = Harnesses(self.db, self.objects, self.vault)
         self.files = Files(self.db, self.objects)
         self.containers = Containers(self.db, self.objects)
         self.bus = EventBus(self.db)
@@ -86,16 +86,11 @@ class Platform:
         return await self.db.migrate((CORE_MIGRATIONS, *self.extensions.migrations))
 
     async def init(self, name: str = "default") -> tuple[dict[str, object], str | None]:
-        """Self-hosted's one organization with the built-in harnesses and a first admin key (printed once). Run again,
-        it changes nothing and returns no key."""
+        """Self-hosted's one organization and a first admin key (printed once). Run again, it changes nothing and
+        returns no key. Harnesses are added afterwards, in the console or with POST /v1/harnesses."""
         org = await self.orgs.first()
         if org:
             return org, None
         org = await self.orgs.create(name)
-        for builtin in self.harnesses.builtins():
-            try:
-                await self.harnesses.install_builtin(str(org["id"]), builtin)
-            except Exception:
-                log.exception("installing the built-in %s failed; install it later with POST /v1/harnesses", builtin)
         key = await self.keys.create(str(org["id"]), "admin", "init")
         return org, str(key["key"])

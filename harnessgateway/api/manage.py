@@ -79,25 +79,16 @@ async def put_egress(request: Request, p: Principal = Depends(admin)) -> Any:
 
 @router.get("/harnesses")
 async def list_harnesses(request: Request, p: Principal = Depends(principal)) -> Any:
-    plat = platform(request)
-    return {"object": "list", "data": await plat.harnesses.list(p.org_id), "builtins": plat.harnesses.builtins()}
+    return {"object": "list", "data": await platform(request).harnesses.list(p.org_id)}
 
 
 @router.post("/harnesses")
 async def install_harness(request: Request, p: Principal = Depends(admin)) -> Any:
-    """Install or upgrade: {"builtin": name}, {"git": {"url", "ref", "path"}}, or a multipart `package` archive."""
-    harnesses = platform(request).harnesses
-    if request.headers.get("content-type", "").startswith("multipart/form-data"):
-        upload, _ = await form_file(request, "package")
-        return await harnesses.install_upload(p.org_id, await upload.read())
-    body = await read_json(request)
-    if isinstance(body.get("builtin"), str):
-        return await harnesses.install_builtin(p.org_id, body["builtin"])
-    git = body.get("git")
-    if isinstance(git, dict):
-        return await harnesses.install_git(p.org_id, git.get("url"), git.get("ref", "main"), git.get("path", "."))
-    raise Invalid('install with {"builtin": name}, {"git": {"url": ..., "ref": ..., "path": ...}} or a multipart '
-                  '`package` upload')
+    """Install or upgrade from a multipart `package` archive: the package folder as a tar, gzipped or not."""
+    if not request.headers.get("content-type", "").startswith("multipart/form-data"):
+        raise Invalid("install with a multipart `package` upload: the package folder as a tar archive")
+    upload, _ = await form_file(request, "package")
+    return await platform(request).harnesses.install(p.org_id, await upload.read())
 
 
 @router.get("/harnesses/{name}")

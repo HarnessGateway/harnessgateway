@@ -1,7 +1,7 @@
 """The node agent (SPEC §6.2): joins, then runs four loops (heartbeat, claim, meter, evict idle) and one task per turn.
 
 A turn on this node:
-  1. the composed package (base, plus an overlay's seeds), verified against its digests, and its tools (install.sh,
+  1. the package, verified against its digest, and its tools (install.sh,
      once per base digest and sandbox image, in an install box with the install egress);
   2. the session's box: the warm one when this node ran the session's last turn, otherwise a new box with the home
      seeds, then the session's snapshot (or, for a new session, the workspace seeds);
@@ -177,8 +177,7 @@ def failure(reason: Reason, message: str) -> dict[str, Any]:
 
 
 def package_key(job: dict[str, Any]) -> str:
-    p = job["package"]
-    return hashlib.sha256(f"{p['base']['digest']}\0{(p['overlay'] or {}).get('digest', '')}".encode()).hexdigest()
+    return str(job["package"]["digest"])
 
 
 class Node:
@@ -354,31 +353,25 @@ class Node:
             raise TurnFailed(Reason.SANDBOX_FAILED, "a package archive does not match its digest")
 
     async def _package(self, job: dict[str, Any]) -> Path:
-        """The composed package a box mounts, built once per (base, overlay) pair."""
+        """The package a box mounts, unpacked once per digest."""
         key = package_key(job)
         folder = self.dir / "packages" / key
         async with self.lock(f"pkg:{key}"):
             if folder.is_dir():
                 return folder
             with tempfile.TemporaryDirectory(dir=self.dir / "packages") as tmp:
-                base, staging = Path(tmp) / "base", Path(tmp) / "composed"
-                await self._archive_dir(job["package"]["base"], base)
-                if job["package"]["overlay"]:
-                    overlay = Path(tmp) / "overlay"
-                    await self._archive_dir(job["package"]["overlay"], overlay)
-                    await asyncio.to_thread(pkg.overlay_onto, base, overlay, staging, json.dumps(job["package"]["manifest"]))
-                else:
-                    base.rename(staging)
+                staging = Path(tmp) / "package"
+                await self._archive_dir(job["package"], staging)
                 for p in [staging, *staging.rglob("*")]:
                     p.chmod(0o755 if p.is_dir() or p.stat().st_mode & 0o111 else 0o644)
                 staging.rename(folder)
         return folder
 
-    def tools_key(self, base_digest: str) -> str:
-        return hashlib.sha256(f"{base_digest}\0{self.image_id}".encode()).hexdigest()
+    def tools_key(self, digest: str) -> str:
+        return hashlib.sha256(f"{digest}\0{self.image_id}".encode()).hexdigest()
 
     async def _tools(self, job: dict[str, Any], package_dir: Path) -> Path:
-        key = self.tools_key(job["package"]["base"]["digest"])
+        key = self.tools_key(job["package"]["digest"])
         tools = self.dir / "tools" / key
         async with self.lock(f"tools:{key}"):
             if tools.is_dir():

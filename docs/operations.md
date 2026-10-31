@@ -20,7 +20,7 @@ The installer:
 2. pulls `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`, or builds them from the checkout;
 3. writes `/opt/harnessgateway/.env` with fresh secrets (never overwritten on a re-run);
 4. starts the compose project (`postgres`, `harnessgateway`, `node`) and runs `harnessgateway init`, which creates the
-   organization, installs the built-in harnesses and prints the **admin key once**;
+   organization and prints the **admin key once**;
 5. starts the `console` service with that key and prints the two console sign-ins once (`admin`, `deployer`; each
    changed at first sign-in). See [`console.md`](console.md).
 
@@ -57,7 +57,7 @@ them:
      -e HG_API_URL=https://hg.internal -e HG_GATEWAY_URL=https://hg.internal/gateway \
      -e HG_NODE_JOIN_TOKEN=hgj_… -e HG_UPLINK_NETWORK=bridge -e HG_NODE_DIR=/var/lib/harnessgateway \
      -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \
-     ghcr.io/harnessgateway/harnessgateway:1.1.2 node
+     ghcr.io/harnessgateway/harnessgateway:2.0.0 node
    ```
 
    The node directory is mounted at the same path inside and out: sandboxes are sibling containers that bind-mount
@@ -77,8 +77,8 @@ under an advisory lock, fails the turns of a node silent for 45 s and releases i
 
 Set `HG_UPSTREAM_PROXY` (doors reach the internet through it with `CONNECT`) and `HG_CA_FILE` (a PEM the doors trust
 when verifying servers, and sandboxes trust alongside the node's own CA). With compose, put the CA file under
-`HG_NODE_DIR`: the node sees that directory at the same path as the host. The API's own outbound calls (providers,
-`git` installs) honour the standard `HTTPS_PROXY` / `SSL_CERT_FILE` variables.
+`HG_NODE_DIR`: the node sees that directory at the same path as the host. The API's own outbound calls (providers)
+honour the standard `HTTPS_PROXY` / `SSL_CERT_FILE` variables.
 
 ## Configuration
 
@@ -99,14 +99,14 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_NODE_SLOTS` | node | `4` | turns run at once |
 | `HG_NODE_WARM_MAX` | node | `32` | idle sandboxes kept warm |
 | `HG_NODE_DIR` | node | `/var/lib/harnessgateway` | sessions, tools, the node's CA and credential |
-| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:1.1.2` | the image every sandbox runs |
-| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:1.1.2` | the image doors run |
+| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.0.0` | the image every sandbox runs |
+| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.0.0` | the image doors run |
 | `HG_UPLINK_NETWORK` | node | `hg-uplink` | the Docker network doors join to reach the gateway and the internet |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | node | — | see above |
 | `HG_ALLOW_PRIVATE_EGRESS` | all | `0` | let providers and sandbox egress reach private addresses |
 | `HG_UNSAFE_RUNTIME` | node | — | a Docker runtime other than `runsc` (development only: no gVisor isolation) |
 | `HG_EXTENSIONS` | api, gateway | — | `module:Class,…` ([extensions](extensions.md)) |
-| `HG_PACKAGES_DIR` | api | the image's built-ins | where built-in packages are read from |
+| `HG_TEMPLATE_DIR` | console | the image's `shell` package | the package every new harness starts from |
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
 | `HG_CONSOLE_KEY`, `HG_CONSOLE_PORT` | compose `console` | —, `8800` | the admin key the consoles use (written by `install.sh`); their port |
 | `HG_DEFAULT_<FIELD>` | api | see below | an organization's capacity unless an extension sets its own |

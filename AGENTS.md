@@ -16,7 +16,7 @@ The code is checked against it; a change the spec does not describe is a spec ch
 
 | Path | What it holds |
 |---|---|
-| `harnessgateway/domain/` | pure rules, no I/O: the Responses contract, manifests and overlay composition, packages (digest, archive), egress entries, MCP resolution, capacity, meters, turn states |
+| `harnessgateway/domain/` | pure rules, no I/O: the Responses contract, manifests, packages (digest, archive), egress entries, MCP resolution, capacity, meters, turn states |
 | `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, sandbox Runtime) and their implementations (file and S3 stores, local and KMS key wrapping, Docker with gVisor). Vendor SDKs live only in `adapters/` |
 | `harnessgateway/services/` | one class per responsibility: orgs, keys, vault, providers, harnesses, files, containers, turns (the caller's side), delivery (the node's side), scheduler, usage, traces, sweeper, operations. `platform.py` is the composition root |
 | `harnessgateway/api/` | FastAPI routers: OpenAI-shaped (`responses.py`, `storage.py`), management (`manage.py`), the nodes' and operator's routes (`internal.py`); `http.py` is authentication, body limits and the error envelope |
@@ -24,7 +24,7 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | `harnessgateway/node/` | the node agent (`agent.py`), its API client, snapshots (`state.py`), stdout batching (`pump.py`), the node CA (`trust.py`), the egress door (`door.py`), `runtime/turn.sh` |
 | `harnessgateway/migrations/` | SQL migrations, applied in order under an advisory lock |
 | `sandbox/` | the sandbox image and `hgkit`, the helper library package mappers use |
-| `packages/` | the built-in harness packages, one folder each |
+| `packages/` | the template harness package, `shell`, which the console copies for every new harness |
 | `console/` | the organization and deployer consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
 | `docs/` | operations, consoles, packages, extensions |
@@ -44,8 +44,8 @@ scripts/version-check
 ```
 
 Integration tests need a running stack: `HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_...
-.venv/bin/pytest -q tests/integration` (the operator tests also need `HG_TEST_OPERATOR_KEY`). They install and
-remove a test overlay and set the organization's egress.
+.venv/bin/pytest -q tests/integration` (the operator tests also need `HG_TEST_OPERATOR_KEY`). They install `shell`
+from `packages/shell`, install and remove a seeded test package, and set the organization's egress.
 
 ## Running it locally
 
@@ -74,8 +74,8 @@ console/server.py` with `HG_KEY` (an admin key) and optionally `HG_OPERATOR_KEY`
 - **Packages** follow SPEC §5.8's layout: `harness.json`, `install.sh`, `run.sh` (one line into `map.py`), `map.py`,
   `README.md` (Files, The command, Request fields, Output mapping, Known limits, Tests), `tests/` with fixtures
   recorded from real runs. Install each CLI by its official, documented method, pinned to a version, and verify the
-  version; never name a CPU in a script; no post-install edits of installed files. A built-in seeds nothing an
-  organization would want to own.
+  version; never name a CPU in a script; no post-install edits of installed files. The template seeds nothing an
+  organization would want to own, and neither does a package meant for others to start from.
 - **Never mention "harnessrouter"** (any spelling) in any file. CI greps for it.
 
 ## Working style
