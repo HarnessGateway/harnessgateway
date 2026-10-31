@@ -106,7 +106,7 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_ALLOW_PRIVATE_EGRESS` | all | `0` | let providers and sandbox egress reach private addresses |
 | `HG_UNSAFE_RUNTIME` | node | — | a Docker runtime other than `runsc` (development only: no gVisor isolation) |
 | `HG_EXTENSIONS` | api, gateway | — | `module:Class,…` ([extensions](extensions.md)) |
-| `HG_TEMPLATE_DIR` | console | the image's `shell` package | the package every new harness starts from |
+| `HG_TEMPLATES_DIR` | console | the image's `packages/` | the packages a new harness starts from (`shell`, `harness-builder`) |
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
 | `HG_CONSOLE_KEY`, `HG_CONSOLE_PORT` | compose `console` | —, `8800` | the admin key the consoles use (written by `install.sh`); their port |
 | `HG_DEFAULT_<FIELD>` | api | see below | an organization's capacity unless an extension sets its own |

@@ -123,7 +123,7 @@ const harnesses = { title: "Harnesses", async render(el, params, me) {
     `<button class="btn" id="new">New harness</button>`) +
     (drafts.data.length ? `<h2>Drafts</h2><div class="cards">${drafts.data.map(dcard).join("")}</div>` : "") +
     `<h2>Installed</h2>` + (rows.length ? `<div class="cards">${rows.map(hcard).join("")}</div>` : `<div class="empty">No harness yet. <b>New harness</b> starts one from the template.</div>`);
-  $("#new", el).addEventListener("click", newDraft);
+  $("#new", el).addEventListener("click", () => newDraft().catch(fail));
   el.addEventListener("click", async e => {
     const d = e.target.closest("[data-discard]");
     if (d) {
@@ -142,11 +142,13 @@ async function editInstalled(name) {
   location.hash = `#/drafts/${encodeURIComponent(name)}`;
 }
 
-function newDraft() {
+async function newDraft() {
+  const templates = (await api("GET", "/templates")).data;
   modal({ title: "New harness", submit: "Create", body:
-    field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="claude-code"'),
-      "the harness's name, as requests name it in model. The draft starts as a copy of the template: harness.json, install.sh, run.sh, map.py and a README that says what to change in each"),
-    onSubmit: async d => { await api("POST", "/drafts", { name: d.name }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
+    field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="claude-code"'), "the harness's name, as requests name it in model") +
+    field("Start from", select("template", templates.map(t => [t.name, t.name === "shell" ? "shell — the template: edit its four files for your CLI" : `${t.name} — ${t.description.split(". ")[0].slice(0, 110)}`])),
+      "a package shipped with the platform, copied into your draft"),
+    onSubmit: async d => { await api("POST", "/drafts", { name: d.name, template: d.template }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
 }
 
 // the file tree + a viewer or editor, shared by the harness view and the draft editor

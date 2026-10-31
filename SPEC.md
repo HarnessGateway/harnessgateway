@@ -245,9 +245,12 @@ A small Python library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), op
 
 ### 5.8 The template
 
-The platform ships no harnesses. The repository and the platform image carry one package, `shell` (`packages/shell`;
-no model: the input runs as a bash command; the reference and test package), and the console starts every new
-harness as a copy of it under the name the user gives. Each package follows its layout: `harness.json`, `install.sh`,
+The platform ships no harnesses. The repository and the platform image carry two packages the console starts a new
+harness from, as a copy under the name the user gives: `shell` (no model: the input runs as a bash command; the
+reference and test package, and the template), and `harness-builder` (the claude-code package seeded with the
+platform's harness-package-builder skill, the template and the packages guide: an agent that writes packages into
+its workspace, which the console turns into a draft). The builder is the one shipped package that is not vanilla; its
+seeds are the platform's own. Each package follows its layout: `harness.json`, `install.sh`,
 `run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`), `map.py` (helpers, the output mapper, request→CLI, run,
 main), `README.md` (Files, The command, Request fields, Output mapping, Known limits, Tests), `tests/` with fixtures
 recorded from real runs. The template's README says, file by file, what to change for a CLI.

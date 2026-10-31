@@ -76,7 +76,9 @@ pinned install (`install.sh`), one turn (`run.sh`, which runs `map.py`), and the
 command and from the CLI's output to Responses items (`message`, `reasoning`, `shell_call`, `apply_patch_call`,
 `mcp_call`, `function_call`). You write and edit these in the console, install with a click, and test with a request:
 in the chat, or over the API. Any provider that speaks one of the three API shapes (`anthropic`, `openai`, `google`)
-works, including compatible endpoints from other vendors. See the template's README and
+works, including compatible endpoints from other vendors. Or ask an agent: the `harness-builder` package is Claude
+Code seeded with the skill that writes packages; install it, ask it in the chat for a harness for a CLI, and turn
+what it wrote into a draft from its session page. See the template's README and
 [`docs/packages.md`](docs/packages.md).
 
 ## How it works

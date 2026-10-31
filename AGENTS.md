@@ -24,7 +24,7 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | `harnessgateway/node/` | the node agent (`agent.py`), its API client, snapshots (`state.py`), stdout batching (`pump.py`), the node CA (`trust.py`), the egress door (`door.py`), `runtime/turn.sh` |
 | `harnessgateway/migrations/` | SQL migrations, applied in order under an advisory lock |
 | `sandbox/` | the sandbox image and `hgkit`, the helper library package mappers use |
-| `packages/` | the template harness package, `shell`, which the console copies for every new harness |
+| `packages/` | the packages shipped with the platform, which the console copies for a new harness: `shell` (the template) and `harness-builder` (Claude Code seeded with the builder skill) |
 | `console/` | the organization and deployer consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
 | `docs/` | operations, consoles, packages, extensions |

@@ -16,6 +16,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
   in the console's editor (or installed with `POST /v1/harnesses` as a package archive). The template's README says,
   file by file, what to change for a CLI.
 
+### Added
+
+- `harness-builder`, the second package shipped with the platform: Claude Code seeded with the harness-package-builder
+  skill, the template and the packages guide. Ask it in the chat for a harness for a CLI; it writes the package in its
+  workspace. **New harness** starts from either shipped package (`HG_TEMPLATES_DIR`), and a session page's **New
+  harness from workspace** copies a folder an agent wrote into a draft.
+
 ### Removed
 
 - The built-in packages (`claude-code`, `codex`, `gemini-cli`, `hermes`, `opencode`, `pi`), `{"builtin": name}`

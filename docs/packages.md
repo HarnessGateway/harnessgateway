@@ -10,7 +10,11 @@ from. Its README says, file by file, what to change.
 
 Under **Setup → Harnesses**, **New harness** copies the template into a draft under the name you give. Edit its files
 in the editor (add files for seeds), **Install**, then test it with a request: pick it in **Workbench → Chat**, or
-send `POST /v1/responses` with `"model": "<name>/<provider>/<model>"`. The session under **Observability → Sessions**
+send `POST /v1/responses` with `"model": "<name>/<provider>/<model>"`. Or let an agent write it: **New harness**
+starting from `harness-builder` installs Claude Code seeded with the builder skill, this guide and the template; ask
+it in the chat for a harness for a CLI, and it studies the CLI in its sandbox, writes the package under
+`/workspace/<name>/` and checks the mapper's events; **New harness from workspace** on that session's page turns the
+folder into a draft. The session under **Observability → Sessions**
 shows every event your mapping produced and, under each turn, what the platform measured: the exit code, the CLI's
 stderr tail, provider calls and door connections. Edit the installed harness (**Edit** opens it as a draft) and
 **Install** again to upgrade it in place; running sessions keep the package they started on. The same package can be
