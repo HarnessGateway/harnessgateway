@@ -13,7 +13,7 @@
 # no package manager or BusyBox left in the image (the apk database stays, so scanners see every package); one user.
 # CI scans it with Trivy on every change and weekly (.github/workflows/images.yml).
 #
-# Build: docker build -t ghcr.io/harnessgateway/sandbox:1.1.1 sandbox/
+# Build: docker build -t ghcr.io/harnessgateway/sandbox:1.1.2 sandbox/
 # Behind a TLS-intercepting proxy, pass its CA as a build secret (never baked in):
 #   docker build --secret id=ca,src=/path/ca.pem ...
 FROM cgr.dev/chainguard/wolfi-base@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7

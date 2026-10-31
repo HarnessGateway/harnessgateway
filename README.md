@@ -11,7 +11,7 @@ works unchanged.
 [![Release](https://img.shields.io/github/v/release/HarnessGateway/harnessgateway)](https://github.com/HarnessGateway/harnessgateway/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-<p align="center"><img src="docs/demo.gif" width="100%" alt="The console: signing in, adding a provider, the built-in harnesses, a chat with Claude Code, and the session filling in live under Observability with the page it built rendered beside the transcript"></p>
+<p align="center"><img src="docs/demo.gif" width="100%" alt="The console: signing in, adding a provider, the built-in harnesses, asking Claude Code in the chat for a script that generates order data and builds an SVG dashboard, and the session filling in live under Observability with the dashboard it built rendered beside the transcript"></p>
 
 ```python
 from openai import OpenAI

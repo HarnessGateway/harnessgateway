@@ -454,8 +454,9 @@ async function panelOnly(sid) {
     if (state === "running" || state === "saving") saving.add(sid); else saving.delete(sid);
     if (was !== "idle" && state === "idle") {           // a save landed: the files as the turn left them
       await refreshFiles();
-      const made = [...files].sort((a, b) => b.at - a.at).find(f => SHOWCASE.includes(kindOf(f.path)));
-      if (made) openFile(made.path);
+      const rank = f => { const i = SHOWCASE.indexOf(kindOf(f.path)); return i < 0 ? SHOWCASE.length : i; };
+      const made = [...files].filter(f => rank(f) < SHOWCASE.length).sort((a, b) => rank(a) - rank(b) || b.at - a.at)[0];
+      if (made) openFile(made.path);                      // the best kind first (a page before a table), then the newest
     }
     was = state;
     renderPanel();

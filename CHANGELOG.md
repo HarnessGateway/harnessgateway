@@ -7,6 +7,13 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [1.1.2]
+
+### Fixed
+
+- The chat's panel-only mode opened the newest file when a turn's save landed; it now opens the best kind of file
+  first (a page before a table or an image), as the chat does, and the newest among those.
+
 ## [1.1.1]
 
 ### Changed
