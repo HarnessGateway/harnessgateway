@@ -11,6 +11,7 @@ const STORE = "hg-chatgui", MODELS = "hg-chatgui-models", SIDE = "hg-chatgui-sid
 const SETTLE_MS = 120000;                            // how long a finished turn's files are waited for
 let chats = [], current = null, pending = [], files = [], sideOpen = true;
 let catalog = { harnesses: [], providers: [], default_model: "" }, shownChat;
+let pinned = null;                                   // ?panel=cntr_…: only the file panel, for this session
 const saving = new Set();                            // sessions whose last turn's state is being saved
 
 // ── storage ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -148,9 +149,9 @@ async function filesOf(sid) {
   try { return (await (await fetch(`api/files?session=${encodeURIComponent(sid)}`)).json()).files || []; } catch { return []; }
 }
 async function refreshFiles() {
-  const c = chat();
-  const list = c && c.session ? await filesOf(c.session) : [];
-  if (chat() === c) files = list;                     // the reader may have moved to another chat meanwhile
+  const c = chat(), sid = pinned || (c && c.session);
+  const list = sid ? await filesOf(sid) : [];
+  if (pinned || chat() === c) files = list;           // the reader may have moved to another chat meanwhile
 }
 async function sessionState(sid) {
   try { return (await (await fetch(`api/session?session=${encodeURIComponent(sid)}`)).json()).state || "idle"; } catch { return "idle"; }
@@ -439,10 +440,38 @@ async function openFromHash() {                      // #open=cntr_…: a platfo
   await refreshFiles(); renderPanel();
 }
 
+/** Only the file panel, pinned to one session: the console's session page embeds it beside the transcript. */
+async function panelOnly(sid) {
+  pinned = sid;
+  document.body.classList.add("panelonly");
+  initPanel({ session: () => sid, files: () => files, saving: () => saving.has(sid), refresh: refreshFiles });
+  window.addEventListener("message", e => {            // the transcript's file links open here
+    if (e.origin === location.origin && e.data && e.data.type === "open" && typeof e.data.path === "string") openFile(e.data.path);
+  });
+  let was = "idle";
+  const tick = async () => {
+    const state = await sessionState(sid);
+    if (state === "running" || state === "saving") saving.add(sid); else saving.delete(sid);
+    if (was !== "idle" && state === "idle") {           // a save landed: the files as the turn left them
+      await refreshFiles();
+      const made = [...files].sort((a, b) => b.at - a.at).find(f => SHOWCASE.includes(kindOf(f.path)));
+      if (made) openFile(made.path);
+    }
+    was = state;
+    renderPanel();
+  };
+  await refreshFiles();
+  openPanel("files");
+  tick();
+  setInterval(tick, 4000);
+}
+
 function start() {
   const embedded = window.self !== window.top;                              // inside the console: its theme, no second brand,
   document.body.classList.toggle("embedded", embedded);                      // the chat list at any width
   document.documentElement.classList.toggle("embedded", embedded);
+  const panel = new URLSearchParams(location.search).get("panel");
+  if (panel && /^cntr_[0-9a-f]{8,64}$/.test(panel)) { panelOnly(panel); return; }
   initPanel({ session: () => chat()?.session || null, files: () => files, saving: () => saving.has(chat()?.session), refresh: refreshFiles });
   wire();
   load();

@@ -47,6 +47,17 @@ def test_a_turn_runs_in_a_sandbox_and_the_session_continues(api):
     assert "/workspace/a.txt" in {f["path"] for f in files}
     got = api.get(f"/v1/responses/{r2['id']}").json()
     assert got["output"] == r2["output"]
+    sid = r1["metadata"]["session_id"]
+    listed = api.get(f"/v1/containers/{sid}/responses").json()
+    assert [x["id"] for x in listed["data"]] == [r1["id"], r2["id"]] and listed["data"][1]["output"] == r2["output"]
+    assert api.get(f"/v1/containers/{sid}/responses?limit=1&after={r1['id']}").json()["data"][0]["id"] == r2["id"]
+    for _ in range(50):                                   # the harness record follows the node's finish report
+        traces = api.get(f"/v1/containers/{sid}/traces").json()
+        if sum(rec["kind"] == "harness" for rec in traces["data"]) == 2:
+            break
+        time.sleep(0.2)
+    assert [rec["response_id"] for rec in traces["data"] if rec["kind"] == "harness"] == [r1["id"], r2["id"]]
+    assert all("stdout_key" not in rec["data"] for rec in traces["data"])
 
 
 def test_the_stream_is_the_responses_event_sequence(api):

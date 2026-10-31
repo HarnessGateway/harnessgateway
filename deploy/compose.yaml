@@ -1,6 +1,6 @@
 # HarnessGateway self-hosted on one host (SPEC §10.4): `install.sh` sets it up; by hand:
 #
-#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:1.0.1 keygen >> .env
+#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:1.1.0 keygen >> .env
 #   docker compose up -d
 #   docker compose up -d --wait postgres harnessgateway node
 #   docker compose exec harnessgateway harnessgateway init      # prints the admin key, once → HG_CONSOLE_KEY in .env
@@ -15,7 +15,7 @@
 name: harnessgateway
 
 x-platform: &platform
-  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:1.0.1}
+  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:1.1.0}
   restart: unless-stopped
 
 services:
@@ -74,8 +74,8 @@ services:
       HG_NODE_DIR: ${HG_NODE_DIR:-/var/lib/harnessgateway}
       HG_NODE_NAME: ${HG_NODE_NAME:-node-1}
       HG_NODE_SLOTS: ${HG_NODE_SLOTS:-4}
-      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:1.0.1}
-      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:1.0.1}
+      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:1.1.0}
+      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:1.1.0}
       HG_UPSTREAM_PROXY: ${HG_UPSTREAM_PROXY:-}
       HG_CA_FILE: ${HG_CA_FILE:-}
       HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}

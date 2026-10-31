@@ -5,7 +5,7 @@ the browser never sees one. The self-hosted install starts it on port 8800.
 
 | | Address | Who | What |
 |---|---|---|---|
-| **Organization console** | `http://host:8800/` | `admin` and `member` users | Setup: Providers, Harnesses, Egress · Workbench: Chat, Playground · Access: API keys, Members · Observability: Sessions, Traces, Usage (members see Workbench only) |
+| **Organization console** | `http://host:8800/` | `admin` and `member` users | Setup: Providers, Harnesses, Egress · Workbench: Chat, Playground · Access: API keys, Members · Observability: Sessions, Usage (members see Workbench only) |
 | **Deployer console** | `http://host:8800/ops` | `deployer` users | Operations: Health, Nodes & pools, Organizations, Platform usage, Versions, Configuration, Audit log. Account: Deployer users |
 
 They mirror the platform's two authorities: the organization console uses the organization's API key (an `admin`
@@ -50,9 +50,14 @@ call as curl, Python or TypeScript.
 **Access.** *API keys*: create (shown once), revoke. *Members*: console users of the organization and their role.
 
 **Observability.** *Sessions* lists every session of the organization with its harness, turns, state, saved size and
-last turn — including sessions an application started through the SDK: open in Chat, browse and download workspace
-files, see the last turn's trace, delete. *Traces*: a response id's harness, gateway and door records. *Usage*: the
-five meters by day, harness or session.
+last turn — including sessions an application started through the SDK. Opening one shows the session: a header with
+its harness, model, state and workspace size; the **transcript**, one block per response with the user's input, the
+agent's thinking and steps (commands with their output and exit code, file changes with their diffs, MCP and tool
+calls) and its reply, streamed live while a turn runs; under each block what the platform measured (duration,
+tokens, provider calls, door connections, exit code, ignored fields) with the raw response and trace records a click
+away; and beside it the **workspace**, the chat's file panel for this session (files as of the last save, refreshed
+when a turn's save lands, every kind rendered). From there: open the session in Chat, cancel a running turn, delete.
+*Usage*: the five meters by day, harness or session.
 
 **Operations.** *Health*: database and object store checks, nodes and slots, queue depth and age, turns and
 failures by reason over 24 hours. *Nodes & pools*: every node with pool, slots, warm boxes and heartbeat; mint a

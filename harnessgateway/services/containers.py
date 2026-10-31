@@ -1,5 +1,6 @@
-"""Containers (`/v1/containers`): a session and its workspace. A container's files are what its last snapshot listed;
-files written to a container are staged and land in the workspace before its next turn (SPEC §14.1)."""
+"""Containers (`/v1/containers`): a session, its responses and its workspace. A container's files are what its last
+snapshot listed; files written to a container are staged and land in the workspace before its next turn; its responses
+are its turns in order, each as `GET /v1/responses/{id}` returns it (SPEC §14.1)."""
 from __future__ import annotations
 
 import asyncio
@@ -13,10 +14,12 @@ from typing import Any
 
 from .. import ids
 from ..db import Database
+from ..domain import contract
 from ..errors import Conflict, Invalid, NotFound, TooLarge
 from ..limits import FILE_UPLOAD_MAX
 from .objects import Objects, org_key
 from .pages import check_limit, page, ts
+from .turns import request_body
 
 WORKSPACE = "/workspace"
 LAST = "(SELECT t.id FROM turns t WHERE t.session_id = s.id ORDER BY t.seq DESC LIMIT 1) AS last_response_id"
@@ -82,6 +85,25 @@ class Containers:
             await tx.run("UPDATE sessions SET status = 'deleted', snapshot_key = NULL, files_key = NULL WHERE id = %s", sid)
         await self.objects.delete_prefix(org_key(org_id, "sessions", sid, ""))
         return {"id": sid, "object": "container.deleted", "deleted": True}
+
+    # ── responses ──────────────────────────────────────────────────────────────────────────────────────────────────
+    async def list_responses(self, org_id: str, sid: str, limit: int, after: str | None) -> dict[str, Any]:
+        """The session's turns in order, each as the caller reads it at GET /v1/responses/{id}: the stored Response for
+        an ended turn, the partial one for a turn still queued or running."""
+        limit = check_limit(limit)
+        await self.row(org_id, sid)
+        async with self.db.tenant(org_id) as tx:
+            rows = await tx.all("SELECT * FROM turns WHERE session_id = %s AND (%s::text IS NULL OR seq > "
+                                "(SELECT seq FROM turns WHERE id = %s)) ORDER BY seq LIMIT %s", sid, after, after, limit + 1)
+        data = []
+        for turn in rows:
+            if turn["response"] is not None:
+                data.append(turn["response"])
+            else:
+                data.append(contract.response(rid=turn["id"], body=await request_body(self.objects, turn),
+                                              created=turn["created_at"].timestamp(), status=turn["status"],
+                                              metadata={"session_id": sid}))
+        return page(data, limit)
 
     # ── files ──────────────────────────────────────────────────────────────────────────────────────────────────────
     @staticmethod

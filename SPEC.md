@@ -544,6 +544,8 @@ All under `/v1`, JSON, bearer API key. OpenAI-shaped endpoints match OpenAI's re
 | `GET /containers`, `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session; created by its first response |
 | `GET /containers/{id}/files`, `GET …/files/{fid}`, `GET …/files/{fid}/content` | the workspace as of the last snapshot |
 | `POST /containers/{id}/files` (multipart `file`, optional `path`), `DELETE …/files/{fid}` | staged; applied before the session's next turn |
+| `GET /containers/{id}/responses` | the session's responses in turn order, each as `GET /responses/{id}` returns it |
+| `GET /containers/{id}/traces` (admin) | every §11 record of the session's turns, each with its `response_id`, in turn order; log bodies left out |
 | `GET /models`, `GET /models/{id}` | every `harness/provider/model` the org can send |
 
 ### 14.2 Management (admin scope)
@@ -558,7 +560,7 @@ All under `/v1`, JSON, bearer API key. OpenAI-shaped endpoints match OpenAI's re
 | `PATCH /harnesses/{name}` | `settings`, `secrets` (write-only; null clears), `default_provider`, `default_model` |
 | `DELETE /harnesses/{name}` | refused while an overlay extends it |
 | `GET /usage` | §12 |
-| `GET /traces/{response_id}` | §11 |
+| `GET /traces/{response_id}` | §11; a session's records together: `GET /containers/{id}/traces` (§14.1) |
 
 Upgrading a harness affects new sessions only.
 

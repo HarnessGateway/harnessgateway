@@ -7,6 +7,17 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [1.1.0]
+
+### Added
+
+- `GET /v1/containers/{id}/responses`: a session's responses in turn order, each as `GET /v1/responses/{id}` returns
+  it; `GET /v1/containers/{id}/traces` (admin): every trace record of the session's turns with its `response_id`.
+- The organization console's Sessions page opens a session: the transcript of every response as a conversation
+  trace, live while a turn runs, with what the platform measured under each turn, and the workspace beside it (the
+  chat's file panel, embedded). The Traces page is gone; a response's raw trace is one click from its turn.
+- The chat's panel-only mode (`/chat/?panel=<session>`): the file panel alone, for embedding.
+
 ## [1.0.1]
 
 ### Fixed

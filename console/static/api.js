@@ -17,10 +17,12 @@ export async function api(method, path, body = undefined, { raw = false } = {}) 
   return doc;
 }
 
-// A streamed Responses call: every SSE event to onEvent({type, data}); resolves when the stream ends.
+// A streamed Responses call (POST with a body, GET without): every SSE event to onEvent({type, data}); resolves when
+// the stream ends.
 export async function stream(path, body, onEvent) {
-  const r = await fetch("/api" + path, { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-                                         body: JSON.stringify(body) });
+  const init = body == null ? { method: "GET", headers: { Accept: "text/event-stream" } }
+    : { method: "POST", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(body) };
+  const r = await fetch("/api" + path, init);
   if (!r.ok || !r.body) {
     const text = await r.text();
     let msg = text; try { const d = JSON.parse(text); msg = d.error?.message || d.error || text; } catch { /* as is */ }

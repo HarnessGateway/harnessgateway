@@ -9,7 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from ..errors import NotFound
 from ..services.principal import Principal
-from .http import form_file, platform, principal, spooled
+from .http import admin, form_file, platform, principal, spooled
 
 router = APIRouter(prefix="/v1")
 
@@ -61,6 +61,17 @@ async def get_container(request: Request, sid: str, p: Principal = Depends(princ
 @router.delete("/containers/{sid}")
 async def delete_container(request: Request, sid: str, p: Principal = Depends(principal)) -> Any:
     return await platform(request).containers.delete(p.org_id, sid)
+
+
+@router.get("/containers/{sid}/responses")
+async def list_container_responses(request: Request, sid: str, limit: int = 100, after: str | None = None,
+                                   p: Principal = Depends(principal)) -> Any:
+    return await platform(request).containers.list_responses(p.org_id, sid, limit, after)
+
+
+@router.get("/containers/{sid}/traces")
+async def container_traces(request: Request, sid: str, p: Principal = Depends(admin)) -> Any:
+    return await platform(request).traces.list_session(p.org_id, sid)
 
 
 @router.get("/containers/{sid}/files")

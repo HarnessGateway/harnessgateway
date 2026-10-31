@@ -2,7 +2,7 @@
 # HarnessGateway, self-hosted on one Linux host (SPEC §10.4). Run as root; safe to run again (it keeps .env, the data
 # and the admin key already issued).
 #
-#   curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v1.0.1/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v1.1.0/deploy/install.sh | sudo bash
 #   sudo ./deploy/install.sh                  # from a checkout: builds the images locally if they cannot be pulled
 #
 # It checks Docker, installs gVisor (runsc) by its official method if absent and registers it with Docker, writes
@@ -16,7 +16,7 @@ set -euo pipefail
 # Everything runs from main(), called on the last line: bash reads the whole script before executing any of
 # it, so a run piped from curl is not cut short by a command that reads stdin.
 main() {
-VERSION=1.0.1
+VERSION=1.1.0
 RELEASE=${HG_RELEASE_URL:-https://raw.githubusercontent.com/harnessgateway/harnessgateway/v$VERSION/deploy}
 HOME_DIR=${HG_HOME:-/opt/harnessgateway}
 PLATFORM_IMAGE=${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:$VERSION}

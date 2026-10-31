@@ -1,6 +1,7 @@
 // The organization's console: the workbench (everyone) and the organization's settings (admins).
 import { METERS, api, bytes, date, esc, meter, short, stream, when } from "./api.js";
 import { $, $$, card, confirm, copy, fail, field, input, kv, modal, pill, pre, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { session } from "./session.js";
 
 export function nav(me) {
   const work = { mod: "Workbench", items: [{ id: "chat", label: "Chat", icon: "chat" }, { id: "playground", label: "Playground", icon: "code" }] };
@@ -9,8 +10,7 @@ export function nav(me) {
                            { id: "egress", label: "Egress", icon: "shield" }] },
     work,
     { mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" }, { id: "members", label: "Members", icon: "users" }] },
-    { mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "traces", label: "Traces", icon: "search" },
-                                   { id: "usage", label: "Usage", icon: "usage" }] }];
+    { mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" }] }];
   for (const m of mods) for (const it of m.items) it.mod = m.mod;
   return mods;
 }
@@ -26,6 +26,7 @@ const chat = { title: "Chat", full: true, render(el, params) {
 
 // ── Sessions ──────────────────────────────────────────────────────────────────────────────────────────────────────
 const sessions = { title: "Sessions", async render(el, params, me) {
+  if (params[0]) return session.render(el, params, me);
   let rows = [], after = null;
   for (let i = 0; i < 20; i++) {                          // up to 2,000, newest first
     const page = await api("GET", `/v1/containers?limit=100${after ? `&after=${after}` : ""}`);
@@ -34,16 +35,15 @@ const sessions = { title: "Sessions", async render(el, params, me) {
   const draw = (filter = "all") => {
     const shown = rows.filter(r => filter === "all" || r.metadata.state === filter);
     $("#sess", el).innerHTML = table([
-      { h: "Session", cell: r => `<b>${esc(r.name)}</b><br><span class="mono">${esc(r.id)}</span>` },
+      { h: "Session", cell: r => `<a href="#/sessions/${encodeURIComponent(r.id)}"><b>${esc(r.name)}</b></a><br><span class="mono">${esc(r.id)}</span>` },
       { h: "Harness · model", cell: r => `${esc(r.metadata.harness)}${r.metadata.model ? ` <span class="muted">${esc(r.metadata.model)}</span>` : ""}` },
       { h: "Turns", cell: r => esc(r.metadata.turns) }, { h: "State", cell: r => statusPill(r.metadata.state) },
       { h: "Saved", cell: r => bytes(r.metadata.bytes) }, { h: "Last turn", cell: r => when(r.last_active_at) },
-      { h: "", cls: "acts", cell: r => `<a class="btn2" href="#/chat/${encodeURIComponent(r.id)}">Open in Chat</a><button class="btn2" data-files="${r.id}">Files</button>` +
-          (r.metadata.last_response_id && me.role !== "member" ? `<a class="btn2" href="#/traces/${encodeURIComponent(r.metadata.last_response_id)}">Trace</a>` : "") +
-          `<button class="btn2 danger" data-del="${r.id}">Delete</button>` }], shown, "No sessions yet: start one in Chat or through the API.");
+      { h: "", cls: "acts", cell: r => `<a class="btn2" href="#/sessions/${encodeURIComponent(r.id)}">Open</a><a class="btn2" href="#/chat/${encodeURIComponent(r.id)}">Chat</a>` +
+          (me.role !== "member" ? `<button class="btn2 danger" data-del="${r.id}">Delete</button>` : "") }], shown, "No sessions yet: start one in Chat or through the API.");
   };
   const counts = s => rows.filter(r => s === "all" || r.metadata.state === s).length;
-  el.innerHTML = top("Sessions", "Every sandbox session of this organization, including ones your applications started through the API.",
+  el.innerHTML = top("Sessions", "Every sandbox session of this organization, including ones your applications started through the API. Open one for its transcript, traces and workspace.",
     `<a class="btn" href="#/chat">New chat</a>`) +
     `<div class="tabs">${["all", "running", "saving", "idle"].map(s => `<button data-tab="${s}"${s === "all" ? ' class="on"' : ""}>${s[0].toUpperCase() + s.slice(1)} · ${counts(s)}</button>`).join("")}</div>` +
     `<div class="card" id="sess"></div>`;
@@ -51,22 +51,12 @@ const sessions = { title: "Sessions", async render(el, params, me) {
   el.addEventListener("click", async e => {
     const tab = e.target.closest("[data-tab]");
     if (tab) { $$("[data-tab]", el).forEach(b => b.classList.toggle("on", b === tab)); draw(tab.dataset.tab); return; }
-    const files = e.target.closest("[data-files]");
-    if (files) { workspaceFiles(files.dataset.files); return; }
     const del = e.target.closest("[data-del]");
     if (del && await confirm("Delete session", `Delete ${del.dataset.del}, its snapshots and files? A running session is refused.`)) {
       try { await api("DELETE", `/v1/containers/${del.dataset.del}`); toast("Deleted", "ok"); rerender(); } catch (err) { fail(err); }
     }
   });
 } };
-
-async function workspaceFiles(sid) {
-  const files = await list(`/v1/containers/${sid}/files?limit=100`);
-  await modal({ title: `Workspace of ${sid}`, wide: true, body:
-    table([{ h: "Path", cell: f => esc(f.path.replace(/^\/workspace\//, "")) }, { h: "Size", cell: f => bytes(f.bytes) },
-           { h: "", cls: "acts", cell: f => `<a class="btn2" href="/api/v1/containers/${sid}/files/${f.id}/content" download="${esc(f.path.split("/").pop())}">Download</a>` }],
-          files, "No files saved yet.") });
-}
 
 // ── Playground ────────────────────────────────────────────────────────────────────────────────────────────────────
 const playground = { title: "Playground", async render(el, params, me) {
@@ -388,20 +378,6 @@ export function usagePage(path, groups, lead) {
 const usage = usagePage("/v1/usage", [["", "total"], ["day", "day"], ["harness", "harness"], ["session", "session"]],
   "What this organization's sandboxes used: allocated CPU and memory over time, bytes through the door, storage held.");
 
-// ── Traces ────────────────────────────────────────────────────────────────────────────────────────────────────────
-const traces = { title: "Traces", async render(el, params) {
-  el.innerHTML = top("Traces", "What happened in one turn: the harness exchange, every provider call through the gateway, every connection through the door.") +
-    `<form class="row card" id="f" style="margin-bottom:14px">${input("rid", params[0] || "", 'placeholder="resp_…" required')}<button class="btn">Look up</button></form><div id="out"></div>`;
-  const show = async rid => {
-    const t = await api("GET", `/v1/traces/${encodeURIComponent(rid)}`);
-    const kinds = { harness: "Harness", gateway: "Gateway", door: "Door" };
-    $("#out", el).innerHTML = `<p class="muted">session <span class="mono">${esc(t.session_id)}</span> · ${t.records.length} record${t.records.length === 1 ? "" : "s"}</p>` +
-      (t.records.map(r => `<details class="sec" open><summary>${esc(kinds[r.kind] || r.kind)} · ${date(r.at)}${r.kind === "harness" ? ` · ${esc(r.data.status)}${r.data.hg_reason ? ` (${esc(r.data.hg_reason)})` : ""}` : ""}</summary>${pre(r.data)}</details>`).join("") || `<div class="empty">No records yet.</div>`);
-  };
-  $("#f", el).addEventListener("submit", e => { e.preventDefault(); show(e.target.rid.value.trim()).catch(fail); });
-  if (params[0]) show(params[0]).catch(fail);
-} };
-
 // ── Members (console users) ───────────────────────────────────────────────────────────────────────────────────────
 export function usersPage(title, lead, roles) {
   return { title, async render(el, params, me) {
@@ -422,4 +398,4 @@ export function usersPage(title, lead, roles) {
 const members = usersPage("Members", "Who can sign in to this organization's console. Admins manage everything; members use the workbench.",
   [["member", "member — the workbench"], ["admin", "admin — the workbench and the organization"]]);
 
-export const pages = { chat, sessions, playground, harnesses, drafts, providers, egress, keys, usage, traces, members };
+export const pages = { chat, sessions, playground, harnesses, drafts, providers, egress, keys, usage, members };
