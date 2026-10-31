@@ -22,7 +22,8 @@ from .pages import check_limit, page, ts
 from .turns import request_body
 
 WORKSPACE = "/workspace"
-LAST = "(SELECT t.id FROM turns t WHERE t.session_id = s.id ORDER BY t.seq DESC LIMIT 1) AS last_response_id"
+LAST = ("(SELECT t.id FROM turns t WHERE t.session_id = s.id ORDER BY t.seq DESC LIMIT 1) AS last_response_id, "
+        "(SELECT t.actor FROM turns t WHERE t.session_id = s.id ORDER BY t.seq LIMIT 1) AS created_by")
 
 
 def clean_path(path: object) -> str:
@@ -50,7 +51,8 @@ class Containers:
                 "status": "running", "last_active_at": ts(row["last_active_at"]),
                 "metadata": {"harness": row["harness"], "model": row["model"], "turns": str(row["turns"]),
                              "state": _state(row), "store": "true" if row["store"] else "false",
-                             "bytes": str(row["snapshot_bytes"]), "last_response_id": row.get("last_response_id") or ""}}
+                             "bytes": str(row["snapshot_bytes"]), "last_response_id": row.get("last_response_id") or "",
+                             "created_by": row.get("created_by") or ""}}
 
     async def list(self, org_id: str, limit: int, after: str | None, order: str) -> dict[str, Any]:
         limit = check_limit(limit)

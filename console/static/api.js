@@ -76,3 +76,8 @@ export function meter(name, q) {
   return bytes(q);
 }
 export const METERS = { vcpu_seconds: "CPU", memory_gib_seconds: "Memory", egress_bytes: "Egress", ingress_bytes: "Ingress", storage_gib_hours: "Storage" };
+/** The key that created a session, by its label; what an extension's principal names, as it is. */
+export function clientOf(keys) {
+  const byId = Object.fromEntries(keys.map(k => [k.id, k.label || k.hint]));
+  return actor => !actor ? "—" : actor.startsWith("key:") ? `key · ${byId[actor.slice(4)] || actor.slice(4)}` : actor;
+}

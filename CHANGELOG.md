@@ -7,6 +7,14 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [1.1.1]
+
+### Changed
+
+- Sessions is observability only: the Sessions pages no longer open a session in the chat or start one, and every
+  session and session header names the client that created it (the API key's label). Each turn now records the key,
+  or the extension principal, that created it (`turns.actor`); a container's `metadata.created_by` carries it.
+
 ## [1.1.0]
 
 ### Added

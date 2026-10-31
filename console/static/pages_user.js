@@ -1,5 +1,5 @@
 // The organization's console: the workbench (everyone) and the organization's settings (admins).
-import { METERS, api, bytes, date, esc, meter, short, stream, when } from "./api.js";
+import { METERS, api, bytes, clientOf, date, esc, meter, short, stream, when } from "./api.js";
 import { $, $$, card, confirm, copy, fail, field, input, kv, modal, pill, pre, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
 import { session } from "./session.js";
 
@@ -27,6 +27,7 @@ const chat = { title: "Chat", full: true, render(el, params) {
 // ── Sessions ──────────────────────────────────────────────────────────────────────────────────────────────────────
 const sessions = { title: "Sessions", async render(el, params, me) {
   if (params[0]) return session.render(el, params, me);
+  const client = clientOf(me.role === "member" ? [] : await list("/v1/keys"));
   let rows = [], after = null;
   for (let i = 0; i < 20; i++) {                          // up to 2,000, newest first
     const page = await api("GET", `/v1/containers?limit=100${after ? `&after=${after}` : ""}`);
@@ -37,14 +38,14 @@ const sessions = { title: "Sessions", async render(el, params, me) {
     $("#sess", el).innerHTML = table([
       { h: "Session", cell: r => `<a href="#/sessions/${encodeURIComponent(r.id)}"><b>${esc(r.name)}</b></a><br><span class="mono">${esc(r.id)}</span>` },
       { h: "Harness · model", cell: r => `${esc(r.metadata.harness)}${r.metadata.model ? ` <span class="muted">${esc(r.metadata.model)}</span>` : ""}` },
+      { h: "Client", cell: r => esc(client(r.metadata.created_by)) },
       { h: "Turns", cell: r => esc(r.metadata.turns) }, { h: "State", cell: r => statusPill(r.metadata.state) },
       { h: "Saved", cell: r => bytes(r.metadata.bytes) }, { h: "Last turn", cell: r => when(r.last_active_at) },
-      { h: "", cls: "acts", cell: r => `<a class="btn2" href="#/sessions/${encodeURIComponent(r.id)}">Open</a><a class="btn2" href="#/chat/${encodeURIComponent(r.id)}">Chat</a>` +
-          (me.role !== "member" ? `<button class="btn2 danger" data-del="${r.id}">Delete</button>` : "") }], shown, "No sessions yet: start one in Chat or through the API.");
+      { h: "", cls: "acts", cell: r => `<a class="btn2" href="#/sessions/${encodeURIComponent(r.id)}">Open</a>` +
+          (me.role !== "member" ? `<button class="btn2 danger" data-del="${r.id}">Delete</button>` : "") }], shown, "No sessions yet.");
   };
   const counts = s => rows.filter(r => s === "all" || r.metadata.state === s).length;
-  el.innerHTML = top("Sessions", "Every sandbox session of this organization, including ones your applications started through the API. Open one for its transcript, traces and workspace.",
-    `<a class="btn" href="#/chat">New chat</a>`) +
+  el.innerHTML = top("Sessions", "Every sandbox session of this organization, whichever application started it. Open one for its transcript, traces and workspace.") +
     `<div class="tabs">${["all", "running", "saving", "idle"].map(s => `<button data-tab="${s}"${s === "all" ? ' class="on"' : ""}>${s[0].toUpperCase() + s.slice(1)} · ${counts(s)}</button>`).join("")}</div>` +
     `<div class="card" id="sess"></div>`;
   draw();

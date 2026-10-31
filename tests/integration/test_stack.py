@@ -48,6 +48,7 @@ def test_a_turn_runs_in_a_sandbox_and_the_session_continues(api):
     got = api.get(f"/v1/responses/{r2['id']}").json()
     assert got["output"] == r2["output"]
     sid = r1["metadata"]["session_id"]
+    assert api.get(f"/v1/containers/{sid}").json()["metadata"]["created_by"].startswith("key:key_")
     listed = api.get(f"/v1/containers/{sid}/responses").json()
     assert [x["id"] for x in listed["data"]] == [r1["id"], r2["id"]] and listed["data"][1]["output"] == r2["output"]
     assert api.get(f"/v1/containers/{sid}/responses?limit=1&after={r1['id']}").json()["data"][0]["id"] == r2["id"]

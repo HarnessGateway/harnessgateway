@@ -541,7 +541,7 @@ All under `/v1`, JSON, bearer API key. OpenAI-shaped endpoints match OpenAI's re
 | `DELETE /responses/{id}` | refused while running |
 | `GET /responses/{id}/input_items` | |
 | `POST /files`, `GET /files`, `GET /files/{id}`, `GET /files/{id}/content`, `DELETE /files/{id}` | ≤512 MiB per file |
-| `GET /containers`, `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session; created by its first response |
+| `GET /containers`, `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session; created by its first response. `metadata` names its harness, model, turns, state, saved bytes, last response and `created_by` (the first turn's actor: `key:<id>`, or what an extension's principal names) |
 | `GET /containers/{id}/files`, `GET …/files/{fid}`, `GET …/files/{fid}/content` | the workspace as of the last snapshot |
 | `POST /containers/{id}/files` (multipart `file`, optional `path`), `DELETE …/files/{fid}` | staged; applied before the session's next turn |
 | `GET /containers/{id}/responses` | the session's responses in turn order, each as `GET /responses/{id}` returns it |
@@ -586,7 +586,7 @@ commit.
 | `harnesses` | org, name, base digest, overlay digest, source (builtin/upload/git + ref/commit), settings, sealed secrets, default provider, default model |
 | `files` | org, id, filename, bytes, object key |
 | `sessions` | org, id, harness name, base and overlay digests, provider, model, store, status, snapshot key, node, running turn, timestamps |
-| `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag |
+| `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the key, or the extension's principal, that created it) |
 | `turn_events` / `live_events` | kept events / deltas (purged after the turn), by (turn, seq) |
 | `turn_bindings` | sealed caller secrets of a turn, deleted at its end |
 | `turn_tokens` | digest, turn, org, provider, node, expiry, revoked |

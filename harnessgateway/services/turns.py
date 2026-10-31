@@ -228,10 +228,10 @@ class Turns:
         await tx.run("UPDATE sessions SET turns = %s, provider_id = %s, model = %s, last_active_at = now() WHERE id = %s",
                      seq, provider_id, model, session["id"])
         await tx.run("INSERT INTO turns (id, org_id, session_id, seq, status, model, provider_id, provider_model, stream, "
-                     "background, request_key, mcp, previous_id) VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, "
-                     "%s::jsonb, %s)", rid, p.org_id, session["id"], seq, body["model"], provider_id, model,
+                     "background, request_key, mcp, previous_id, actor) VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, "
+                     "%s, %s::jsonb, %s, %s)", rid, p.org_id, session["id"], seq, body["model"], provider_id, model,
                      routing.stream, routing.background, request_key, dumps(resolved.servers),
-                     routing.previous_response_id)
+                     routing.previous_response_id, p.actor)
         if resolved.bindings:
             sealed = await self.vault.seal(p.org_id, f"turn/{rid}/bindings", dumps(
                 [{"placeholder": b.placeholder, "value": b.value, "hosts": list(b.hosts)} for b in resolved.bindings]))

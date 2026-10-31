@@ -50,13 +50,14 @@ call as curl, Python or TypeScript.
 **Access.** *API keys*: create (shown once), revoke. *Members*: console users of the organization and their role.
 
 **Observability.** *Sessions* lists every session of the organization with its harness, turns, state, saved size and
-last turn — including sessions an application started through the SDK. Opening one shows the session: a header with
+last turn and the client that created it, whichever application that was: the chat, your own application on the
+API, an agent of your own. Sessions is observability only; it starts no conversation. Opening one shows the session: a header with
 its harness, model, state and workspace size; the **transcript**, one block per response with the user's input, the
 agent's thinking and steps (commands with their output and exit code, file changes with their diffs, MCP and tool
 calls) and its reply, streamed live while a turn runs; under each block what the platform measured (duration,
 tokens, provider calls, door connections, exit code, ignored fields) with the raw response and trace records a click
 away; and beside it the **workspace**, the chat's file panel for this session (files as of the last save, refreshed
-when a turn's save lands, every kind rendered). From there: open the session in Chat, cancel a running turn, delete.
+when a turn's save lands, every kind rendered). The header names the client that created the session (the API key's label). From there: cancel a running turn, delete.
 *Usage*: the five meters by day, harness or session.
 
 **Operations.** *Health*: database and object store checks, nodes and slots, queue depth and age, turns and
