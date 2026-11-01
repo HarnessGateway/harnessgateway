@@ -40,7 +40,7 @@ packages, installed by `init`. Every other harness is one someone wrote: **New h
 `shell` package, `HG_TEMPLATE_DIR`) into a draft under the name you give, and the draft editor (file tree, editor,
 add and delete files) is where you make it a CLI's harness; or you ask the builder in the chat for a harness for a
 CLI, and **New harness from workspace**, on the builder session's page only, turns the folder it wrote into a draft. **Install** packs the draft and installs it through the platform, which
-validates it like any upload; a harness of that name is upgraded in place. Open a harness to read every file of the
+validates it like any upload; a harness of that name is upgraded in place, and the draft is gone. Open a harness to read every file of the
 package as installed, its manifest, settings, secrets (write-only, "set" marks, clear) and its default provider and
 model; **Edit** opens it as a draft. *Egress*: the organization's allow and deny entries, and what each harness adds.
 

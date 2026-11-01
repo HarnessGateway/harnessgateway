@@ -397,7 +397,8 @@ class Handler(chat.Handler):
     # ── drafts: packages written in the console ──────────────────────────────────────────────────────────────────
     def _drafts(self, method: str, rest: str, user: dict[str, Any]) -> None:
         """/api/drafts (GET list, POST create), /api/drafts/<name> (DELETE), /api/drafts/<name>/files (GET list),
-        /api/drafts/<name>/files/<path> (GET, PUT, DELETE), /api/drafts/<name>/install (POST)."""
+        /api/drafts/<name>/files/<path> (GET, PUT, DELETE), /api/drafts/<name>/install (POST: installs it and, when that
+        succeeds, removes the draft)."""
         st, admin = self.state, self.clients["admin"]
         if not rest:
             if method == "GET":
@@ -460,7 +461,8 @@ class Handler(chat.Handler):
                     if p.is_file() and p.name != "meta.json":
                         tar.add(p, arcname=p.relative_to(root).as_posix())
             r = admin.post("/v1/harnesses", files={"package": (f"{name}.tgz", buf.getvalue())})
-            if r.status_code == 200:
+            if r.status_code == 200:                         # installed: the harness is the record, the draft is done
+                shutil.rmtree(root, ignore_errors=True)
                 st.audit(user["name"], "draft.install", {"draft": name, "harness": r.json().get("name")})
             self._reply(r.status_code, r.content, r.headers.get("content-type", "application/json"))
         else:

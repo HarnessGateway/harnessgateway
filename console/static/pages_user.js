@@ -228,7 +228,7 @@ const drafts = { title: "Draft", async render(el, params, me) {
   let open = null, dirty = false;
   el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, doc.based_on ? `Draft · ${doc.based_on}` : "Draft",
     `<button class="btn2" id="add">Add file</button><button class="btn2" id="del" disabled>Delete file</button><button class="btn2" id="save" disabled>Save</button><button class="btn2 danger" id="discard">Discard</button><button class="btn" id="install">Install</button>`) +
-    `<div class="note">Edit the files here; <b>Install</b> packs the draft and installs it. harness.json's <span class="mono">name</span> is the name it installs under, and an installed harness of that name is upgraded. Then try it: pick it in the chat, or send a request over the API, and watch the session under Observability.</div>` +
+    `<div class="note">Edit the files here; <b>Install</b> packs the draft, installs it and removes the draft. harness.json's <span class="mono">name</span> is the name it installs under, and an installed harness of that name is upgraded; <b>Edit</b> on the harness brings it back here. Then try it: pick it in the chat, or send a request over the API, and watch the session under Observability.</div>` +
     `<div class="${EDITOR_CSS}"><div class="tree" id="tree"></div><div style="display:flex;flex-direction:column;min-height:0"><div class="ribbon" id="fname">Pick a file</div><textarea id="ed" spellcheck="false" style="flex:1;min-height:420px;font-size:12.5px" disabled></textarea></div></div>`;
   const ed = $("#ed", el), saveBtn = $("#save", el), delBtn = $("#del", el);
   const drawTree = () => { $("#tree", el).innerHTML = tree(doc.data, open); };
