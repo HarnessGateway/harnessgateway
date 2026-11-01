@@ -1,8 +1,8 @@
 """The node agent (SPEC §6.2): joins, then runs four loops (heartbeat, claim, meter, evict idle) and one task per turn.
 
 A turn on this node:
-  1. the package, verified against its digest, and its tools (install.sh,
-     once per base digest and sandbox image, in an install box with the install egress);
+  1. the package, verified against its digest, and its tools (install.sh, once per package digest and sandbox
+     image, in an install box with the install egress);
   2. the session's box: the warm one when this node ran the session's last turn, otherwise a new box with the home
      seeds, then the session's snapshot (or, for a new session, the workspace seeds);
   3. the turn's inputs into the read-only /run/hg, staged container files applied to the workspace, and the door's

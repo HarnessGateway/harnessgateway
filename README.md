@@ -71,15 +71,16 @@ For many hosts, a managed Postgres, an S3 bucket and node pools, see [`docs/oper
 
 ## Harnesses
 
-The platform knows no CLI. Every harness is a package of a few files, and every package starts
-as a copy of one template, the `shell` package under [`packages/`](packages/): a manifest (`harness.json`), the CLI's
-pinned install (`install.sh`), one turn (`run.sh`, which runs `map.py`), and the mapping from the request to the CLI's
-command and from the CLI's output to Responses items (`message`, `reasoning`, `shell_call`, `apply_patch_call`,
-`mcp_call`, `function_call`). You write and edit these in the console, install with a click, and test with a request:
-in the chat, or over the API. Any provider that speaks one of the three API shapes (`anthropic`, `openai`, `google`)
-works, including compatible endpoints from other vendors. Or ask the one built-in harness: `harness-package-builder` is
-Claude Code seeded with the skill that writes packages; ask it in the chat for a harness for a CLI, and turn what it
-wrote into a draft from its session page. See the template's README and [`docs/packages.md`](docs/packages.md).
+The platform knows no CLI. Every harness is a package of a few files, and every package starts as a copy of one
+template, the `shell` package under [`packages/`](packages/): a manifest (`harness.json`), the CLI's pinned install
+(`install.sh`), one turn (`run.sh`, which runs `map.py`), and the mapping from the request to the CLI's command and
+from the CLI's output to Responses items (`message`, `reasoning`, `shell_call`, `apply_patch_call`, `mcp_call`,
+`function_call`). You write and edit these in the console, install with a click, and test with a request: in the
+chat, or over the API. Any provider that speaks one of the three API shapes (`anthropic`, `openai`, `google`) works,
+including compatible endpoints from other vendors. Or ask the one built-in harness: `harness-package-builder` is
+Claude Code seeded with the skill that writes packages; say "Create a harness package for <name>" in the chat, and
+turn what it wrote into a draft from its session page. See the template's README and
+[`docs/packages.md`](docs/packages.md).
 
 ## How it works
 

@@ -203,7 +203,7 @@ needs to run headless in the sandbox, nothing an org would want to own.
 
 ### 5.4 Install
 
-`install.sh` runs once per (base digest, sandbox image id) on a node, in an install box: gVisor, the sandbox image,
+`install.sh` runs once per (package digest, sandbox image id) on a node, in an install box: gVisor, the sandbox image,
 writable `$HG_TOOLS` and `/tmp`, egress = org egress ∪ `install.egress`, no provider, no secrets, within
 `install.timeout_s`. On success `$HG_TOOLS` is kept on the node and mounted read-only into every box of that package. A
 package installs its CLI by the CLI's official, documented method, pinned to a version, and verifies the version.
@@ -243,18 +243,19 @@ A small Python library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), op
   and exactly one terminal event.
 - `State`: key/value under `$HG_STATE`.
 
-### 5.8 The template
+### 5.8 The template and the built-in
 
 The platform ships two packages. `shell` (no model: the input runs as a bash command; the reference and test
 package) is the template: the console starts every new harness as a copy of it under the name the user gives.
-`harness-package-builder` (the claude-code package seeded with the platform's harness-package-builder skill, the template and
-the packages guide) is the one built-in harness: `init` installs it into the org (`HG_BUILDER_DIR`), and it writes
-packages into its workspace, which the console turns into a draft from that session's page and from no other. The
-builder is the one shipped package that is not vanilla; its seeds are the platform's own. Every other harness is one
-someone wrote, by hand from the template or with the builder. Each package follows its layout: `harness.json`, `install.sh`,
-`run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`), `map.py` (helpers, the output mapper, request→CLI, run,
-main), `README.md` (Files, The command, Request fields, Output mapping, Known limits, Tests), `tests/` with fixtures
-recorded from real runs. The template's README says, file by file, what to change for a CLI.
+`harness-package-builder` (the claude-code package seeded with the platform's harness-package-builder skill, the
+template and the packages guide) is the one built-in harness: `init` installs it into the org (`HG_BUILDER_DIR`), and
+it writes packages into its workspace, which the console turns into a draft from that session's page and from no
+other. The builder is the one shipped package that is not vanilla; its seeds are the platform's own. Every other
+harness is one someone wrote, by hand from the template or with the builder. Each package follows one layout:
+`harness.json`, `install.sh`, `run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`), `map.py` (helpers, the
+output mapper, request→CLI, run, main), `README.md` (Files, The command, Request fields, Output mapping, Known
+limits, Tests), `tests/` with fixtures recorded from real runs. The template's README says, file by file, what to
+change for a CLI.
 
 ## 6. Sandboxes and sessions
 

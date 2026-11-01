@@ -12,7 +12,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 ### Changed
 
 - Harnesses are written in the console. `init` creates the organization, the admin key and the built-in harness
-  builder; every other harness starts as a copy of one template, the `shell` package, edited, installed and upgraded
+  package builder; every other harness starts as a copy of one template, the `shell` package, edited, installed and upgraded
   in the console's editor (or installed with `POST /v1/harnesses` as a package archive). The template's README says,
   file by file, what to change for a CLI.
 
