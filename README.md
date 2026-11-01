@@ -2,16 +2,18 @@
 
 # HarnessGateway
 
-**Coding-agent harnesses as an API.** Send a standard OpenAI Responses request; HarnessGateway runs it through a
-harness package (Claude Code, Codex, Gemini CLI, Hermes, OpenCode, Pi, or one of your own) in a gVisor sandbox,
-streams standard Responses events back, and keeps the session so the next request continues it. Any OpenAI SDK
-works unchanged.
+**Any coding-agent harness, behind one API.** Send a standard OpenAI Responses request; HarnessGateway runs it
+through a *harness package* in a gVisor sandbox, streams standard Responses events back, and keeps the session so
+the next request continues it. The request is the task; the package is the agent. A package is a handful of files
+that teach the platform one CLI, so any harness fits: Claude Code, Codex, Pi, an 81-line agent from a GitHub
+repository, or your own. You write a package in the console, or ask the built-in **harness package builder** for one
+by name. Any OpenAI SDK works unchanged.
 
 [![CI](https://github.com/HarnessGateway/harnessgateway/actions/workflows/ci.yml/badge.svg)](https://github.com/HarnessGateway/harnessgateway/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/HarnessGateway/harnessgateway)](https://github.com/HarnessGateway/harnessgateway/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-<p align="center"><img src="docs/demo.gif" width="100%" alt="The console: signing in, adding a provider, the harnesses, asking Claude Code in the chat for a script that generates order data and builds an SVG dashboard, and the session filling in live under Observability with the dashboard it built rendered beside the transcript"></p>
+<p align="center"><img src="docs/demo.gif" width="100%" alt="The console on a fresh deploy: a provider, the built-in harness package builder, three chats asking it to create harness packages for codex, pi and claude-code, each package imported from its session page and installed, a chat with each new harness writing and running FizzBuzz, and the sessions under Observability"></p>
 
 ```python
 from openai import OpenAI
@@ -28,13 +30,15 @@ Coding agents are becoming infrastructure: something an application calls, not s
 CLI has its own install, flags, configuration files and output format, and none of them was built to run many
 sessions for many callers safely. HarnessGateway puts one contract and one sandbox in front of all of them:
 
-- **One API for every agent.** The OpenAI Responses schema, in both directions, validated with the SDK's own types.
-  `model` is `harness[/provider[/model]]`; `previous_response_id` continues a session. There is no HarnessGateway
-  schema to learn.
+- **One contract, every harness.** The OpenAI Responses schema, in both directions, validated with the SDK's own
+  types, is the only interface: `model` is `harness[/provider[/model]]`, `previous_response_id` continues a session,
+  and there is no HarnessGateway schema to learn. Because a harness is a package rather than an integration, the
+  platform is not tied to any list of supported agents: whatever runs headless in a sandbox can be packaged.
 - **The request serves the task; the package defines the agent.** Input, files and instructions come with each
   request. The CLI and its version, the standing prompt, skills, hooks, permissions, MCP catalog, egress and secrets
-  are a *harness package*: a handful of files you write and edit in the console, starting from one template, and
-  install with a click.
+  are the package: a handful of files you write and edit in the console, starting from one template, and install
+  with a click. The built-in `harness-package-builder` writes one from a name: it researches the CLI, pins the
+  current release, runs it in its sandbox, and hands back a package with recorded fixtures and a test.
 - **Sandboxed by default.** Each session runs under gVisor with no route out but its egress door, which enforces
   your allow and deny entries. No secret ever enters a sandbox: provider keys are swapped in at the gateway, and
   organization or caller secrets are placeholders inside, injected at the door toward their bound hosts only.
@@ -43,7 +47,7 @@ sessions for many callers safely. HarnessGateway puts one contract and one sandb
 - **Metered and observable.** Allocated CPU and memory, bytes through the door and storage held, per organization,
   in an idempotent ledger; every harness, gateway and door exchange traced. Tokens are not metered: you pay your
   model provider directly with your own key.
-- **The platform knows no CLI.** Everything CLI-specific lives in a package. Adding an agent means writing a package,
+- **The platform knows no CLI.** Everything CLI-specific lives in a package. Adding an agent means adding a package,
   not changing the platform.
 
 ## Quick start
