@@ -1,20 +1,23 @@
 # harness-builder
 
 Claude Code, run exactly as the `claude-code` package runs it, seeded with the platform's harness-package-builder
-skill, the shell template and the packages guide. Ask it for a harness for a coding-agent CLI; it studies the CLI in
-its sandbox, writes the package under `/workspace/<name>/`, checks the mapper's events offline, and hands the folder
-back. In the console, **New harness from this session's workspace** turns that folder into a draft; **Install**, then a
-turn on the new harness is its real test.
+skill, the shell template and the packages guide. Say "Create a harness package for <name>": it researches the CLI
+(its docs, repository and registry page), installs its latest stable version in its sandbox, tries it against this
+session's provider when the CLI speaks that API shape, writes the package under `/workspace/<name>/`, checks the
+mapper's events offline, and hands the folder back. In the console, **New harness from workspace** on this session's
+page turns that folder into a draft; **Install**, then a turn on the new harness is its real test.
 
-This is the one package shipped with the platform that is not vanilla: its seeds are the platform's own skill, not an
-organization's. An organization that wants its own builder (its conventions, its CLIs) edits this one.
+This is the one built-in harness, installed by `init`, and the one shipped package that is not vanilla: its seeds are
+the platform's own skill, not an organization's. An organization that wants its own builder (its conventions, its
+CLIs) edits this one.
 
 - **CLI:** `@anthropic-ai/claude-code` (see `harness.json` for the pinned version), installed with npm into `$HG_TOOLS`.
 - **Provider:** `anthropic` (Claude Code speaks the Messages API). A CLI the builder studies can be tried for real only
   when it speaks the same shape as this session's provider; otherwise the builder writes the mapping from the CLI's
   documented output and says so.
-- **Run egress:** the package registries and GitHub (npm, PyPI, crates.io, GitHub releases and raw files, astral.sh for
-  uv), so the builder can install the CLI it is studying. Nothing else.
+- **Run egress:** `*`. The builder researches a CLI before it packages it (documentation, repository, registry,
+  release notes) and installs it by whatever route the project documents, so its own sandbox reaches everything. The
+  harness it writes gets only the egress its manifest declares.
 - **Persist:** `.claude/projects` (Claude Code's own session store, so a later turn resumes the conversation).
 
 ## Files

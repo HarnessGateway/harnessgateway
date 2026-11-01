@@ -2,7 +2,7 @@
   "contract": 1,
   "name": "harness-builder",
   "version": "2.1.310-1",
-  "description": "The harness builder: Anthropic's Claude Code CLI (@anthropic-ai/claude-code 2.1.310), run headless as the claude-code package runs it, seeded with the harness-package-builder skill, the shell template and the packages guide. Ask it for a harness for a coding-agent CLI and it studies the CLI in its sandbox (installing it from the registries its egress allows, trying it against this session's provider when the CLI speaks that API shape), writes the package under /workspace/<name>/ (harness.json, install.sh, run.sh, map.py, README.md, a fixture test) and checks the mapper's events offline. The console turns that folder into a draft (New harness from this session's workspace); Install, then a turn on the new harness is its real test. Not vanilla by design: its seeds are the platform's own builder skill.",
+  "description": "The harness builder: Anthropic's Claude Code CLI (@anthropic-ai/claude-code 2.1.310), run headless as the claude-code package runs it, seeded with the harness-package-builder skill, the shell template and the packages guide. Say \"Create a harness package for <name>\" and it researches the CLI (its docs, repository and registry page, with full outbound access), installs its latest stable version in its sandbox, tries it against this session's provider when the CLI speaks that API shape, writes the package under /workspace/<name>/ (harness.json with the egress the install needs, install.sh, run.sh, map.py, README.md, fixture tests) and checks the mapper's events offline. The console turns that folder into a draft (New harness from workspace, on this session's page); Install, then a turn on the new harness is its real test. The one built-in harness, and not vanilla by design: its seeds are the platform's own builder skill.",
   "provider": {
     "apis": [
       "anthropic"
@@ -19,19 +19,7 @@
   },
   "run": {
     "egress": [
-      "registry.npmjs.org",
-      "pypi.org",
-      "files.pythonhosted.org",
-      "github.com",
-      "*.github.com",
-      "raw.githubusercontent.com",
-      "objects.githubusercontent.com",
-      "release-assets.githubusercontent.com",
-      "*.githubusercontent.com",
-      "crates.io",
-      "static.crates.io",
-      "astral.sh",
-      "*.astral.sh"
+      "*"
     ],
     "stop_grace_s": 10
   },
