@@ -112,14 +112,14 @@ const harnesses = { title: "Harnesses", async render(el, params, me) {
   if (params[0]) return harness.render(el, params, me);
   const [doc, drafts] = await Promise.all([api("GET", "/v1/harnesses"), api("GET", "/drafts")]);
   const rows = doc.data;
-  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-builder" ? pill("built-in", "q") : ""}</div>` +
+  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-package-builder" ? pill("built-in", "q") : ""}</div>` +
     `<div class="hv">${esc(r.version)}</div><div class="hd">${esc(r.description || "")}</div>` +
     `<div class="hf">${r.provider_apis.length ? r.provider_apis.map(a => pill(a, "b")).join(" ") : pill("no model", "q")}<span class="muted small" style="margin-left:auto">${esc([r.default_provider, r.default_model].filter(Boolean).join(" / "))}</span></div>` +
     `<div class="ha"><span class="btn2">Open</span></div></a>`;
   const dcard = d => `<a class="hcard draft" href="#/drafts/${encodeURIComponent(d.name)}"><div class="hh"><b>${esc(d.name)}</b>${pill("draft", "warn")}</div>` +
     `<div class="hv">${esc(d.based_on ? `from ${d.based_on}` : "")}</div><div class="hd muted">${d.files} file${d.files === 1 ? "" : "s"} · edited ${when(d.updated_at)}</div>` +
     `<div class="ha"><span class="btn2">Edit</span><button class="btn2 danger" data-discard="${esc(d.name)}">Discard</button></div></a>`;
-  el.innerHTML = top("Harnesses", "The agents this organization can run. Every harness is a package: start one from the template and edit its files, or ask the built-in harness builder in the chat to write one, then install it and try it in the chat or over the API.",
+  el.innerHTML = top("Harnesses", "The agents this organization can run. Every harness is a package: start one from the template and edit its files, or ask the built-in harness package builder in the chat to write one, then install it and try it in the chat or over the API.",
     `<button class="btn" id="new">New harness</button>`) +
     (drafts.data.length ? `<h2>Drafts</h2><div class="cards">${drafts.data.map(dcard).join("")}</div>` : "") +
     `<h2>Installed</h2>` + (rows.length ? `<div class="cards">${rows.map(hcard).join("")}</div>` : `<div class="empty">No harness yet. <b>New harness</b> starts one from the template.</div>`);
@@ -145,7 +145,7 @@ async function editInstalled(name) {
 async function newDraft() {
   modal({ title: "New harness", submit: "Create", body:
     field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="claude-code"'),
-      "the harness's name, as requests name it in model. The draft starts as a copy of the template: harness.json, install.sh, run.sh, map.py and a README that says what to change in each. Or ask the harness builder in the chat to write one for you"),
+      "the harness's name, as requests name it in model. The draft starts as a copy of the template: harness.json, install.sh, run.sh, map.py and a README that says what to change in each. Or ask the harness package builder in the chat to write one for you"),
     onSubmit: async d => { await api("POST", "/drafts", { name: d.name }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
 }
 

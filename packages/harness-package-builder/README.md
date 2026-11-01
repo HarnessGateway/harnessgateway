@@ -1,4 +1,4 @@
-# harness-builder
+# harness-package-builder
 
 Claude Code, run exactly as the `claude-code` package runs it, seeded with the platform's harness-package-builder
 skill, the shell template and the packages guide. Say "Create a harness package for <name>": it researches the CLI
@@ -45,4 +45,4 @@ is one long turn; the chat shows it as it goes, and the session page shows every
 
 ## Tests
 
-`.venv/bin/pytest -q packages/harness-builder`
+`.venv/bin/pytest -q packages/harness-package-builder`

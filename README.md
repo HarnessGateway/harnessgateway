@@ -56,13 +56,13 @@ sudo ./deploy/install.sh
 ```
 
 The installer starts Postgres, the API with the provider gateway, a node, and the consoles, creates your
-organization with the built-in harness builder, and prints your admin key and console sign-ins once. Then:
+organization with the built-in harness package builder, and prints your admin key and console sign-ins once. Then:
 
 1. Open the console at `http://localhost:8800`, sign in as `admin`, and add a provider under **Setup → Providers**
    (an Anthropic, OpenAI or Gemini API endpoint and your key; the key is sealed and never shown again).
 2. Add a harness under **Setup → Harnesses**: **New harness** starts one from the template, you edit its four files
    for the CLI you want (the template's README says what to change in each), and **Install**. Or ask the built-in
-   `harness-builder` in the chat for a harness for your CLI and import what it wrote from its session page.
+   `harness-package-builder` in the chat for a harness for your CLI and import what it wrote from its session page.
 3. Open **Workbench → Chat**, pick the harness and the provider, and ask for something.
 4. Or call the API with any OpenAI SDK pointed at `http://localhost:8000/v1`, as above.
 
@@ -77,7 +77,7 @@ pinned install (`install.sh`), one turn (`run.sh`, which runs `map.py`), and the
 command and from the CLI's output to Responses items (`message`, `reasoning`, `shell_call`, `apply_patch_call`,
 `mcp_call`, `function_call`). You write and edit these in the console, install with a click, and test with a request:
 in the chat, or over the API. Any provider that speaks one of the three API shapes (`anthropic`, `openai`, `google`)
-works, including compatible endpoints from other vendors. Or ask the one built-in harness: `harness-builder` is
+works, including compatible endpoints from other vendors. Or ask the one built-in harness: `harness-package-builder` is
 Claude Code seeded with the skill that writes packages; ask it in the chat for a harness for a CLI, and turn what it
 wrote into a draft from its session page. See the template's README and [`docs/packages.md`](docs/packages.md).
 
@@ -113,7 +113,7 @@ a multi-tenant deployment, is in [`SPEC.md`](SPEC.md).
 | [`docs/console.md`](docs/console.md) | the organization and deployer consoles and the chat |
 | [`docs/packages.md`](docs/packages.md) | building a harness package, hgkit, secrets, persistence, testing |
 | [`docs/extensions.md`](docs/extensions.md) | the extension seam: tenants, admission, metering hooks |
-| [`packages/`](packages/) | the two shipped packages: `shell`, the template every harness starts from, and `harness-builder`, the built-in |
+| [`packages/`](packages/) | the two shipped packages: `shell`, the template every harness starts from, and `harness-package-builder`, the built-in |
 | [`CHANGELOG.md`](CHANGELOG.md) | releases |
 
 ## Contributing

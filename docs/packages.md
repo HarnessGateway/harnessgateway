@@ -10,7 +10,7 @@ from. Its README says, file by file, what to change.
 
 Under **Setup → Harnesses**, **New harness** copies the template into a draft under the name you give. Edit its files
 in the editor (add files for seeds), **Install**, then test it with a request: pick it in **Workbench → Chat**, or
-send `POST /v1/responses` with `"model": "<name>/<provider>/<model>"`. Or let the built-in write it: `harness-builder`
+send `POST /v1/responses` with `"model": "<name>/<provider>/<model>"`. Or let the built-in write it: `harness-package-builder`
 is Claude Code seeded with the builder skill, this guide and the template, installed by `init`; ask it in the chat
 for a harness for a CLI, and it studies the CLI in its sandbox, writes the package under `/workspace/<name>/` and
 checks the mapper's events; **New harness from workspace**, on that session's page, turns the folder into a draft.

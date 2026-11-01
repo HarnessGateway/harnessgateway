@@ -1,4 +1,4 @@
-"""Claude Code (here the harness builder), one turn: the Responses request in, `claude -p --output-format stream-json`
+"""Claude Code (here the harness package builder), one turn: the Responses request in, `claude -p --output-format stream-json`
 run, Responses events out.
 
     run()      places the request's files in the workspace, builds the CLI's command line and environment from the

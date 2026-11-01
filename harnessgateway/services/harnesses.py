@@ -89,7 +89,7 @@ class Harnesses:
         return await self.get(org_id, manifest.name)
 
     async def install_folder(self, org_id: str, folder: Path) -> dict[str, Any]:
-        """Install or upgrade from a package folder on this host: the built-in harness builder, at `init`."""
+        """Install or upgrade from a package folder on this host: the built-in harness package builder, at `init`."""
         with tempfile.TemporaryDirectory(prefix="hg-folder-") as tmp:
             copy = Path(tmp) / "p"
             shutil.copytree(folder, copy, ignore=shutil.ignore_patterns("__pycache__", "tests"))

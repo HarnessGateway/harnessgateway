@@ -45,7 +45,7 @@ DRAFT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
 DRAFT_FILE_MAX = 4 * 1024 * 1024
 # every new harness starts as a copy of the template: the shell package, the smallest complete package on the contract
 TEMPLATE_DIR = Path(os.environ.get("HG_TEMPLATE_DIR") or Path(__file__).resolve().parents[1] / "packages" / "shell")
-BUILDER = "harness-builder"                        # the built-in whose sessions' workspaces hold packages to import
+BUILDER = "harness-package-builder"                        # the built-in whose sessions' workspaces hold packages to import
 COOKIE = "hgc"
 SESSION_S = 12 * 3600
 ROLES = ("deployer", "admin", "member")
@@ -480,7 +480,7 @@ class Handler(chat.Handler):
     def _draft_create(self, doc: dict[str, Any], user: dict[str, Any]) -> None:
         """{"name"} starts a new harness as a copy of the template under that name; {"name", "edit": true} opens the
         installed harness of that name as a draft (installing the draft upgrades it in place); {"name", "session": id,
-        "folder": f} copies /workspace/<folder>/ of a harness-builder session, where the builder wrote a package."""
+        "folder": f} copies /workspace/<folder>/ of a harness-package-builder session, where the builder wrote a package."""
         st, admin = self.state, self.clients["admin"]
         name = str(doc.get("name", "")).strip()
         root = st.draft(name)

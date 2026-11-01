@@ -3,7 +3,7 @@
 # each sandbox's egress door (`harnessgateway door`, started by the node). The api and gateway run as an unprivileged
 # user; the node needs the Docker socket and root to hand bind mounts to the sandbox user. The console (console/, with
 # the chat) ships in /opt/harnessgateway/console; the two packages the platform ships, in /opt/harnessgateway/packages:
-# `shell`, the template the console starts every new harness from, and `harness-builder`, the built-in `init` installs.
+# `shell`, the template the console starts every new harness from, and `harness-package-builder`, the built-in `init` installs.
 #
 # Hardened like the sandbox image: Chainguard's Wolfi base pinned by digest, no package manager, BusyBox, /bin/sh or
 # setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
@@ -43,7 +43,7 @@ pathlib.Path(d).iterdir() if p.is_symlink() and os.readlink(p).endswith('busybox
 EOF
 
 ENV PATH=/opt/harnessgateway/bin:/usr/bin:/bin PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    HG_TEMPLATE_DIR=/opt/harnessgateway/packages/shell HG_BUILDER_DIR=/opt/harnessgateway/packages/harness-builder
+    HG_TEMPLATE_DIR=/opt/harnessgateway/packages/shell HG_BUILDER_DIR=/opt/harnessgateway/packages/harness-package-builder
 LABEL org.opencontainers.image.title="harnessgateway-platform" \
       org.opencontainers.image.source="https://github.com/HarnessGateway/harnessgateway" \
       org.opencontainers.image.licenses="Apache-2.0"

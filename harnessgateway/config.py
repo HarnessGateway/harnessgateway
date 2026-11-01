@@ -47,7 +47,7 @@ class Settings:
     upstream_proxy: str = ""
     ca_file: str = ""
     allow_private_egress: bool = False
-    builder_dir: Path = Path(__file__).resolve().parent.parent / "packages" / "harness-builder"
+    builder_dir: Path = Path(__file__).resolve().parent.parent / "packages" / "harness-package-builder"
     extensions: tuple[str, ...] = ()
     log_level: str = "info"
     defaults: Capacity = field(default_factory=Capacity)

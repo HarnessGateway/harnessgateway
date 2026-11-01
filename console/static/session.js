@@ -191,7 +191,7 @@ export const session = { title: "Session", async render(el, params, me) {
       `<div class="kv"><span class="k">Session</span><span class="v mono">${esc(sid)}</span></div>` +
       `<div class="acts" style="margin-left:auto">` +
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : "") +
-      (admin && md.harness === "harness-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +
+      (admin && md.harness === "harness-package-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +
       (admin ? `<button class="btn2 danger" id="del">Delete</button>` : "") + `</div>`;
   };
 

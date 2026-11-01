@@ -18,7 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 
 ### Added
 
-- `harness-builder`, the one built-in harness, installed by `init` (`HG_BUILDER_DIR`): Claude Code seeded with the
+- `harness-package-builder`, the one built-in harness, installed by `init` (`HG_BUILDER_DIR`): Claude Code seeded with the
   harness-package-builder skill, the template and the packages guide. Ask it in the chat for a harness for a CLI; it
   writes the package in its workspace, and **New harness from workspace**, on a builder session's page, copies that
   folder into a draft. Every other harness is one someone wrote, from the template or with the builder.
