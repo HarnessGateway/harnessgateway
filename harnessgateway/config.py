@@ -12,7 +12,6 @@ from . import __version__
 from .domain.capacity import Capacity
 
 ROLES = ("api", "gateway", "node")
-_PACKAGES = Path(__file__).resolve().parent.parent / "packages"
 
 
 class ConfigError(SystemExit):
@@ -48,8 +47,8 @@ class Settings:
     upstream_proxy: str = ""
     ca_file: str = ""
     allow_private_egress: bool = False
+    builder_dir: Path = Path(__file__).resolve().parent.parent / "packages" / "harness-package-builder"
     extensions: tuple[str, ...] = ()
-    packages_dir: Path = _PACKAGES
     log_level: str = "info"
     defaults: Capacity = field(default_factory=Capacity)
 
@@ -104,8 +103,9 @@ class Settings:
                 uplink_network=get("UPLINK_NETWORK", cls.uplink_network), runtime=unsafe or "runsc",
                 upstream_proxy=get("UPSTREAM_PROXY"), ca_file=get("CA_FILE"),
                 allow_private_egress=_bool(get("ALLOW_PRIVATE_EGRESS")),
+                builder_dir=Path(get("BUILDER_DIR", str(cls.builder_dir))),
                 extensions=tuple(x.strip() for x in get("EXTENSIONS").split(",") if x.strip()),
-                packages_dir=Path(get("PACKAGES_DIR", str(_PACKAGES))), log_level=get("LOG_LEVEL", "info").lower(),
+                log_level=get("LOG_LEVEL", "info").lower(),
                 defaults=defaults)
         server = {"api", "gateway"} & set(roles)
         if server:

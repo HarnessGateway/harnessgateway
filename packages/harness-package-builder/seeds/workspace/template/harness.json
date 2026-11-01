@@ -1,0 +1,8 @@
+{
+  "contract": 1,
+  "name": "shell",
+  "version": "1.0.0-1",
+  "description": "The reference harness, with no model: the input text runs as one bash command in the session's workspace. The command and its output come back as a shell_call, its output and a message. The smallest package on the contract and the one the platform's tests use.",
+  "install": {"timeout_s": 60},
+  "run": {"stop_grace_s": 5}
+}

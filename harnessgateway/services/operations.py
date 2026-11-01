@@ -3,10 +3,8 @@ the running configuration and versions, and one action an operator needs on a se
 Reads cross organizations, so everything here runs on the platform path, behind the operator key."""
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from .. import __version__, ids
@@ -117,19 +115,9 @@ class Operations:
     async def versions(self) -> dict[str, Any]:
         async with self.db.platform() as tx:
             migrations = await tx.all("SELECT package, max(version) AS version FROM schema_migrations GROUP BY 1 ORDER BY 1")
-        builtins = []
-        if self.settings.packages_dir.is_dir():
-            for p in sorted(self.settings.packages_dir.iterdir()):
-                manifest = p / "harness.json"
-                if manifest.is_file():
-                    try:
-                        m = json.loads(manifest.read_text())
-                        builtins.append({"name": m.get("name", p.name), "version": m.get("version", "")})
-                    except ValueError:
-                        builtins.append({"name": p.name, "version": "?"})
         return {"object": "versions", "platform": __version__, "sandbox_image": self.settings.sandbox_image,
-                "platform_image": self.settings.platform_image, "packages_dir": str(Path(self.settings.packages_dir)),
-                "migrations": {r["package"]: int(r["version"]) for r in migrations}, "builtins": builtins}
+                "platform_image": self.settings.platform_image,
+                "migrations": {r["package"]: int(r["version"]) for r in migrations}}
 
     async def evict(self, sid: str) -> dict[str, Any]:
         """Free a session's warm box: the node holding it removes it at its next heartbeat. The session itself stays and

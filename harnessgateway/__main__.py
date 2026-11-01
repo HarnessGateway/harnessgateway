@@ -4,7 +4,7 @@
     harnessgateway node                         a node: runs sandboxes on this host's Docker with gVisor
     harnessgateway door                         a sandbox's door (started by the node)
     harnessgateway migrate                      apply the schema migrations
-    harnessgateway init                         the self-hosted organization, its built-ins and first admin key (once)
+    harnessgateway init                         the self-hosted organization and its first admin key (once)
     harnessgateway node-token create            a join token for nodes of a pool
     harnessgateway keygen                       fresh values for HG_SECRET_KEY, HG_OPERATOR_KEY, HG_NODE_JOIN_TOKEN
 

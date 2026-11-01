@@ -1,14 +1,15 @@
 # syntax=docker/dockerfile:1.7
 # The platform image: one image for every role: `harnessgateway serve --role api,gateway`, `harnessgateway node`, and
 # each sandbox's egress door (`harnessgateway door`, started by the node). The api and gateway run as an unprivileged
-# user; the node needs the Docker socket and root to hand bind mounts to the sandbox user. The built-in packages ship in
-# /opt/harnessgateway/packages (HG_PACKAGES_DIR); the console (console/, with the chat) in /opt/harnessgateway/console.
+# user; the node needs the Docker socket and root to hand bind mounts to the sandbox user. The console (console/, with
+# the chat) ships in /opt/harnessgateway/console; the two packages the platform ships, in /opt/harnessgateway/packages:
+# `shell`, the template the console starts every new harness from, and `harness-package-builder`, the built-in `init` installs.
 #
 # Hardened like the sandbox image: Chainguard's Wolfi base pinned by digest, no package manager, BusyBox, /bin/sh or
 # setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
 # change and weekly (.github/workflows/images.yml).
 #
-# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:1.1.2 .
+# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:2.0.0 .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret: --secret id=ca,src=/path/ca.pem
 FROM cgr.dev/chainguard/wolfi-base@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
@@ -21,10 +22,10 @@ COPY console ./console
 RUN --mount=type=secret,id=ca,required=false sh -eu <<'EOF'
 [ -s /run/secrets/ca ] && export SSL_CERT_FILE=/run/secrets/ca PIP_CERT=/run/secrets/ca
 apk update
-apk add --no-cache python-3.12 docker-cli git bash tini ca-certificates-bundle    # bash: `bash -n` on package scripts
+apk add --no-cache python-3.12 docker-cli bash tini ca-certificates-bundle    # bash: `bash -n` on package scripts
 python3.12 -m venv /opt/harnessgateway
 /opt/harnessgateway/bin/pip install --no-cache-dir --disable-pip-version-check /src
-cp -r /src/packages /opt/harnessgateway/packages
+cp -r /src/packages /opt/harnessgateway/packages && find /opt/harnessgateway/packages -name tests -type d -prune -exec rm -rf {} +
 cp -r /src/console /opt/harnessgateway/console
 /opt/harnessgateway/bin/pip uninstall -y pip
 rm -rf /src /var/cache/apk /etc/apk/cache
@@ -42,7 +43,7 @@ pathlib.Path(d).iterdir() if p.is_symlink() and os.readlink(p).endswith('busybox
 EOF
 
 ENV PATH=/opt/harnessgateway/bin:/usr/bin:/bin PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
-    HG_PACKAGES_DIR=/opt/harnessgateway/packages
+    HG_TEMPLATE_DIR=/opt/harnessgateway/packages/shell HG_BUILDER_DIR=/opt/harnessgateway/packages/harness-package-builder
 LABEL org.opencontainers.image.title="harnessgateway-platform" \
       org.opencontainers.image.source="https://github.com/HarnessGateway/harnessgateway" \
       org.opencontainers.image.licenses="Apache-2.0"

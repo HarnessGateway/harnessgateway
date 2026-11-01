@@ -111,32 +111,20 @@ const playground = { title: "Playground", async render(el, params, me) {
 const harnesses = { title: "Harnesses", async render(el, params, me) {
   if (params[0]) return harness.render(el, params, me);
   const [doc, drafts] = await Promise.all([api("GET", "/v1/harnesses"), api("GET", "/drafts")]);
-  const rows = doc.data, builtins = doc.builtins || [], installed = new Set(rows.map(r => r.name));
-  const missing = builtins.filter(b => !installed.has(b));
-  const sourceOf = r => r.source?.builtin ? "built-in" : r.source?.git ? "git" : "created";
-  const hcard = r => {
-    const src = sourceOf(r);
-    return `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${src === "built-in" ? pill("built-in", "q") : src === "git" ? pill("git", "b") : ""}</div>` +
-      `<div class="hv">${esc(r.version)}${r.extends ? ` · overlay on ${esc(r.extends)}` : ""}</div><div class="hd">${esc(r.description || "")}</div>` +
-      `<div class="hf">${r.provider_apis.length ? r.provider_apis.map(a => pill(a, "b")).join(" ") : pill("no model", "q")}<span class="muted small" style="margin-left:auto">${esc([r.default_provider, r.default_model].filter(Boolean).join(" / "))}</span></div>` +
-      `<div class="ha"><span class="btn2">${src === "built-in" ? "View" : "Edit"}</span><button class="btn2" data-fork="${esc(r.name)}">Fork</button></div></a>`;
-  };
+  const rows = doc.data;
+  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-package-builder" ? pill("built-in", "q") : ""}</div>` +
+    `<div class="hv">${esc(r.version)}</div><div class="hd">${esc(r.description || "")}</div>` +
+    `<div class="hf">${r.provider_apis.length ? r.provider_apis.map(a => pill(a, "b")).join(" ") : pill("no model", "q")}<span class="muted small" style="margin-left:auto">${esc([r.default_provider, r.default_model].filter(Boolean).join(" / "))}</span></div>` +
+    `<div class="ha"><span class="btn2">Open</span></div></a>`;
   const dcard = d => `<a class="hcard draft" href="#/drafts/${encodeURIComponent(d.name)}"><div class="hh"><b>${esc(d.name)}</b>${pill("draft", "warn")}</div>` +
-    `<div class="hv">${esc(d.based_on || "")}</div><div class="hd muted">${d.files} file${d.files === 1 ? "" : "s"} · edited ${when(d.updated_at)}</div>` +
+    `<div class="hv">${esc(d.based_on ? `from ${d.based_on}` : "")}</div><div class="hd muted">${d.files} file${d.files === 1 ? "" : "s"} · edited ${when(d.updated_at)}</div>` +
     `<div class="ha"><span class="btn2">Edit</span><button class="btn2 danger" data-discard="${esc(d.name)}">Discard</button></div></a>`;
-  el.innerHTML = top("Harnesses", "The agents this organization can run. Open any to read it, fork it into your own, or start a new one.",
-    `<button class="btn2" id="git">Install from git</button>${missing.length ? `<button class="btn2" id="builtin">Install a built-in</button>` : ""}<button class="btn" id="new">New harness</button>`) +
+  el.innerHTML = top("Harnesses", "The agents this organization can run. Every harness is a package: start one from the template and edit its files, or ask the built-in harness package builder in the chat to write one, then install it and try it in the chat or over the API.",
+    `<button class="btn" id="new">New harness</button>`) +
     (drafts.data.length ? `<h2>Drafts</h2><div class="cards">${drafts.data.map(dcard).join("")}</div>` : "") +
-    `<h2>Installed</h2>` + (rows.length ? `<div class="cards">${rows.map(hcard).join("")}</div>` : `<div class="empty">No harness installed.</div>`);
-  $("#new", el).addEventListener("click", () => newDraft(rows.filter(r => !r.extends).map(r => r.name)));
-  $("#git", el).addEventListener("click", () => modal({ title: "Install from git", submit: "Install", body:
-    field("Repository URL", input("url", "", 'placeholder="https://github.com/acme/agents" required')) + field("Ref", input("ref", "main")) + field("Path in the repository", input("path", ".")),
-    onSubmit: async d => { await api("POST", "/v1/harnesses", { git: { url: d.url, ref: d.ref, path: d.path } }); toast("Installed", "ok"); rerender(); } }));
-  $("#builtin", el)?.addEventListener("click", () => modal({ title: "Install a built-in", submit: "Install", body: field("Package", select("builtin", missing)),
-    onSubmit: async d => { await api("POST", "/v1/harnesses", { builtin: d.builtin }); toast("Installed", "ok"); rerender(); } }));
+    `<h2>Installed</h2>` + (rows.length ? `<div class="cards">${rows.map(hcard).join("")}</div>` : `<div class="empty">No harness yet. <b>New harness</b> starts one from the template.</div>`);
+  $("#new", el).addEventListener("click", () => newDraft().catch(fail));
   el.addEventListener("click", async e => {
-    const f = e.target.closest("[data-fork]");
-    if (f) { e.preventDefault(); forkDraft(f.dataset.fork); return; }
     const d = e.target.closest("[data-discard]");
     if (d) {
       e.preventDefault();
@@ -147,24 +135,18 @@ const harnesses = { title: "Harnesses", async render(el, params, me) {
   });
 } };
 
-// Editing an installed harness that is the organization's own: a draft under the same name; installing it upgrades.
+// Editing an installed harness: a draft of its files under the same name; installing the draft upgrades it in place.
 async function editInstalled(name) {
   const existing = (await api("GET", "/drafts")).data.some(d => d.name === name);
-  if (!existing) { try { await api("POST", "/drafts", { name, fork: name }); } catch (e) { fail(e); return; } }
+  if (!existing) { try { await api("POST", "/drafts", { name, edit: true }); } catch (e) { fail(e); return; } }
   location.hash = `#/drafts/${encodeURIComponent(name)}`;
 }
 
-function forkDraft(source) {
-  modal({ title: `Fork ${source}`, submit: "Fork", body: field("Draft name", input("name", `${source}-fork`, 'required pattern="[a-z0-9][a-z0-9._\\-]*"'),
-    "the new package's name; its files are copied and edited here, then installed under this name"),
-    onSubmit: async d => { await api("POST", "/drafts", { name: d.name, fork: source }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
-}
-function newDraft(bases) {
+async function newDraft() {
   modal({ title: "New harness", submit: "Create", body:
-    field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="acme-reviewer"')) +
-    field("Kind", select("template", [["overlay", "overlay — your instructions, skills, hooks and MCP catalog on a built-in CLI"], ["base", "base package — a new CLI, from the template"]])) +
-    field("Extends (overlay)", select("extends", bases), "the base harness an overlay builds on"),
-    onSubmit: async d => { await api("POST", "/drafts", { name: d.name, template: d.template, extends: d.extends }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
+    field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="claude-code"'),
+      "the harness's name, as requests name it in model. The draft starts as a copy of the template: harness.json, install.sh, run.sh, map.py and a README that says what to change in each. Or ask the harness package builder in the chat to write one for you"),
+    onSubmit: async d => { await api("POST", "/drafts", { name: d.name }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
 }
 
 // the file tree + a viewer or editor, shared by the harness view and the draft editor
@@ -182,29 +164,28 @@ const harness = { title: "Harness", async render(el, params, me) {
   const fitting = providers.filter(p => h.provider_apis.includes(p.api));
   const settings = Object.entries(h.settings), secrets = Object.entries(h.secrets), mcp = Object.entries(h.mcp || {});
   const tab = params[1] || "files";
-  const builtin = !!h.source?.builtin, source = builtin ? "built-in" : h.source?.git ? `git · ${h.source.git.url}@${h.source.git.ref || ""}` : "created here";
   el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, h.description || "",
-    `${builtin ? "" : `<button class="btn2" id="edit">Edit</button>`}<button class="btn2" id="fork">Fork</button><button class="btn2 danger" id="rm">Uninstall</button>`) +
+    `<button class="btn2" id="edit">Edit</button><button class="btn2 danger" id="rm">Uninstall</button>`) +
     `<div class="tabs">${[["files", "Files"], ["manifest", "Manifest"], ["config", "Settings & secrets"], ["defaults", "Defaults"]].map(([t, l]) => `<a href="#/harnesses/${encodeURIComponent(name)}/${t}"${t === tab ? ' class="on"' : ""}>${l}</a>`).join("")}</div>` +
     `<div id="tab"></div>`;
   const body = $("#tab", el);
   if (tab === "files") {
-    body.innerHTML = `<div class="ribbon">${pill(source, builtin ? "q" : "b")} ${h.extends ? `overlay on <b>${esc(h.extends)}</b> · the overlay's files are marked · ` : ""}${builtin ? "read-only: <b>Fork</b> to edit a copy" : "<b>Edit</b> opens it as a draft; installing the draft upgrades it in place"}</div>` +
+    body.innerHTML = `<div class="ribbon">The package as installed. <b>Edit</b> opens it as a draft; installing the draft upgrades it in place.</div>` +
       `<div class="${EDITOR_CSS}"><div class="tree" id="tree">${tree(files.data, files.data[0]?.path)}</div><div><div class="ribbon" id="fname"></div><pre id="view" class="code">…</pre></div></div>`;
     const show = async path => {
       $("#tree", el).innerHTML = tree(files.data, path);
       const f = files.data.find(x => x.path === path);
-      $("#fname", el).innerHTML = `<span class="mono">${esc(path)}</span> · ${bytes(f.bytes)}${f.executable ? " · executable" : ""}${f.layer === "overlay" ? ` · ${pill("overlay", "b")}` : ""}`;
+      $("#fname", el).innerHTML = `<span class="mono">${esc(path)}</span> · ${bytes(f.bytes)}${f.executable ? " · executable" : ""}`;
       const r = await api("GET", `/v1/harnesses/${encodeURIComponent(name)}/files/${path}`, undefined, { raw: true });
       $("#view", el).textContent = (r.headers.get("content-type") || "").startsWith("text/") || path.endsWith(".json") ? await r.text() : `(binary, ${bytes(f.bytes)})`;
     };
     if (files.data.length) show(files.data.find(f => f.path === "harness.json")?.path || files.data[0].path);
     body.addEventListener("click", e => { const f = e.target.closest("[data-file]"); if (f) show(f.dataset.file); });
   } else if (tab === "manifest") {
-    body.innerHTML = `<div class="grid two"><div>` + card("Package", kv([["Version", esc(h.version)], ["Extends", esc(h.extends || "—")], ["Base digest", `<span class="mono">${esc(short(h.base_digest))}</span>`],
-      ["Overlay digest", `<span class="mono">${esc(short(h.overlay_digest || "—"))}</span>`], ["Provider APIs", h.provider_apis.map(a => pill(a, "b")).join(" ") || "none (no model)"],
+    body.innerHTML = `<div class="grid two"><div>` + card("Package", kv([["Version", esc(h.version)], ["Digest", `<span class="mono">${esc(short(h.digest))}</span>`],
+      ["Provider APIs", h.provider_apis.map(a => pill(a, "b")).join(" ") || "none (no model)"],
       ["Run egress", h.egress.length ? h.egress.map(e => `<span class="mono">${esc(e)}</span>`).join(", ") : "—"], ["Install egress", h.install_egress.map(e => `<span class="mono">${esc(e)}</span>`).join(", ") || "—"],
-      ["Persist", h.persist.map(p => `<span class="mono">${esc(p)}</span>`).join(", ") || "—"], ["Source", esc(source)], ["Installed", date(h.created_at)]])) + `</div><div>` +
+      ["Persist", h.persist.map(p => `<span class="mono">${esc(p)}</span>`).join(", ") || "—"], ["Installed", date(h.created_at)], ["Updated", date(h.updated_at)]])) + `</div><div>` +
       (mcp.length ? card("MCP catalog", table([{ h: "Label", cell: ([l]) => esc(l) }, { h: "URL", cell: ([, s]) => `<span class="mono">${esc(s.url)}</span>` }, { h: "Tools", cell: ([, s]) => esc((s.allowed_tools || []).join(", ") || "all") }], mcp)) : card("MCP catalog", `<div class="empty">This package declares no MCP servers.</div>`)) + `</div></div>`;
   } else if (tab === "config") {
     body.innerHTML = `<div class="grid two"><div>` +
@@ -232,8 +213,7 @@ const harness = { title: "Harness", async render(el, params, me) {
       `${field("Model", input("default_model", h.default_model || ""), "the model name the CLI is given when a request names none")}<button class="btn">Save defaults</button></form>`) : `<div class="note">This harness calls no model, so it has no provider or model defaults.</div>`;
     $("#defaults", el)?.addEventListener("submit", async e => { e.preventDefault(); try { await api("PATCH", `/v1/harnesses/${name}`, Object.fromEntries(new FormData(e.target))); toast("Saved", "ok"); } catch (err) { fail(err); } });
   }
-  $("#fork", el).addEventListener("click", () => forkDraft(name));
-  $("#edit", el)?.addEventListener("click", () => editInstalled(name));
+  $("#edit", el).addEventListener("click", () => editInstalled(name));
   $("#rm", el).addEventListener("click", async () => {
     if (await confirm("Uninstall", `Uninstall ${name}? Existing sessions keep running on their pinned package.`, "Uninstall")) {
       try { await api("DELETE", `/v1/harnesses/${name}`); location.hash = "#/harnesses"; } catch (err) { fail(err); }
@@ -248,7 +228,7 @@ const drafts = { title: "Draft", async render(el, params, me) {
   let open = null, dirty = false;
   el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, doc.based_on ? `Draft · ${doc.based_on}` : "Draft",
     `<button class="btn2" id="add">Add file</button><button class="btn2" id="del" disabled>Delete file</button><button class="btn2" id="save" disabled>Save</button><button class="btn2 danger" id="discard">Discard</button><button class="btn" id="install">Install</button>`) +
-    `<div class="note">Edit the files here; <b>Install</b> packs the draft and installs it (the platform validates the manifest and scripts). harness.json's <span class="mono">name</span> is the name it installs under — an installed harness of that name is upgraded; an overlay keeps only harness.json and seeds/.</div>` +
+    `<div class="note">Edit the files here; <b>Install</b> packs the draft, installs it and removes the draft. harness.json's <span class="mono">name</span> is the name it installs under, and an installed harness of that name is upgraded; <b>Edit</b> on the harness brings it back here. Then try it: pick it in the chat, or send a request over the API, and watch the session under Observability.</div>` +
     `<div class="${EDITOR_CSS}"><div class="tree" id="tree"></div><div style="display:flex;flex-direction:column;min-height:0"><div class="ribbon" id="fname">Pick a file</div><textarea id="ed" spellcheck="false" style="flex:1;min-height:420px;font-size:12.5px" disabled></textarea></div></div>`;
   const ed = $("#ed", el), saveBtn = $("#save", el), delBtn = $("#del", el);
   const drawTree = () => { $("#tree", el).innerHTML = tree(doc.data, open); };
@@ -272,7 +252,7 @@ const drafts = { title: "Draft", async render(el, params, me) {
   ed.addEventListener("input", () => { dirty = true; saveBtn.disabled = false; });
   ed.addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); save(); } });
   saveBtn.addEventListener("click", save);
-  $("#add", el).addEventListener("click", () => modal({ title: "Add file", submit: "Add", body: field("Path", input("path", "", 'placeholder="seeds/home/.claude/skills/review/SKILL.md" required'), "relative to the package root; folders are created"),
+  $("#add", el).addEventListener("click", () => modal({ title: "Add file", submit: "Add", body: field("Path", input("path", "", 'placeholder="seeds/home/.config/agent/settings.json" required'), "relative to the package root; folders are created"),
     onSubmit: async d => {
       const r = await fetch(`/api/drafts/${encodeURIComponent(name)}/files/${d.path}`, { method: "PUT", headers: { "Content-Type": "text/plain" }, body: "" });
       if (!r.ok) throw new Error((await r.json()).error || r.statusText);

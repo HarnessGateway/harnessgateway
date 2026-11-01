@@ -7,6 +7,34 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.0.0]
+
+### Changed
+
+- Harnesses are written in the console. `init` creates the organization, the admin key and the built-in harness
+  package builder; every other harness starts as a copy of one template, the `shell` package, edited, installed and upgraded
+  in the console's editor (or installed with `POST /v1/harnesses` as a package archive). The template's README says,
+  file by file, what to change for a CLI.
+
+### Added
+
+- `harness-package-builder`, the one built-in harness, installed by `init` (`HG_BUILDER_DIR`): Claude Code seeded with the
+  harness-package-builder skill, the template and the packages guide. Ask it in the chat for a harness for a CLI; it
+  writes the package in its workspace, and **New harness from workspace**, on a builder session's page, copies that
+  folder into a draft. Every other harness is one someone wrote, from the template or with the builder.
+
+### Removed
+
+- The built-in packages (`claude-code`, `codex`, `gemini-cli`, `hermes`, `opencode`, `pi`), `{"builtin": name}`
+  installs and `HG_PACKAGES_DIR`; installing from git (`{"git": …}`); overlays (`extends`): a harness is one
+  package. A harness reports one `digest`; `extends`, `base_digest`, `overlay_digest` and `source` are gone, as are
+  the console's Fork, Install a built-in and Install from git. Migration 0003 drops the columns.
+
+### Fixed
+
+- A sandbox's door kept running when its counters file could not be written (a full disk); it used to exit, which
+  cut the box off from the network mid-turn.
+
 ## [1.1.2]
 
 ### Fixed

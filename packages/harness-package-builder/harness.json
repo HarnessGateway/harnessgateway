@@ -1,0 +1,29 @@
+{
+  "contract": 1,
+  "name": "harness-package-builder",
+  "version": "2.1.310-1",
+  "description": "The harness package builder: Anthropic's Claude Code CLI (@anthropic-ai/claude-code 2.1.310), run headless as the claude-code package runs it, seeded with the harness-package-builder skill, the shell template and the packages guide. Say \"Create a harness package for <name>\" and it researches the CLI (its docs, repository and registry page, with full outbound access), installs its latest stable version in its sandbox, tries it against this session's provider when the CLI speaks that API shape, writes the package under /workspace/<name>/ (harness.json with the egress the install needs, install.sh, run.sh, map.py, README.md, fixture tests) and checks the mapper's events offline. The console turns that folder into a draft (New harness from workspace, on this session's page); Install, then a turn on the new harness is its real test. The one built-in harness, and not vanilla by design: its seeds are the platform's own builder skill.",
+  "provider": {
+    "apis": [
+      "anthropic"
+    ]
+  },
+  "defaults": {
+    "model": "claude-sonnet-5-5"
+  },
+  "install": {
+    "egress": [
+      "registry.npmjs.org"
+    ],
+    "timeout_s": 1200
+  },
+  "run": {
+    "egress": [
+      "*"
+    ],
+    "stop_grace_s": 10
+  },
+  "persist": [
+    ".claude/projects"
+  ]
+}

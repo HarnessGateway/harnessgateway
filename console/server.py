@@ -43,32 +43,9 @@ import server as chat  # noqa: E402  (the chat UI, mounted under /chat/)
 STATIC = Path(__file__).resolve().parent / "static"
 DRAFT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
 DRAFT_FILE_MAX = 4 * 1024 * 1024
-TEMPLATES = {
-    "overlay": {
-        "harness.json": '{{\n  "contract": 1,\n  "name": "{name}",\n  "version": "0.1.0",\n  "extends": "{base}",\n'
-                        '  "description": "{base} with this organization\'s configuration"\n}}\n',
-        "seeds/home/AGENTS.md": "# Instructions\n\nStanding guidance for the agent: how this organization works, "
-                                "what to check before finishing, what never to do.\n",
-    },
-    "base": {
-        "harness.json": '{{\n  "contract": 1,\n  "name": "{name}",\n  "version": "0.1.0-1",\n  "description": "",\n'
-                        '  "provider": {{"apis": ["anthropic"]}},\n'
-                        '  "install": {{"egress": ["registry.npmjs.org"], "timeout_s": 600}},\n'
-                        '  "run": {{"egress": [], "stop_grace_s": 10}},\n  "persist": []\n}}\n',
-        "install.sh": "#!/usr/bin/env bash\n# Install the CLI into $HG_TOOLS, pinned to a version, by its official method.\n"
-                      "set -euo pipefail\nmkdir -p \"$HG_TOOLS/bin\"\necho \"installed: nothing yet\"\n",
-        "run.sh": '#!/usr/bin/env bash\n# One turn: the request in (stdin and $HG_REQUEST), Responses events out.\n'
-                  'set -uo pipefail\nexec python3 "$HG_PACKAGE_DIR/map.py"\n',
-        "map.py": '"""One turn: read the request, run the CLI, print Responses events. See docs/packages.md and hgkit."""\n'
-                  "from hgkit import Emitter, Request\n\n\ndef main() -> None:\n    req, out = Request.load(), Emitter()\n"
-                  "    names = req.place_inputs()\n"
-                  "    out.message(f\"{name} received: {{req.prompt[:200]}}\" + (f\" with {{names}}\" if names else \"\"))\n"
-                  "    out.ignored([f for f in (\"instructions\", \"reasoning\", \"text\", \"tools\") if req.get(f)])\n"
-                  "    out.completed()\n\n\nif __name__ == \"__main__\":\n    main()\n",
-        "seeds/workspace/README.md": "# Workspace\n",
-        "README.md": "# {name}\n\nWhat this harness is, which CLI and version, how request fields map, known limits, tests.\n",
-    },
-}
+# every new harness starts as a copy of the template: the shell package, the smallest complete package on the contract
+TEMPLATE_DIR = Path(os.environ.get("HG_TEMPLATE_DIR") or Path(__file__).resolve().parents[1] / "packages" / "shell")
+BUILDER = "harness-package-builder"                        # the built-in whose sessions' workspaces hold packages to import
 COOKIE = "hgc"
 SESSION_S = 12 * 3600
 ROLES = ("deployer", "admin", "member")
@@ -420,7 +397,8 @@ class Handler(chat.Handler):
     # ── drafts: packages written in the console ──────────────────────────────────────────────────────────────────
     def _drafts(self, method: str, rest: str, user: dict[str, Any]) -> None:
         """/api/drafts (GET list, POST create), /api/drafts/<name> (DELETE), /api/drafts/<name>/files (GET list),
-        /api/drafts/<name>/files/<path> (GET, PUT, DELETE), /api/drafts/<name>/install (POST)."""
+        /api/drafts/<name>/files/<path> (GET, PUT, DELETE), /api/drafts/<name>/install (POST: installs it and, when that
+        succeeds, removes the draft)."""
         st, admin = self.state, self.clients["admin"]
         if not rest:
             if method == "GET":
@@ -483,7 +461,8 @@ class Handler(chat.Handler):
                     if p.is_file() and p.name != "meta.json":
                         tar.add(p, arcname=p.relative_to(root).as_posix())
             r = admin.post("/v1/harnesses", files={"package": (f"{name}.tgz", buf.getvalue())})
-            if r.status_code == 200:
+            if r.status_code == 200:                         # installed: the harness is the record, the draft is done
+                shutil.rmtree(root, ignore_errors=True)
                 st.audit(user["name"], "draft.install", {"draft": name, "harness": r.json().get("name")})
             self._reply(r.status_code, r.content, r.headers.get("content-type", "application/json"))
         else:
@@ -499,8 +478,9 @@ class Handler(chat.Handler):
             return False
 
     def _draft_create(self, doc: dict[str, Any], user: dict[str, Any]) -> None:
-        """{"name", "fork": <installed harness>} copies that package's files; {"name", "template": "overlay"|"base",
-        "extends": <base>} starts from a template."""
+        """{"name"} starts a new harness as a copy of the template under that name; {"name", "edit": true} opens the
+        installed harness of that name as a draft (installing the draft upgrades it in place); {"name", "session": id,
+        "folder": f} copies /workspace/<folder>/ of a harness-package-builder session, where the builder wrote a package."""
         st, admin = self.state, self.clients["admin"]
         name = str(doc.get("name", "")).strip()
         root = st.draft(name)
@@ -508,39 +488,66 @@ class Handler(chat.Handler):
             raise ValueError(f"draft {name} exists")
         root.mkdir(parents=True)
         try:
-            if doc.get("fork"):
-                source = str(doc["fork"])
-                r = admin.get(f"/v1/harnesses/{source}/files")
+            if doc.get("edit"):
+                r = admin.get(f"/v1/harnesses/{name}/files")
                 r.raise_for_status()
                 for f in r.json()["data"]:
-                    content = admin.get(f"/v1/harnesses/{source}/files/{f['path']}")
+                    content = admin.get(f"/v1/harnesses/{name}/files/{f['path']}")
                     content.raise_for_status()
                     p = st.draft_file(name, f["path"])
                     p.parent.mkdir(parents=True, exist_ok=True)
                     p.write_bytes(content.content)
                     if f.get("executable"):
                         p.chmod(0o755)
-                manifest = root / "harness.json"
-                if manifest.is_file():                      # a fork is its own package: a new name
-                    try:
-                        m = json.loads(manifest.read_text())
-                        m["name"] = name
-                        manifest.write_text(json.dumps(m, indent=2) + "\n")
-                    except ValueError:
-                        pass
-                based_on = f"fork of {source}"
+                based_on = "the installed harness"
+            elif doc.get("session"):
+                sid, folder = str(doc["session"]), str(doc.get("folder", "")).strip().strip("/")
+                if not folder or "/" in folder or folder in (".", ".."):
+                    raise ValueError("folder is a directory at the top of the session's workspace")
+                r = admin.get(f"/v1/containers/{sid}")
+                r.raise_for_status()
+                if r.json().get("metadata", {}).get("harness") != BUILDER:
+                    raise ValueError(f"only a {BUILDER} session's workspace holds packages to import")
+                prefix, after, found = f"/workspace/{folder}/", None, 0
+                while True:
+                    r = admin.get(f"/v1/containers/{sid}/files", params={"limit": 100, **({"after": after} if after else {})})
+                    r.raise_for_status()
+                    page = r.json()
+                    for f in page["data"]:
+                        if not f["path"].startswith(prefix) or "/__pycache__/" in f["path"]:
+                            continue
+                        content = admin.get(f"/v1/containers/{sid}/files/{f['id']}/content")
+                        content.raise_for_status()
+                        p = st.draft_file(name, f["path"][len(prefix):])
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_bytes(content.content)
+                        if p.suffix == ".sh":
+                            p.chmod(0o755)
+                        found += 1
+                    if not page.get("has_more"):
+                        break
+                    after = page["last_id"]
+                if not found:
+                    raise ValueError(f"the session has no files under {prefix}")
+                if not (root / "harness.json").is_file():
+                    raise ValueError(f"{prefix} holds no harness.json")
+                based_on = f"session {sid}, {folder}/"
             else:
-                template = str(doc.get("template", "overlay"))
-                base = str(doc.get("extends", "")).strip()
-                if template not in TEMPLATES or (template == "overlay" and not base):
-                    raise ValueError("template is overlay (with extends) or base")
-                for rel, text in TEMPLATES[template].items():
-                    p = st.draft_file(name, rel)
+                if not (TEMPLATE_DIR / "harness.json").is_file():
+                    raise ValueError(f"the harness template is missing at {TEMPLATE_DIR}")
+                for src in sorted(TEMPLATE_DIR.rglob("*")):       # not its tests: they run in a checkout, not here
+                    if not src.is_file() or "__pycache__" in src.parts or src.relative_to(TEMPLATE_DIR).parts[0] == "tests":
+                        continue
+                    p = st.draft_file(name, src.relative_to(TEMPLATE_DIR).as_posix())
                     p.parent.mkdir(parents=True, exist_ok=True)
-                    p.write_text(text.format(name=name, base=base))
-                    if rel.endswith(".sh"):
+                    p.write_bytes(src.read_bytes())
+                    if src.stat().st_mode & 0o111:
                         p.chmod(0o755)
-                based_on = f"overlay on {base}" if template == "overlay" else "base template"
+                manifest = root / "harness.json"
+                m = json.loads(manifest.read_text())
+                m["name"] = name
+                manifest.write_text(json.dumps(m, indent=2) + "\n")
+                based_on = "the template"
             meta = {"based_on": based_on, "created_by": user["name"], "created_at": int(time.time())}
             (root / "meta.json").write_text(json.dumps(meta))
         except Exception:

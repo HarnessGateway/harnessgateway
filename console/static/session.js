@@ -2,7 +2,7 @@
 // turn, and the workspace beside it (the chat's file panel, embedded). Everything here is read from the public API:
 // the session's responses, each one's input items and event stream, and the session's trace records.
 import { api, bytes, clientOf, esc, short, stream, when } from "./api.js";
-import { $, confirm, fail, pre, statusPill, toast } from "./ui.js";
+import { $, confirm, fail, field, input, modal, pre, statusPill, toast } from "./ui.js";
 import { markdown } from "/chat/static/markdown.js";
 
 const POLL_MS = 4000;
@@ -191,6 +191,7 @@ export const session = { title: "Session", async render(el, params, me) {
       `<div class="kv"><span class="k">Session</span><span class="v mono">${esc(sid)}</span></div>` +
       `<div class="acts" style="margin-left:auto">` +
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : "") +
+      (admin && md.harness === "harness-package-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +
       (admin ? `<button class="btn2 danger" id="del">Delete</button>` : "") + `</div>`;
   };
 
@@ -277,6 +278,15 @@ export const session = { title: "Session", async render(el, params, me) {
     if (e.target.id === "cancel") {
       const live = [...turns].reverse().find(t => t.response.status === "in_progress" || t.response.status === "queued");
       if (live) { try { await api("POST", `/v1/responses/${encodeURIComponent(live.response.id)}/cancel`); toast("Cancelling", "ok"); } catch (err) { fail(err); } }
+    } else if (e.target.id === "mk") {
+      modal({ title: "New harness from this workspace", submit: "Create draft", body:
+        field("Folder", input("folder", "", 'required pattern="[A-Za-z0-9._-]+" placeholder="pi"'), "a folder at the top of the workspace holding harness.json, install.sh, run.sh and map.py") +
+        field("Harness name", input("name", "", 'pattern="[a-z0-9][a-z0-9._\\-]*"'), "empty: the folder's name"),
+        onSubmit: async d => {
+          const name = d.name || d.folder.toLowerCase();
+          await api("POST", "/drafts", { name, session: sid, folder: d.folder });
+          location.hash = `#/drafts/${encodeURIComponent(name)}`;
+        } });
     } else if (e.target.id === "del" && await confirm("Delete session", `Delete ${sid}, its snapshots and files? A running session is refused.`)) {
       try { await api("DELETE", `/v1/containers/${encodeURIComponent(sid)}`); location.hash = "#/sessions"; } catch (err) { fail(err); }
     }

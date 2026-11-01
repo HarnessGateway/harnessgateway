@@ -195,9 +195,8 @@ class Scheduler:
         ops = await tx.all("SELECT id, op, path, object_key FROM container_ops WHERE session_id = %s AND applied_at IS NULL "
                            "ORDER BY created_at", session["id"])
         org_id, sid, o = turn["org_id"], session["id"], self.objects
-        packages = {"base": {"digest": session["base_digest"], "url": o.link_get(archive_key(session["base_digest"]))},
-                    "overlay": {"digest": session["overlay_digest"], "url": o.link_get(archive_key(session["overlay_digest"]))}
-                    if session["overlay_digest"] else None, "manifest": manifest.model_dump()}
+        packages = {"digest": session["digest"], "url": o.link_get(archive_key(session["digest"])),
+                    "manifest": manifest.model_dump()}
         return {
             "turn_id": rid, "org_id": org_id, "session_id": sid, "seq": turn["seq"], "harness": session["harness"],
             "model": turn["provider_model"], "store": session["store"], "held": held, "timeout_s": timeout,
