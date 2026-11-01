@@ -86,11 +86,20 @@ class Platform:
         return await self.db.migrate((CORE_MIGRATIONS, *self.extensions.migrations))
 
     async def init(self, name: str = "default") -> tuple[dict[str, object], str | None]:
-        """Self-hosted's one organization and a first admin key (printed once). Run again, it changes nothing and
-        returns no key. Harnesses are added afterwards, in the console or with POST /v1/harnesses."""
+        """Self-hosted's one organization, with the built-in harness builder installed, and a first admin key (printed
+        once). Run again, it changes nothing and returns no key. Every other harness is added afterwards: written in
+        the console from the template, or by the builder."""
         org = await self.orgs.first()
         if org:
             return org, None
         org = await self.orgs.create(name)
+        builder = self.settings.builder_dir
+        if (builder / "harness.json").is_file():
+            try:
+                await self.harnesses.install_folder(str(org["id"]), builder)
+            except Exception:
+                log.exception("installing the harness builder from %s failed", builder)
+        else:
+            log.warning("no harness builder package at %s (HG_BUILDER_DIR): none installed", builder)
         key = await self.keys.create(str(org["id"]), "admin", "init")
         return org, str(key["key"])

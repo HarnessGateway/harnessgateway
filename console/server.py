@@ -43,21 +43,9 @@ import server as chat  # noqa: E402  (the chat UI, mounted under /chat/)
 STATIC = Path(__file__).resolve().parent / "static"
 DRAFT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
 DRAFT_FILE_MAX = 4 * 1024 * 1024
-# every new harness starts as a copy of a package shipped with the platform: `shell`, the template (the smallest
-# complete package on the contract), or `harness-builder` (Claude Code seeded with the skill that writes packages)
-TEMPLATES_DIR = Path(os.environ.get("HG_TEMPLATES_DIR") or Path(__file__).resolve().parents[1] / "packages")
-
-
-def templates() -> list[dict[str, Any]]:
-    out = []
-    for d in sorted(TEMPLATES_DIR.iterdir()) if TEMPLATES_DIR.is_dir() else []:
-        if (d / "harness.json").is_file():
-            try:
-                m = json.loads((d / "harness.json").read_text())
-            except ValueError:
-                continue
-            out.append({"name": d.name, "description": str(m.get("description", ""))})
-    return sorted(out, key=lambda t: (t["name"] != "shell", t["name"]))
+# every new harness starts as a copy of the template: the shell package, the smallest complete package on the contract
+TEMPLATE_DIR = Path(os.environ.get("HG_TEMPLATE_DIR") or Path(__file__).resolve().parents[1] / "packages" / "shell")
+BUILDER = "harness-builder"                        # the built-in whose sessions' workspaces hold packages to import
 COOKIE = "hgc"
 SESSION_S = 12 * 3600
 ROLES = ("deployer", "admin", "member")
@@ -329,8 +317,6 @@ class Handler(chat.Handler):
             if user["role"] != "deployer":
                 raise PermissionError("the audit log is the deployer's")
             self._json(200, {"data": self.state.audit_tail()})
-        elif path == "/api/templates" and method == "GET":
-            self._json(200, {"data": templates()})
         elif path.startswith("/api/drafts"):
             if user["role"] == "member":
                 raise PermissionError("drafts are the organization's to edit")
@@ -490,10 +476,9 @@ class Handler(chat.Handler):
             return False
 
     def _draft_create(self, doc: dict[str, Any], user: dict[str, Any]) -> None:
-        """{"name", "template": shell|harness-builder} starts a new harness as a copy of a shipped package under that
-        name; {"name", "edit": true} opens the installed harness of that name as a draft (installing the draft upgrades
-        it in place); {"name", "session": id, "folder": f} copies /workspace/<folder>/ of that session, where an agent
-        (the harness builder, say) wrote a package."""
+        """{"name"} starts a new harness as a copy of the template under that name; {"name", "edit": true} opens the
+        installed harness of that name as a draft (installing the draft upgrades it in place); {"name", "session": id,
+        "folder": f} copies /workspace/<folder>/ of a harness-builder session, where the builder wrote a package."""
         st, admin = self.state, self.clients["admin"]
         name = str(doc.get("name", "")).strip()
         root = st.draft(name)
@@ -517,6 +502,10 @@ class Handler(chat.Handler):
                 sid, folder = str(doc["session"]), str(doc.get("folder", "")).strip().strip("/")
                 if not folder or "/" in folder or folder in (".", ".."):
                     raise ValueError("folder is a directory at the top of the session's workspace")
+                r = admin.get(f"/v1/containers/{sid}")
+                r.raise_for_status()
+                if r.json().get("metadata", {}).get("harness") != BUILDER:
+                    raise ValueError(f"only a {BUILDER} session's workspace holds packages to import")
                 prefix, after, found = f"/workspace/{folder}/", None, 0
                 while True:
                     r = admin.get(f"/v1/containers/{sid}/files", params={"limit": 100, **({"after": after} if after else {})})
@@ -542,15 +531,12 @@ class Handler(chat.Handler):
                     raise ValueError(f"{prefix} holds no harness.json")
                 based_on = f"session {sid}, {folder}/"
             else:
-                template = str(doc.get("template") or "shell")
-                src_dir = TEMPLATES_DIR / template
-                names = [t["name"] for t in templates()]
-                if template not in names:
-                    raise ValueError(f"template is one of {', '.join(names) or 'nothing (no packages shipped)'}")
-                for src in sorted(src_dir.rglob("*")):           # not its tests: they run in a checkout, not here
-                    if not src.is_file() or "__pycache__" in src.parts or src.relative_to(src_dir).parts[0] == "tests":
+                if not (TEMPLATE_DIR / "harness.json").is_file():
+                    raise ValueError(f"the harness template is missing at {TEMPLATE_DIR}")
+                for src in sorted(TEMPLATE_DIR.rglob("*")):       # not its tests: they run in a checkout, not here
+                    if not src.is_file() or "__pycache__" in src.parts or src.relative_to(TEMPLATE_DIR).parts[0] == "tests":
                         continue
-                    p = st.draft_file(name, src.relative_to(src_dir).as_posix())
+                    p = st.draft_file(name, src.relative_to(TEMPLATE_DIR).as_posix())
                     p.parent.mkdir(parents=True, exist_ok=True)
                     p.write_bytes(src.read_bytes())
                     if src.stat().st_mode & 0o111:
@@ -559,7 +545,7 @@ class Handler(chat.Handler):
                 m = json.loads(manifest.read_text())
                 m["name"] = name
                 manifest.write_text(json.dumps(m, indent=2) + "\n")
-                based_on = f"the {template} package"
+                based_on = "the template"
             meta = {"based_on": based_on, "created_by": user["name"], "created_at": int(time.time())}
             (root / "meta.json").write_text(json.dumps(meta))
         except Exception:

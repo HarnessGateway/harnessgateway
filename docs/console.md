@@ -35,11 +35,11 @@ Without `HG_OPERATOR_KEY` the deployer console is off. The server needs Python 3
 The modules follow a first sign-in: set it up, try it, let applications in, watch what it does.
 
 **Setup.** *Providers*: API shape, base URL, key (write-only). *Harnesses*: the installed packages and your
-drafts, one card each. The platform ships no harnesses, only two packages to start from (`HG_TEMPLATES_DIR`):
-**New harness** copies one into a draft under the name you give: `shell`, the template, whose four files you edit
-for your CLI in the draft editor (file tree, editor, add and delete files), or `harness-builder`, Claude Code seeded
-with the skill that writes packages, which you install as it is and then ask, in the chat, for a harness for a CLI.
-What the builder writes in its workspace becomes a draft with **New harness from workspace** on its session page. **Install** packs the draft and installs it through the platform, which
+drafts, one card each. One harness is built in: `harness-builder`, Claude Code seeded with the skill that writes
+packages, installed by `init`. Every other harness is one someone wrote: **New harness** copies the template (the
+`shell` package, `HG_TEMPLATE_DIR`) into a draft under the name you give, and the draft editor (file tree, editor,
+add and delete files) is where you make it a CLI's harness; or you ask the builder in the chat for a harness for a
+CLI, and **New harness from workspace**, on the builder session's page only, turns the folder it wrote into a draft. **Install** packs the draft and installs it through the platform, which
 validates it like any upload; a harness of that name is upgraded in place. Open a harness to read every file of the
 package as installed, its manifest, settings, secrets (write-only, "set" marks, clear) and its default provider and
 model; **Edit** opens it as a draft. *Egress*: the organization's allow and deny entries, and what each harness adds.

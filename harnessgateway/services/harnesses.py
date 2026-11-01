@@ -88,6 +88,14 @@ class Harnesses:
         log.info("installed %s for %s (%s)", manifest.name, org_id, digest[:12])
         return await self.get(org_id, manifest.name)
 
+    async def install_folder(self, org_id: str, folder: Path) -> dict[str, Any]:
+        """Install or upgrade from a package folder on this host: the built-in harness builder, at `init`."""
+        with tempfile.TemporaryDirectory(prefix="hg-folder-") as tmp:
+            copy = Path(tmp) / "p"
+            shutil.copytree(folder, copy, ignore=shutil.ignore_patterns("__pycache__", "tests"))
+            data = await asyncio.to_thread(pkg.pack, copy)
+        return await self.install(org_id, data)
+
     # ── reading ────────────────────────────────────────────────────────────────────────────────────────────────────
     async def row(self, org_id: str, name: str) -> dict[str, Any]:
         async with self.db.tenant(org_id) as tx:

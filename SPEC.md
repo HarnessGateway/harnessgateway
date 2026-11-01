@@ -245,12 +245,13 @@ A small Python library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), op
 
 ### 5.8 The template
 
-The platform ships no harnesses. The repository and the platform image carry two packages the console starts a new
-harness from, as a copy under the name the user gives: `shell` (no model: the input runs as a bash command; the
-reference and test package, and the template), and `harness-builder` (the claude-code package seeded with the
-platform's harness-package-builder skill, the template and the packages guide: an agent that writes packages into
-its workspace, which the console turns into a draft). The builder is the one shipped package that is not vanilla; its
-seeds are the platform's own. Each package follows its layout: `harness.json`, `install.sh`,
+The platform ships two packages. `shell` (no model: the input runs as a bash command; the reference and test
+package) is the template: the console starts every new harness as a copy of it under the name the user gives.
+`harness-builder` (the claude-code package seeded with the platform's harness-package-builder skill, the template and
+the packages guide) is the one built-in harness: `init` installs it into the org (`HG_BUILDER_DIR`), and it writes
+packages into its workspace, which the console turns into a draft from that session's page and from no other. The
+builder is the one shipped package that is not vanilla; its seeds are the platform's own. Every other harness is one
+someone wrote, by hand from the template or with the builder. Each package follows its layout: `harness.json`, `install.sh`,
 `run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`), `map.py` (helpers, the output mapper, request→CLI, run,
 main), `README.md` (Files, The command, Request fields, Output mapping, Known limits, Tests), `tests/` with fixtures
 recorded from real runs. The template's README says, file by file, what to change for a CLI.
@@ -393,8 +394,8 @@ or URL cannot have it injected; it is refused rather than given the value.
 - Object keys are `orgs/<org_id>/…`.
 - **API keys**: `hg_` + 40 random characters, stored as an HMAC with the server's pepper. Scopes: `admin` (everything)
   and `run` (responses, files, containers, models). Revocable; revocation is immediate.
-- **Self-hosted**: `harnessgateway init` creates the one org and prints the first admin key. Harnesses are added
-  afterwards, in the console or with `POST /harnesses`.
+- **Self-hosted**: `harnessgateway init` creates the one org with the built-in harness builder and prints the first
+  admin key. Every other harness is added afterwards, in the console or with `POST /harnesses`.
   There is no org-management API.
 - **Multi-tenant**: the extension seam (§13) authenticates its own users, creates and suspends orgs, sets each org's
   capacity, and gates turns. The core services (`Orgs`, `Keys`, …) are the API it calls.
@@ -415,7 +416,7 @@ One platform image, one CLI, `harnessgateway <command>`:
 | `serve --role api,gateway` | both in one process (small deployments) | replicas |
 | `node` | runs boxes on its host's Docker with gVisor | more hosts |
 | `migrate` | applies schema migrations (advisory-locked, idempotent; `serve` runs it too) | — |
-| `init` | creates the org, prints the admin key (idempotent) | — |
+| `init` | creates the org with the built-in harness builder, prints the admin key (idempotent) | — |
 | `door` | the per-box door (started by the node) | — |
 | `node-token create` | prints a join token for a node pool (operator) | — |
 | `keygen` | prints fresh secrets for configuration | — |
@@ -621,7 +622,7 @@ harnessgateway/
   node/        the node agent, the door, the turn runtime script
   extensions.py, config.py, db.py (+ migrations), __main__.py
 sandbox/       the sandbox image and hgkit
-packages/      the template package, shell
+packages/      the two shipped packages: shell (the template) and harness-builder (the built-in)
 console/       the consoles and the chat: an application on the public API, served by one small server
 deploy/        compose.yaml, install.sh, node.env.example
 docs/          architecture, API, the Responses wire, packages, operations, extensions, security

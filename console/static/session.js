@@ -191,7 +191,7 @@ export const session = { title: "Session", async render(el, params, me) {
       `<div class="kv"><span class="k">Session</span><span class="v mono">${esc(sid)}</span></div>` +
       `<div class="acts" style="margin-left:auto">` +
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : "") +
-      (admin ? `<button class="btn2" id="mk" title="Copy a package an agent wrote in this workspace into a draft">New harness from workspace</button>` : "") +
+      (admin && md.harness === "harness-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +
       (admin ? `<button class="btn2 danger" id="del">Delete</button>` : "") + `</div>`;
   };
 
@@ -280,7 +280,7 @@ export const session = { title: "Session", async render(el, params, me) {
       if (live) { try { await api("POST", `/v1/responses/${encodeURIComponent(live.response.id)}/cancel`); toast("Cancelling", "ok"); } catch (err) { fail(err); } }
     } else if (e.target.id === "mk") {
       modal({ title: "New harness from this workspace", submit: "Create draft", body:
-        field("Folder", input("folder", "", 'required pattern="[A-Za-z0-9._-]+" placeholder="aider"'), "a folder at the top of the workspace holding harness.json, install.sh, run.sh and map.py") +
+        field("Folder", input("folder", "", 'required pattern="[A-Za-z0-9._-]+" placeholder="pi"'), "a folder at the top of the workspace holding harness.json, install.sh, run.sh and map.py") +
         field("Harness name", input("name", "", 'pattern="[a-z0-9][a-z0-9._\\-]*"'), "empty: the folder's name"),
         onSubmit: async d => {
           const name = d.name || d.folder.toLowerCase();

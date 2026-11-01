@@ -47,6 +47,7 @@ class Settings:
     upstream_proxy: str = ""
     ca_file: str = ""
     allow_private_egress: bool = False
+    builder_dir: Path = Path(__file__).resolve().parent.parent / "packages" / "harness-builder"
     extensions: tuple[str, ...] = ()
     log_level: str = "info"
     defaults: Capacity = field(default_factory=Capacity)
@@ -102,6 +103,7 @@ class Settings:
                 uplink_network=get("UPLINK_NETWORK", cls.uplink_network), runtime=unsafe or "runsc",
                 upstream_proxy=get("UPSTREAM_PROXY"), ca_file=get("CA_FILE"),
                 allow_private_egress=_bool(get("ALLOW_PRIVATE_EGRESS")),
+                builder_dir=Path(get("BUILDER_DIR", str(cls.builder_dir))),
                 extensions=tuple(x.strip() for x in get("EXTENSIONS").split(",") if x.strip()),
                 log_level=get("LOG_LEVEL", "info").lower(),
                 defaults=defaults)
