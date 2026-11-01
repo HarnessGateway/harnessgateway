@@ -7,8 +7,14 @@
 set -euo pipefail
 VERSION=2.1.310
 mkdir -p "$HG_TOOLS/bin"
-npm install --global --prefix "$HG_TOOLS" --no-audit --no-fund --no-update-notifier \
-  --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/claude-code@$VERSION"
+# a registry answers 5xx now and then: three tries, a short pause between them
+for try in 1 2 3; do
+  npm install --global --prefix "$HG_TOOLS" --no-audit --no-fund --no-update-notifier \
+    --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/claude-code@$VERSION" && break
+  [ "$try" = 3 ] && exit 1
+  echo "npm install failed (try $try of 3); retrying" >&2
+  sleep 10
+done
 got=$("$HG_TOOLS/bin/claude" --version)
 echo "installed: $got"
 case "$got" in "$VERSION "*) ;; *) echo "expected Claude Code $VERSION, got: $got" >&2; exit 1 ;; esac
