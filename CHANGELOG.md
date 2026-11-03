@@ -7,6 +7,18 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.0.1]
+
+### Fixed
+
+- The chat's harness / provider / model picker no longer runs under the workspace panel when the panel opens beside
+  a narrow chat: the pickers shrink with an ellipsis (the model field first) and the panel leaves the header the room
+  it needs.
+
+### Changed
+
+- The README demo is re-recorded on a fresh deploy with the fix, and highlights each click.
+
 ## [2.0.0]
 
 ### Changed
