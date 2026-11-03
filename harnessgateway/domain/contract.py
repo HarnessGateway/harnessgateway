@@ -2,28 +2,39 @@
 schema.
 
 In: a body is checked against `ResponseCreateParams`; the platform reads only what routes and secures a turn
-(`Routing`). Out: each stdout line of a package is a Responses stream event (checked against the SDK model its `type`
-names) or a log line. The platform owns the envelope: `response.created`, `response.in_progress`, sequence numbers and
-the final `Response`."""
+(`Routing`). Out: each stdout line of a package is a Responses stream event, a log line or the terminal event; the
+reader is hgkit's (`hgkit.validate`), the one validator packages and the platform share. The platform owns the envelope:
+`response.created`, `response.in_progress`, sequence numbers and the final `Response`."""
 from __future__ import annotations
 
 import json
 import typing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
+from hgkit.validate import (  # noqa: F401  (re-exported: the services read package output through this module)
+    DELTAS,
+    ENVELOPE,
+    EVENT_MODELS,
+    ITEM_MODELS,
+    TERMINAL,
+    Line,
+    Outcome,
+    OutputError,
+    check,
+    check_item,
+    first_error,
+    outcome,
+    read_line,
+)
 from openai.types import responses as R
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from ..errors import Invalid
 from ..limits import INPUT_FILES_MAX
 from .names import NAME
 
 PARAMS: TypeAdapter[Any] = TypeAdapter(R.ResponseCreateParams)
-ITEMS: TypeAdapter[Any] = TypeAdapter(list[R.ResponseOutputItem])
-USAGE: TypeAdapter[Any] = TypeAdapter(R.ResponseUsage)
-ENVELOPE = frozenset({"response.created", "response.in_progress", "response.queued"})
-TERMINAL = {"response.completed": "completed", "response.incomplete": "incomplete", "response.failed": "failed"}
 TERMINAL_EVENT = {"completed": "response.completed", "incomplete": "response.incomplete", "failed": "response.failed",
                   "cancelled": "response.failed"}
 FINAL = frozenset({"completed", "incomplete", "failed", "cancelled"})
@@ -32,29 +43,8 @@ _ECHO = ("instructions", "temperature", "top_p", "tools", "tool_choice", "parall
          "safety_identifier", "prompt_cache_key", "service_tier", "top_logprobs")
 _ERROR_CODES = frozenset(typing.get_args(R.response_error.ResponseError.model_fields["code"].annotation))
 METADATA_MAX = 16
-
-
-def _by_type(union: Any) -> dict[str, type[BaseModel]]:
-    out: dict[str, type[BaseModel]] = {}
-    for model in typing.get_args(typing.get_args(union)[0]):
-        for literal in typing.get_args(model.model_fields["type"].annotation):
-            out[literal] = model
-    return out
-
-
-EVENT_MODELS = _by_type(R.ResponseStreamEvent)
-ITEM_MODELS = _by_type(R.ResponseOutputItem)
-DELTAS = frozenset(k for k in EVENT_MODELS if k.endswith(".delta"))
-
-
-def _first(e: ValidationError) -> str:
-    err = e.errors()[0]
-    where = ".".join(str(p) for p in err.get("loc", ()))
-    return f"{where or 'value'}: {err.get('msg', 'invalid')}"
-
-
-class OutputError(Exception):
-    """A package printed something the Responses schema refuses; the turn fails with this message."""
+_first = first_error
+check_output = check              # a package's whole stdout, read as the platform reads it: what package tests call
 
 
 # ── in ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -133,119 +123,6 @@ def input_items(body: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(given, str):
         return [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": given}]}]
     return [i for i in given or [] if isinstance(i, dict)]
-
-
-# ── out ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-def check_item(item: Any, where: str) -> None:
-    kind = item.get("type") if isinstance(item, dict) else None
-    model = ITEM_MODELS.get(kind) if isinstance(kind, str) else None
-    if model is None:
-        raise OutputError(f"{where}: {kind!r} is not a Responses output item type")
-    try:
-        model.model_validate(item)
-    except ValidationError as e:
-        raise OutputError(f"{where} ({kind}).{_first(e)}") from None
-
-
-@dataclass(frozen=True)
-class Line:
-    """One stdout line, read: an event to deliver, the terminal event, an envelope event to drop, or a log line."""
-    kind: str                                   # event | terminal | envelope | log
-    event: dict[str, Any] = field(default_factory=dict)
-    text: str = ""
-
-    @property
-    def status(self) -> str:
-        return TERMINAL[self.event["type"]]
-
-
-def read_line(text: str) -> Line:
-    s = text.strip()
-    if not s.startswith("{"):
-        return Line("log", text=text)
-    try:
-        event = json.loads(s)
-    except ValueError:
-        return Line("log", text=text)
-    kind = event.get("type") if isinstance(event, dict) else None
-    if not isinstance(kind, str) or not kind.startswith("response."):
-        return Line("log", text=text)
-    if kind in ENVELOPE:
-        return Line("envelope", event)
-    if kind in TERMINAL:
-        if not isinstance(event.get("response"), dict):
-            event["response"] = {}
-        return Line("terminal", event)
-    model = EVENT_MODELS.get(kind)
-    if model is None:
-        raise OutputError(f"{kind} is not a Responses stream event")
-    if isinstance(event.get("item"), dict):
-        check_item(event["item"], f"{kind}: item")
-    try:
-        model.model_validate({**event, "sequence_number": 0})
-    except ValidationError as e:
-        raise OutputError(f"{kind}: {_first(e)}") from None
-    event.pop("sequence_number", None)
-    return Line("event", event)
-
-
-@dataclass(frozen=True)
-class Outcome:
-    status: str
-    output: list[dict[str, Any]]
-    usage: dict[str, Any] | None
-    error: dict[str, Any] | None
-    incomplete: dict[str, Any] | None
-    metadata: dict[str, str]
-
-
-def outcome(terminal: dict[str, Any], items: list[dict[str, Any]]) -> Outcome:
-    """The terminal event's parts, validated; `items` (the completed output items) stand in for an absent output."""
-    r = terminal["response"]
-    given = r.get("output")
-    output_items: list[Any] = given if isinstance(given, list) and given else items
-    for i, item in enumerate(output_items):
-        check_item(item, f"output.{i}")
-    try:
-        output = [i.model_dump(mode="json", exclude_none=True) for i in ITEMS.validate_python(output_items)]
-    except ValidationError as e:
-        raise OutputError(f"output: {_first(e)}") from None
-    usage = r.get("usage")
-    if usage is not None:
-        try:
-            usage = USAGE.validate_python(usage).model_dump(mode="json")
-        except ValidationError as e:
-            raise OutputError(f"usage: {_first(e)}") from None
-    meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
-    if not all(isinstance(k, str) and isinstance(v, str) for k, v in meta.items()):
-        raise OutputError("metadata maps strings to strings")
-    def _dict(v: Any) -> dict[str, Any] | None:
-        return v if isinstance(v, dict) else None
-    return Outcome(TERMINAL[terminal["type"]], output, usage, _dict(r.get("error")), _dict(r.get("incomplete_details")),
-                   meta)
-
-
-def check_output(text: str) -> tuple[list[dict[str, Any]], Outcome]:
-    """A package's whole stdout read as the platform reads it: its events and its outcome (OutputError when invalid).
-    What package tests use to hold a mapper to the contract."""
-    events: list[dict[str, Any]] = []
-    items: dict[str, dict[str, Any]] = {}
-    ended: Outcome | None = None
-    for raw in text.splitlines():
-        line = read_line(raw)
-        if line.kind == "log" or line.kind == "envelope":
-            continue
-        if ended is not None:
-            raise OutputError(f"{line.event['type']} after the terminal event")
-        if line.kind == "terminal":
-            ended = outcome(line.event, list(items.values()))
-        elif line.event["type"] == "response.output_item.done":
-            items[str(line.event["item"].get("id") or len(items))] = line.event["item"]
-        events.append(line.event)
-    if ended is None:
-        raise OutputError("no terminal event")
-    return events, ended
 
 
 def response(*, rid: str, body: dict[str, Any], created: float, status: str, output: list[dict[str, Any]] | None = None,

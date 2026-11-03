@@ -145,7 +145,7 @@ async function editInstalled(name) {
 async function newDraft() {
   modal({ title: "New harness", submit: "Create", body:
     field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="claude-code"'),
-      "the harness's name, as requests name it in model. The draft starts as a copy of the template: harness.json, install.sh, run.sh, map.py and a README that says what to change in each. Or ask the harness package builder in the chat to write one for you"),
+      "the harness's name, as requests name it in model. The draft starts as a copy of the template: harness.json, install, run and a README that says what to change in each. Or ask the harness package builder in the chat to write one for you"),
     onSubmit: async d => { await api("POST", "/drafts", { name: d.name }); location.hash = `#/drafts/${encodeURIComponent(d.name)}`; } });
 }
 

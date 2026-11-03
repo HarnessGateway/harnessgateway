@@ -280,7 +280,7 @@ export const session = { title: "Session", async render(el, params, me) {
       if (live) { try { await api("POST", `/v1/responses/${encodeURIComponent(live.response.id)}/cancel`); toast("Cancelling", "ok"); } catch (err) { fail(err); } }
     } else if (e.target.id === "mk") {
       modal({ title: "New harness from this workspace", submit: "Create draft", body:
-        field("Folder", input("folder", "", 'required pattern="[A-Za-z0-9._-]+" placeholder="pi"'), "a folder at the top of the workspace holding harness.json, install.sh, run.sh and map.py") +
+        field("Folder", input("folder", "", 'required pattern="[A-Za-z0-9._-]+" placeholder="pi"'), "a folder at the top of the workspace holding harness.json, install and run") +
         field("Harness name", input("name", "", 'pattern="[a-z0-9][a-z0-9._\\-]*"'), "empty: the folder's name"),
         onSubmit: async d => {
           const name = d.name || d.folder.toLowerCase();

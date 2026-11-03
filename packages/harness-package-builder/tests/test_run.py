@@ -1,8 +1,8 @@
-"""Offline tests for the claude-code mapper: recorded Claude Code stream-json (from real turns through the platform)
-fed through map.Mapper; every printed line must pass the platform's own reader (`check_output`) and the outcome must be
-the one the turn had. map.py is also run end to end, as run.sh runs it, against a fake `claude`.
+"""Offline tests for the builder's mapper: recorded Claude Code stream-json (from real turns through the platform) fed
+through run.Mapper; every printed line must pass hgkit's reader (the one the platform uses) and the outcome must be the
+one the turn had. `run` is also run end to end, as the platform runs it, against a fake `claude`.
 
-Run from the repo root: .venv/bin/pytest -q packages/claude-code
+Run from the repo root: .venv/bin/pytest -q packages/harness-package-builder
 """
 from __future__ import annotations
 
@@ -13,24 +13,24 @@ import os
 import stat
 import subprocess
 import sys
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
-from hgkit import Emitter, Request, State
-
-from harnessgateway.domain.contract import check_output
+from hgkit import Emitter, Request, State, check
 
 HERE = Path(__file__).resolve().parent
 PACKAGE = HERE.parent
 REPO = PACKAGE.parents[1]
 
-_spec = importlib.util.spec_from_file_location("claude_code_map", PACKAGE / "map.py")
+_loader = SourceFileLoader("builder_run", str(PACKAGE / "run"))          # `run` has no .py suffix
+_spec = importlib.util.spec_from_loader("builder_run", _loader)
 cmap = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(cmap)
+_loader.exec_module(cmap)
 
 
 def read(text: str) -> dict:
-    events, o = check_output(text)                   # raises OutputError on anything the platform refuses
+    events, o = check(text)                          # raises OutputError on anything the platform refuses
     assert text.splitlines()[-1].startswith('{"type":"response.'), "the terminal event is last"
     return {"status": o.status, "output": o.output, "usage": o.usage, "error": o.error, "incomplete": o.incomplete,
             "meta": o.metadata, "events": events}
@@ -250,7 +250,7 @@ def test_environment_pins_every_model(monkeypatch):
     assert env["CLAUDE_CODE_DISABLE_THINKING"] == "1"
 
 
-# ── end to end, offline: map.py run as run.sh runs it, against a fake `claude` that replays a recorded stream ────────
+# ── end to end, offline: `run` as the platform runs it, against a fake `claude` that replays a recorded stream ────────
 FAKE_CLI = r'''#!/usr/bin/env python3
 import json, os, sys
 def arg(flag):
@@ -284,10 +284,10 @@ def _turn(tmp_path: Path, request: dict, servers: list[dict] | None = None) -> t
     env = {**os.environ, "HG_REQUEST": str(tmp_path / "request.json"), "HG_MCP": str(tmp_path / "mcp.json"),
            "HG_STATE": str(st), "HG_WORKSPACE": str(ws), "HG_FILES": str(tmp_path / "files"),
            "HG_MODEL": "deepseek-flash", "HG_PROVIDER_URL": "http://hg-door:8080", "HG_PROVIDER_TOKEN": "turn-token",
-           "HG_TURN": "2", "TMPDIR": str(tmp_path), "PATH": f"{bin_dir}:{os.environ['PATH']}",
+           "HG_TURN": "2", "HG_PACKAGE_VERSION": "2.1.310-2", "TMPDIR": str(tmp_path), "PATH": f"{bin_dir}:{os.environ['PATH']}",
            "PYTHONPATH": str(REPO / "sandbox"),
            "FAKE_LOG": str(tmp_path / "calls.jsonl"), "FAKE_STREAM": str(HERE / "fixtures" / "turn1_write_bash.jsonl")}
-    proc = subprocess.run([sys.executable, str(PACKAGE / "map.py")], env=env, cwd=ws, capture_output=True, text=True,
+    proc = subprocess.run([sys.executable, str(PACKAGE / "run")], env=env, cwd=ws, capture_output=True, text=True,
                           timeout=60)
     return proc, st
 

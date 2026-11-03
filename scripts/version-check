@@ -19,6 +19,9 @@ for rel in ("deploy/compose.yaml", "deploy/install.sh", "docs/operations.md", "D
         problems.append(f"{rel} names version(s) {', '.join(others)}, not {pyproject}")
     if rel == "deploy/install.sh" and f"VERSION={pyproject}\n" not in text:
         problems.append(f"{rel}: VERSION is not {pyproject}")
+openai_pin = re.search(r'"openai==([^"]+)"', (root / "pyproject.toml").read_text())[1]
+if f"openai=={openai_pin} " not in (root / "sandbox/Dockerfile").read_text():
+    problems.append(f"sandbox/Dockerfile installs another openai than pyproject's {openai_pin}: hgkit and the platform must validate alike")
 if problems:
     print("version check failed:\n  " + "\n  ".join(problems))
     sys.exit(1)

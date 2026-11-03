@@ -1,7 +1,8 @@
 """A harness package on disk and in transit (SPEC §5.1): validation of its folder, its digest, and its canonical archive.
 
-The platform reads `harness.json`, runs `install.sh` and `run.sh`, and copies `seeds/home` and `seeds/workspace`.
-Everything else in a package is the package's own."""
+The platform reads `harness.json`, runs `install` and `run` (two executables, in any language), and copies
+`seeds/home` and `seeds/workspace`. Everything else in a package is the package's own. `install.sh` and `run.sh`, run
+with bash, are still accepted."""
 from __future__ import annotations
 
 import gzip
@@ -16,7 +17,7 @@ from ..ids import sha256
 from ..limits import PACKAGE_BYTES_MAX, PACKAGE_FILES_MAX
 from .manifest import Manifest
 
-SCRIPTS = ("install.sh", "run.sh")
+SCRIPTS = ("install", "run")
 SEEDS = ("home", "workspace")
 
 
@@ -56,8 +57,9 @@ def unpack(archive: bytes, into: Path) -> None:
 
 
 def validate(folder: Path) -> Manifest:
-    """The folder is a package on the contract, or Invalid says what is wrong: a manifest, both scripts (which must parse
-    as bash), and nothing under seeds but home and workspace."""
+    """The folder is a package on the contract, or Invalid says what is wrong: a manifest, the two executables (`install`
+    and `run`: a script with a shebang line or a Linux binary; or `install.sh` and `run.sh` that parse as bash), and
+    nothing under seeds but home and workspace. The executables are marked so, since the contract runs them."""
     files = list(folder.rglob("*"))
     if any(p.is_symlink() or not (p.is_file() or p.is_dir()) for p in files):
         raise Invalid("a package holds only regular files and directories", param="package")
@@ -66,13 +68,22 @@ def validate(folder: Path) -> Manifest:
     if not (folder / "harness.json").is_file():
         raise Invalid("a package needs harness.json at its root", param="package")
     manifest = Manifest.parse((folder / "harness.json").read_text(errors="replace"))
-    missing = [s for s in SCRIPTS if not (folder / s).exists()]
-    if missing:
-        raise Invalid(f"a package needs {', '.join(SCRIPTS)}: {', '.join(missing)} missing", param="package")
     for name in SCRIPTS:
-        check = subprocess.run(["bash", "-n", str(folder / name)], capture_output=True, text=True, timeout=30)
-        if check.returncode != 0:
-            raise Invalid(f"{name} is not valid bash: {check.stderr.strip()[-500:]}", param="package")
+        script, legacy = folder / name, folder / f"{name}.sh"
+        if script.is_file():
+            with script.open("rb") as f:
+                head = f.read(4)
+            if head[:2] != b"#!" and head != b"\x7fELF":
+                raise Invalid(f"{name} is an executable: a script whose first line names its interpreter (#!/usr/bin/env "
+                              f"python3, #!/usr/bin/env bash, ...) or a Linux binary", param="package")
+            script.chmod(script.stat().st_mode | 0o111)
+        elif legacy.is_file():
+            check = subprocess.run(["bash", "-n", str(legacy)], capture_output=True, text=True, timeout=30)
+            if check.returncode != 0:
+                raise Invalid(f"{name}.sh is not valid bash: {check.stderr.strip()[-500:]}", param="package")
+        else:
+            raise Invalid(f"a package needs `{name}` (an executable with a shebang line) beside harness.json",
+                          param="package")
     manifest.check_references()
     seeds = folder / "seeds"
     if seeds.exists():

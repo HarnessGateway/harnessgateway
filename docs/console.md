@@ -38,7 +38,8 @@ The modules follow a first sign-in: set it up, try it, let applications in, watc
 drafts, one card each. One harness is built in: `harness-package-builder`, Claude Code seeded with the skill that
 writes packages, installed by `init`. Every other harness is one someone wrote: **New harness** copies the template
 (the `shell` package, `HG_TEMPLATE_DIR`) into a draft under the name you give, and the draft editor (file tree,
-editor, add and delete files) is where you make it a CLI's harness; or you ask the builder in the chat for a harness
+editor, add and delete files; `install` and `run` are saved executable) is where you make it a CLI's harness; or you
+ask the builder in the chat for a harness
 for a CLI, and **New harness from workspace**, on the builder session's page only, turns the folder it wrote into a
 draft. **Install** packs the draft and installs it through the platform, which validates it like any upload; a
 harness of that name is upgraded in place, and the draft is gone. Open a harness to read every file of the package

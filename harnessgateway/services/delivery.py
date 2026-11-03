@@ -153,7 +153,7 @@ class Delivery:
                                   message="the turn ran past its time limit")
         last = " | ".join(stderr.strip().splitlines()[-3:])
         return await conclude(tx, self.objects, turn, Status.FAILED, reason=Reason.EXITED_WITHOUT_RESULT, output=items,
-                              message=f"run.sh exited {report.get('exit_code')} without a terminal event"
+                              message=f"run exited {report.get('exit_code')} without a terminal event"
                                       + (f"; stderr: {last[-1000:]}" if last else ""))
 
     def _save_links(self, turn: dict[str, Any]) -> dict[str, Any]:

@@ -33,11 +33,11 @@ organization) and as the base of a multi-tenant SaaS. It is the reference every 
 | Term | Meaning |
 |---|---|
 | Organization (org) | The tenant. Owns keys, providers, harnesses, files, sessions, usage. Self-hosted has one. |
-| Harness package | A directory (manifest, two scripts, seeds) that teaches the platform one CLI and one agent. |
+| Harness package | A directory (a manifest, two executables, seeds) that teaches the platform one CLI and one agent. |
 | Harness | A package installed in an org under a name, with the org's settings and secret values. |
 | Provider | An org's model endpoint: an API shape (`anthropic`, `openai`, `google`), a base URL, a sealed key. |
 | Session (container) | The continuing conversation and workspace of one harness. Exposed as an OpenAI container. |
-| Turn (response) | One request on a session: one run of the package's `run.sh`. Exposed as an OpenAI response. |
+| Turn (response) | One request on a session: one run of the package's `run`. Exposed as an OpenAI response. |
 | Sandbox (box) | The gVisor container a session runs in. Disposable; the session is not. |
 | Door | The box's only network exit: an egress allowlist, secret injection, and the provider relay. |
 | Gateway | The service that swaps a turn's token for the org's provider key and relays model calls. |
@@ -111,7 +111,7 @@ its CLI supports and names what it ignored (§4.3).
 
 ### 4.2 Out
 
-The package's `run.sh` prints one JSON object per stdout line. A line that parses as an object whose `type` starts with
+The package's `run` prints one JSON object per stdout line. A line that parses as an object whose `type` starts with
 `response.` is a Responses stream event; any other line is a log line (kept, never delivered).
 
 - The platform owns the envelope: it emits `response.created`, `response.in_progress`, assigns every
@@ -145,12 +145,16 @@ OpenAI's error shape: `{"error": {"type", "code", "message", "param"}}`. A turn 
 
 ```
 harness.json          the manifest (§5.2)
-install.sh            installs the CLI into $HG_TOOLS
-run.sh                one turn: the request in, Responses events out
+install               an executable: installs the CLI into $HG_TOOLS
+run                   an executable: one turn, the request in, Responses events out
 seeds/home/           laid into $HOME in every new sandbox: the agent's standing configuration
 seeds/workspace/      laid into the workspace of a new session: a starter project
-anything else         the package's own (a mapper module, README, tests): the platform reads none of it
+anything else         the package's own (modules, README, tests): the platform reads none of it
 ```
+
+The platform reads the manifest, runs the two executables and copies the seeds; it knows no language. `install` and
+`run` are scripts whose first line names their interpreter, or Linux binaries, and are run as they are (the platform
+marks them executable at install). `install.sh` and `run.sh`, run with bash, are accepted for packages written before 2.1.
 
 A package is identified by its **digest**: SHA-256 over every file's path, executable bit and bytes. It moves as a
 canonical gzipped tar (sorted, owner 0, mtime 0), so the same files give the same bytes. Limits: 5,000 files, 256 MiB
@@ -181,13 +185,13 @@ unpacked. Regular files and directories only; nothing outside the root.
 |---|---|
 | `contract` | `1`. |
 | `name` | `[a-z0-9][a-z0-9._-]{0,62}`. |
-| `version` | `<CLI version>-<package revision>`. |
+| `version` | `<CLI version>-<package revision>`; handed to `install` and `run` as `HG_PACKAGE_VERSION`, so the CLI's version is written once. |
 | `provider.apis` | subset of `anthropic`, `openai`, `google`; absent means the harness runs without a model. |
 | `install.egress`, `run.egress` | egress entries (§7.2). `install.timeout_s` 1–3600, default 900. |
 | `run.timeout_s` | the package's own bound on a turn, if any. `run.stop_grace_s` 1–300, default 20. |
 | `persist` | at most 64 normalized paths relative to `$HOME`, without `..`: what survives besides the workspace and state. |
-| `settings` | non-secret configuration, ≤64, names `[A-Z][A-Z0-9_]{0,63}` not starting `HG_` and not a reserved name (`HOME`, `PATH`, `LANG`, proxy and CA variables); exported to `run.sh` as environment variables. |
-| `secrets` | secret names (same naming rule), each with the `hosts` it may reach (egress-entry syntax). Exported to `run.sh` as placeholders (§8). |
+| `settings` | non-secret configuration, ≤64, names `[A-Z][A-Z0-9_]{0,63}` not starting `HG_` and not a reserved name (`HOME`, `PATH`, `LANG`, proxy and CA variables); exported to `run` as environment variables. |
+| `secrets` | secret names (same naming rule), each with the `hosts` it may reach (egress-entry syntax). Exported to `run` as placeholders (§8). |
 | `mcp` | the catalog: label → `{url, transport?, headers?, allowed_tools?}`. `${NAME}` in a header value names a declared secret. A catalog server's host joins the run egress and its secrets' hosts. |
 
 Unknown fields are refused, with the field named.
@@ -203,14 +207,14 @@ needs to run headless in the sandbox, nothing an org would want to own.
 
 ### 5.4 Install
 
-`install.sh` runs once per (package digest, sandbox image id) on a node, in an install box: gVisor, the sandbox image,
+`install` runs once per (package digest, sandbox image id) on a node, in an install box: gVisor, the sandbox image,
 writable `$HG_TOOLS` and `/tmp`, egress = org egress ∪ `install.egress`, no provider, no secrets, within
 `install.timeout_s`. On success `$HG_TOOLS` is kept on the node and mounted read-only into every box of that package. A
-package installs its CLI by the CLI's official, documented method, pinned to a version, and verifies the version.
+package installs its CLI by the CLI's official, documented method, pinned to the manifest's version, and verifies it.
 
 ### 5.5 Run
 
-`run.sh` runs once per turn, in the session's box, in its own process group, with the working directory
+`run` runs once per turn, in the session's box, in its own process group, with the working directory
 `$HG_WORKSPACE`, the request on stdin, stdout as the turn's events (§4.2), stderr as the turn's log. Its exit ends the
 turn's process; its terminal event ends the turn's response. After the terminal event it has `stop_grace_s` to exit.
 
@@ -226,6 +230,7 @@ turn's process; its terminal event ends the turn's response. After the terminal 
 | `HOME` = `/home/hg` | seeded from `seeds/home` in every new box; only `persist` paths survive |
 | `HG_PACKAGE_DIR` = `/opt/hg/package` | the composed package, read-only |
 | `HG_TOOLS` = `/opt/hg/tools` | the installed CLI, read-only |
+| `HG_PACKAGE_VERSION` | the manifest's `version` (also given to `install`) |
 | `HG_SESSION`, `HG_RESPONSE`, `HG_TURN` | session id, response id, turn number |
 | `HG_MODEL`, `HG_PROVIDER_API`, `HG_PROVIDER_URL`, `HG_PROVIDER_TOKEN` | the model name; the provider's API shape; `http://hg-door:8080`; the turn's token (§7.4) |
 | settings, secrets | each declared setting as its value; each declared secret as its placeholder |
@@ -234,14 +239,20 @@ turn's process; its terminal event ends the turn's response. After the terminal 
 
 ### 5.7 hgkit
 
-A small Python library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), optional, CLI-agnostic:
+The Responses contract in Python: a small library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), optional,
+and harness-agnostic: it knows the request a turn receives and the events it must print, and nothing about any CLI.
 
 - `Request`: the request, with readers for prompt text, instructions (request + system/developer messages), reasoning
-  effort, text format, MCP servers (`/run/hg/mcp.json`), and `place_inputs()`, which writes `file_id` and inline files
-  into the workspace by name (a collision gets a numeric suffix) and returns their names.
-- `Emitter`: prints valid events: streamed text, reasoning, shell, patch, MCP and function items, `ignored(fields)`,
-  and exactly one terminal event.
-- `State`: key/value under `$HG_STATE`.
+  effort, text format, MCP servers (`/run/hg/mcp.json`), `place_inputs()`, which writes `file_id` and inline files
+  into the workspace by name (a collision gets a numeric suffix) and returns their names, and the turn's environment
+  (`model`, `provider`, `state`, ids, the package version).
+- `Emitter`: prints valid events, named by what the agent did: `say` and `think` (streamed), `ran`, `wrote`,
+  `edited`, `deleted`, `called` (MCP), `used` (any tool), each as the whole call or a handle whose `done`/`failed`
+  reports the result later; `item` and `emit` for any other Responses item or event; `ignored(fields)`; exactly one
+  terminal event: `done`, `stopped`, `failed`.
+- `validate`: the reader the platform itself uses (§4.2), on the same pinned OpenAI SDK: `Emitter(validate=True)`
+  checks each event as it is printed, `check(text)` reads a whole output, `python3 -m hgkit check` does so from the
+  command line. The platform's own reader is this module; a package that passes it passes the platform.
 
 ### 5.8 The template and the built-in
 
@@ -252,10 +263,12 @@ template and the packages guide) is the one built-in harness: `init` installs it
 it writes packages into its workspace, which the console turns into a draft from that session's page and from no
 other. The builder is the one shipped package that is not vanilla; its seeds are the platform's own. Every other
 harness is one someone wrote, by hand from the template or with the builder. Each package follows one layout:
-`harness.json`, `install.sh`, `run.sh` (one line: `exec python3 "$HG_PACKAGE_DIR/map.py"`), `map.py` (helpers, the
-output mapper, request→CLI, run, main), `README.md` (Files, The command, Request fields, Output mapping, Known
-limits, Tests), `tests/` with fixtures recorded from real runs. The template's README says, file by file, what to
-change for a CLI.
+`harness.json`, `install`, `run`, `README.md` (Files, The command, Request fields, Output mapping, Known limits,
+Tests), `tests/` with fixtures recorded from real runs. The template's README says, file by file, what to change for
+a CLI. The builder's skill is self-contained under `seeds/home`: it carries the template and the packages guide as
+copies kept current from their sources (`scripts/sync-builder-seeds`; a unit test fails when they drift), so every
+deployment's builder ships the current skill, template and guide, and a builder session's workspace holds only the
+packages it delivers.
 
 ## 6. Sandboxes and sessions
 
@@ -282,7 +295,7 @@ One per session at a time, on one node:
 3. **Box.** The session's warm box if this node ran its last turn and holds it; otherwise a new box: home seeds, then the
    snapshot (or, for a new session, the workspace seeds).
 4. **Inputs.** `/run/hg` written; staged container file operations applied to the workspace; the door's turn rules set.
-5. **Run.** `run.sh` started; stdout sent to the API in byte batches as it arrives; stderr kept.
+5. **Run.** `run` started; stdout sent to the API in byte batches as it arrives; stderr kept.
 6. **End.** On exit, cancel (SIGTERM to the process group, then SIGKILL to every process in the box after
    `stop_grace_s`), timeout (the tighter of the package's and the org's), or the grace after the terminal event: the end
    is reported, the door's secret bindings are cleared, the turn token revoked.
@@ -622,7 +635,7 @@ harnessgateway/
   gateway/     the provider relay
   node/        the node agent, the door, the turn runtime script
   extensions.py, config.py, db.py (+ migrations), __main__.py
-sandbox/       the sandbox image and hgkit
+sandbox/       the sandbox image and hgkit (the Responses contract in Python; its validator is the platform's own)
 packages/      the two shipped packages: shell (the template) and harness-package-builder (the built-in)
 console/       the consoles and the chat: an application on the public API, served by one small server
 deploy/        compose.yaml, install.sh, node.env.example

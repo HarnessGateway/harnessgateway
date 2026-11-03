@@ -7,6 +7,38 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.1.0]
+
+### Changed
+
+- A package is three files: `harness.json` beside two executables, `install` and `run`, each starting with a
+  shebang line and run as it is. The platform knows no language: `run` may be Python, bash, node or a binary.
+  `install.sh` and `run.sh` (run with bash) are still accepted. The manifest's `version` reaches both as
+  `HG_PACKAGE_VERSION`, so a CLI's version is written in one place. The template (`shell`) and the built-in builder
+  follow the layout; `map.py` is gone.
+- hgkit is the Responses contract in Python, harness-agnostic: `Request` now also carries the turn's environment
+  (`model`, `provider`, `state`, ids, the package version); `Emitter` names events by what the agent did (`say`,
+  `think`, `ran`, `wrote`, `edited`, `deleted`, `called`, `used`, `done`, `stopped`, `failed`), streams thinking as
+  it streams text, and reports a tool's result when it comes (`out.ran(cmd)` → `run.done(...)`,
+  `out.called(...)` → `call.done(...)`). The old names (`text`, `message`, `reasoning`, `shell`, `patch`, `mcp`,
+  `function`, `completed`, `incomplete`) are gone.
+
+### Added
+
+- hgkit validates: `Emitter(validate=True)` checks each event as it is printed, `hgkit.check(text)` reads a whole
+  output, and `python3 -m hgkit check FILE` does so in the sandbox. It is the platform's own reader
+  (`harnessgateway.domain.contract` imports it), on the same pinned OpenAI SDK, which the sandbox image now carries.
+- The builder's skill is self-contained under `seeds/home`: its standing instructions (`~/.claude/CLAUDE.md`), the
+  template (`assets/template`, a copy of `packages/shell`) and the packages guide (`reference/packages.md`, a copy of
+  `docs/packages.md`) all live in the skill; `scripts/sync-builder-seeds` refreshes the copies and a unit test fails
+  when they drift, so every deployment's builder ships the current skill. A builder session's workspace holds only
+  the packages it delivers.
+- The builder's skill covers tailored packages: told what an agent is for, the builder asks what changes what it
+  will build (purpose, callers, what it may reach and must never do, model, the operator's knobs), proposes a plan,
+  and builds the organization's agent on a vanilla base: the CLI's own permission rules and hooks in `seeds/home`,
+  an `mcp` catalog with secrets bound to hosts, declared `settings` and `secrets`, narrowed egress and timeouts, and
+  a recorded forbidden run that proves the fence (`reference/tailoring.md`).
+
 ## [2.0.1]
 
 ### Fixed

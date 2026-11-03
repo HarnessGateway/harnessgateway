@@ -57,7 +57,7 @@ them:
      -e HG_API_URL=https://hg.internal -e HG_GATEWAY_URL=https://hg.internal/gateway \
      -e HG_NODE_JOIN_TOKEN=hgj_… -e HG_UPLINK_NETWORK=bridge -e HG_NODE_DIR=/var/lib/harnessgateway \
      -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \
-     ghcr.io/harnessgateway/harnessgateway:2.0.1 node
+     ghcr.io/harnessgateway/harnessgateway:2.1.0 node
    ```
 
    The node directory is mounted at the same path inside and out: sandboxes are sibling containers that bind-mount
@@ -99,8 +99,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_NODE_SLOTS` | node | `4` | turns run at once |
 | `HG_NODE_WARM_MAX` | node | `32` | idle sandboxes kept warm |
 | `HG_NODE_DIR` | node | `/var/lib/harnessgateway` | sessions, tools, the node's CA and credential |
-| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.0.1` | the image every sandbox runs |
-| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.0.1` | the image doors run |
+| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.1.0` | the image every sandbox runs |
+| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.1.0` | the image doors run |
 | `HG_UPLINK_NETWORK` | node | `hg-uplink` | the Docker network doors join to reach the gateway and the internet |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | node | — | see above |
 | `HG_ALLOW_PRIVATE_EGRESS` | all | `0` | let providers and sandbox egress reach private addresses |
@@ -138,6 +138,7 @@ current commit: for a release that must be redone, never for a change (that is a
 |---|---|
 | a turn stays `queued` | `docker compose logs node`: no node joined (join token), the node is draining, or the org is at `max_running_turns` |
 | `hg_reason: install_failed` | the turn's trace (`GET /v1/traces/{id}`): the install log tail; the package's `install.egress` hosts must be reachable |
+| `hg_reason: exited_without_result` right away | the package's `run` could not start: its shebang names an interpreter the sandbox image lacks (it has bash, python3 and node), or the file is not executable |
 | a host is refused inside the sandbox | the door answers `403` to `CONNECT` for hosts outside the org's and the harness's egress; the trace lists each connection and its verdict |
 | `hg_reason: invalid_output` | the package printed an event the OpenAI schema rejects; the error names the field |
 | the node exits at start | `HG_CA_FILE names no file` (mount it), `the API refused the join token` (the API needs the same `HG_NODE_JOIN_TOKEN`) |

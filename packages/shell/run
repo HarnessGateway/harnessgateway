@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""The shell harness, one turn: the input text runs as a bash command in the workspace; the command, its output and
+an assistant message come back. Request fields other than the input are ignored and named as such."""
+import subprocess
+
+from hgkit import Emitter, Request
+
+IGNORED = ("instructions", "reasoning", "text", "tools", "max_output_tokens", "max_tool_calls")
+
+req, out = Request.load(), Emitter()
+out.ignored([f for f in IGNORED if req.get(f)])
+if not req.prompt:
+    out.failed("invalid_prompt", "the input text is the command to run")
+else:
+    proc = subprocess.run(["bash", "-c", req.prompt], capture_output=True, text=True)
+    out.ran(req.prompt, stdout=proc.stdout, stderr=proc.stderr, exit=proc.returncode)
+    out.say(proc.stdout or f"(exit {proc.returncode})")
+    out.done(metadata={"exit_code": str(proc.returncode)})
