@@ -48,22 +48,27 @@ body.embedded .brand b { visibility:hidden; }
 
 /* main */
 main { flex:1; display:flex; flex-direction:column; min-width:0; position:relative; }
-header { display:flex; align-items:center; gap:8px; padding:8px 12px; height:56px; }
-.route { display:flex; align-items:center; min-width:0; }
-.route .sep { color:var(--muted); padding:0 1px; }
-.pick { position:relative; display:flex; align-items:center; border-radius:10px; }
+header { display:flex; align-items:center; gap:8px; padding:8px 12px; height:56px; min-width:0; overflow:hidden; }
+/* harness / provider / model share the row and shrink (with an ellipsis) when the file panel narrows the chat */
+.route { display:flex; align-items:center; flex:0 1 auto; min-width:0; }
+.route .sep { color:var(--muted); padding:0 1px; flex:none; }
+.pick { position:relative; display:flex; align-items:center; border-radius:10px; flex:0 1 auto; min-width:48px; }
 .pick:hover, .pick:focus-within { background:var(--hover); }
-.pick select, .pick input { border:0; outline:0; background:transparent; color:var(--text); font-family:inherit; font-size:15px; padding:8px 10px; }
-.pick select { appearance:none; -webkit-appearance:none; padding-right:26px; cursor:pointer; font-weight:600; max-width:200px; }
+.pick select, .pick input { border:0; outline:0; background:transparent; color:var(--text); font-family:inherit; font-size:15px; padding:8px 10px; min-width:0; }
+.pick select { appearance:none; -webkit-appearance:none; padding-right:26px; cursor:pointer; font-weight:600; max-width:240px;
+               width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pick select option { color:#0d0d0d; background:#fff; }
 .pick.locked select { cursor:default; padding-right:10px; }
 .pick.locked svg { display:none; }
 .pick.locked:hover { background:transparent; }
 .pick svg { position:absolute; right:6px; top:50%; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
-.pick input { width:220px; }
+.pick input { width:220px; max-width:100%; text-overflow:ellipsis; }
+.pick.model { flex:0 4 170px; min-width:90px; }      /* the free-text model shrinks first */
 .pick input::placeholder { color:var(--muted); }
 .route.solo .provider, .route.solo .model, .route.solo .sep { display:none; }
-header .session { margin-left:auto; color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+header .session { margin-left:auto; color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                  flex:0 100 auto; min-width:0; }
+header > .ib { flex:none; }
 header .ib.on { background:var(--hover); color:var(--text); }
 #log { flex:1; overflow-y:auto; }
 .col { max-width:768px; margin:0 auto; padding:8px 24px 32px; }
@@ -207,6 +212,9 @@ main.blank .hint { visibility:hidden; }
 /* side panel */
 #panel { width:46%; min-width:380px; max-width:920px; flex:none; display:flex; flex-direction:column; background:var(--bg);
          border-left:1px solid var(--line); transition:width .2s; }
+/* the panel never takes the room the chat's header needs for harness / provider / model (about 600px) */
+body:not(.noside) #panel:not(.wide) { width:min(46%, calc(100% - 260px - 600px)); min-width:340px; }
+body.noside #panel:not(.wide) { width:min(46%, calc(100% - 600px)); min-width:340px; }
 #panel.wide { width:72%; max-width:none; }
 #panel[hidden] { display:none; }
 .ph { display:flex; align-items:center; gap:4px; padding:8px 8px 8px 12px; height:56px; }
