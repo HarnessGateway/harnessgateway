@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Installs Anthropic's Claude Code CLI, pinned, into $HG_TOOLS (bin/claude), by the npm route its setup docs give
-# (`npm install -g @anthropic-ai/claude-code`; https://code.claude.com/docs/en/setup). The npm package's postinstall
-# places the native linux binary (from the matching optional dependency) over bin/claude.exe, so no node process
-# stays resident.
-# npm 12 runs no install scripts unless allowed: only that one is.
+# (`npm install -g @anthropic-ai/claude-code`; https://code.claude.com/docs/en/setup). The version is the manifest's
+# (`version` is `<CLI version>-<package revision>`; the platform hands it over as HG_PACKAGE_VERSION). The npm
+# package's postinstall places the native linux binary (from the matching optional dependency) over bin/claude.exe, so
+# no node process stays resident. npm 12 runs no install scripts unless allowed: only that one is.
 set -euo pipefail
-VERSION=2.1.310
+VERSION=${HG_PACKAGE_VERSION%-*}
 mkdir -p "$HG_TOOLS/bin"
 # a registry answers 5xx now and then: three tries, a short pause between them
 for try in 1 2 3; do

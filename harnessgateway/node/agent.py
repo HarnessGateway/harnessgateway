@@ -1,13 +1,13 @@
 """The node agent (SPEC §6.2): joins, then runs four loops (heartbeat, claim, meter, evict idle) and one task per turn.
 
 A turn on this node:
-  1. the package, verified against its digest, and its tools (install.sh, once per package digest and sandbox
+  1. the package, verified against its digest, and its tools (its `install`, once per package digest and sandbox
      image, in an install box with the install egress);
   2. the session's box: the warm one when this node ran the session's last turn, otherwise a new box with the home
      seeds, then the session's snapshot (or, for a new session, the workspace seeds);
   3. the turn's inputs into the read-only /run/hg, staged container files applied to the workspace, and the door's
      rules for the turn: its egress, its secret bindings, its door token;
-  4. turn.sh runs run.sh; stdout goes to the API in batches of whole lines, stderr is kept;
+  4. turn.sh runs the package's `run`; stdout goes to the API in batches of whole lines, stderr is kept;
   5. the process exits or is stopped (cancel, timeout, the grace after its terminal event): the door's bindings are
      cleared, the end is reported, and the session's state is saved in the background. The box stays warm until its
      idle time runs out.
@@ -387,16 +387,18 @@ class Node:
                                               Mount(staging, "/opt/hg/tools", readonly=False)),
                                       door_dir=door.folder,
                                       env={"HOME": "/tmp/home", "HG_TOOLS": "/opt/hg/tools",
-                                           "HG_PACKAGE_DIR": "/opt/hg/package", "HG_CONTRACT": "1"}))
+                                           "HG_PACKAGE_DIR": "/opt/hg/package", "HG_CONTRACT": "1",
+                                           "HG_PACKAGE_VERSION": str(manifest["version"])}))
             start, started = time.time(), time.monotonic()
             try:
                 await box.start()
-                proc = await box.exec(["bash", "-c", 'mkdir -p "$HOME" && cd /tmp && bash /opt/hg/package/install.sh'], {})
+                proc = await box.exec(["bash", "-c", 'mkdir -p "$HOME" && cd /tmp && if [ -x /opt/hg/package/install ]; '
+                                       'then exec /opt/hg/package/install; else exec bash /opt/hg/package/install.sh; fi'], {})
                 code, tail = await self._drain(proc, manifest["install"]["timeout_s"])
                 if code is None:
-                    raise InstallFailed(f"install.sh ran past its {manifest['install']['timeout_s']}s")
+                    raise InstallFailed(f"install ran past its {manifest['install']['timeout_s']}s")
                 if code != 0:
-                    raise InstallFailed(f"install.sh exited {code}: {tail[-2000:]}")
+                    raise InstallFailed(f"install exited {code}: {tail[-2000:]}")
                 staging.rename(tools)
             finally:
                 c = door.counters()
@@ -577,6 +579,7 @@ class Node:
                 "HG_MCP": "/run/hg/mcp.json", "HG_WORKSPACE": state.BOX_WORKSPACE, "HG_STATE": state.BOX_STATE,
                 "HOME": state.BOX_HOME, "HG_PACKAGE_DIR": "/opt/hg/package", "HG_TOOLS": "/opt/hg/tools",
                 "HG_SESSION": job["session_id"], "HG_RESPONSE": job["turn_id"], "HG_TURN": str(job["seq"]),
+                "HG_PACKAGE_VERSION": str(job["package"]["manifest"]["version"]),
                 "HG_MODEL": job["model"] or "", "HG_PROVIDER_API": provider.get("api", ""),
                 "HG_PROVIDER_URL": "http://hg-door:8080" if provider else "", "HG_PROVIDER_TOKEN": provider.get("token", "")}
 

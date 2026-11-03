@@ -23,13 +23,13 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | `harnessgateway/gateway/` | the provider relay: turn token + door token → the organization's key |
 | `harnessgateway/node/` | the node agent (`agent.py`), its API client, snapshots (`state.py`), stdout batching (`pump.py`), the node CA (`trust.py`), the egress door (`door.py`), `runtime/turn.sh` |
 | `harnessgateway/migrations/` | SQL migrations, applied in order under an advisory lock |
-| `sandbox/` | the sandbox image and `hgkit`, the helper library package mappers use |
+| `sandbox/` | the sandbox image and `hgkit`: the Responses contract in Python for packages, whose validator (`hgkit/validate.py`) is the one the platform reads package output with |
 | `packages/` | the two shipped packages: `shell`, the template the console copies for every new harness, and `harness-package-builder`, the built-in `init` installs (Claude Code seeded with the builder skill) |
 | `console/` | the organization and deployer consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
 | `docs/` | operations, consoles, packages, extensions |
 | `tests/unit`, `tests/integration` | unit tests; tests against a live stack (`HG_TEST_STACK=1`) |
-| `scripts/version-check` | the one version, everywhere it is written |
+| `scripts/version-check`, `scripts/sync-builder-seeds` | the one version, everywhere it is written; the builder's copies of the template and the packages guide, kept current |
 
 ## Checks
 
@@ -71,11 +71,15 @@ console/server.py` with `HG_KEY` (an admin key) and optionally `HG_OPERATOR_KEY`
   what is not allowed with a message that names what is. Invariants are asserted, not handled.
 - **Ports and adapters.** Vendor SDKs only in `harnessgateway/adapters/`; standards (Postgres, OCI images, HTTP, the
   Responses wire) are used directly, not wrapped.
-- **Packages** follow SPEC §5.8's layout: `harness.json`, `install.sh`, `run.sh` (one line into `map.py`), `map.py`,
-  `README.md` (Files, The command, Request fields, Output mapping, Known limits, Tests), `tests/` with fixtures
-  recorded from real runs. Install each CLI by its official, documented method, pinned to a version, and verify the
-  version; never name a CPU in a script; no post-install edits of installed files. The template seeds nothing an
-  organization would want to own, and neither does a package meant for others to start from.
+- **The platform knows no language either.** A package is `harness.json` plus two executables, `install` and `run`,
+  run as they are; the platform never looks inside them, never treats a file name specially, and the console never
+  assumes Python. hgkit is an optional SDK for packages that happen to be Python, never a platform requirement.
+- **Packages** follow SPEC §5.8's layout: `harness.json`, `install`, `run`, `README.md` (Files, The command, Request
+  fields, Output mapping, Known limits, Tests), `tests/` with fixtures recorded from real runs. Install each CLI by
+  its official, documented method, pinned to the manifest's version (`HG_PACKAGE_VERSION`), and verify the version;
+  never name a CPU in a script; no post-install edits of installed files. The template seeds nothing an organization
+  would want to own, and neither does a package meant for others to start from. After changing `packages/shell` or
+  `docs/packages.md`, run `scripts/sync-builder-seeds` (a unit test holds the builder skill's copies to them).
 - **Never mention "harnessrouter"** (any spelling) in any file. CI greps for it.
 
 ## Working style

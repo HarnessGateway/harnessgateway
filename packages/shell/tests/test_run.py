@@ -1,14 +1,14 @@
-"""map.py run as the sandbox runs it (the request at $HG_REQUEST, the workspace as the working directory); every line
-it prints is checked with the platform's own reader."""
+"""`run` run as the sandbox runs it (the request at $HG_REQUEST, the workspace as the working directory); every line
+it prints is checked with hgkit's reader, the one the platform uses."""
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from harnessgateway.domain.contract import check_output
+from hgkit import check
 
-MAP = Path(__file__).resolve().parents[1] / "map.py"
+RUN = Path(__file__).resolve().parents[1] / "run"
 HGKIT = Path(__file__).resolve().parents[3] / "sandbox"
 
 
@@ -16,8 +16,8 @@ def turn(tmp_path: Path, body: dict) -> tuple[list[dict], object]:
     request = tmp_path / "request.json"
     request.write_text(json.dumps(body))
     env = {**os.environ, "HG_REQUEST": str(request), "PYTHONPATH": str(HGKIT)}
-    proc = subprocess.run([sys.executable, str(MAP)], cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
-    return check_output(proc.stdout)
+    proc = subprocess.run([sys.executable, str(RUN)], cwd=tmp_path, env=env, capture_output=True, text=True, check=True)
+    return check(proc.stdout)
 
 
 def test_the_input_runs_as_a_command(tmp_path):

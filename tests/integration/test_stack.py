@@ -139,11 +139,11 @@ def seeded_archive() -> bytes:
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         files = [("harness.json", json.dumps(manifest).encode()), ("seeds/home/AGENTS.md", b"be kind\n"),
                  ("seeds/workspace/hello.txt", b"from the seeds\n")]
-        files += [(n, (SHELL / n).read_bytes()) for n in ("install.sh", "run.sh", "map.py")]
+        files += [(n, (SHELL / n).read_bytes()) for n in ("install", "run")]
         for path, data in files:
             info = tarfile.TarInfo(path)
             info.size = len(data)
-            info.mode = 0o755 if path.endswith(".sh") else 0o644
+            info.mode = 0o755 if path in ("install", "run") else 0o644
             tar.addfile(info, io.BytesIO(data))
     return buf.getvalue()
 

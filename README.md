@@ -64,7 +64,7 @@ organization with the built-in harness package builder, and prints your admin ke
 
 1. Open the console at `http://localhost:8800`, sign in as `admin`, and add a provider under **Setup → Providers**
    (an Anthropic, OpenAI or Gemini API endpoint and your key; the key is sealed and never shown again).
-2. Add a harness under **Setup → Harnesses**: **New harness** starts one from the template, you edit its four files
+2. Add a harness under **Setup → Harnesses**: **New harness** starts one from the template, you edit its three files
    for the CLI you want (the template's README says what to change in each), and **Install**. Or ask the built-in
    `harness-package-builder` in the chat for a harness for your CLI and import what it wrote from its session page.
 3. Open **Workbench → Chat**, pick the harness and the provider, and ask for something.
@@ -75,12 +75,14 @@ For many hosts, a managed Postgres, an S3 bucket and node pools, see [`docs/oper
 
 ## Harnesses
 
-The platform knows no CLI. Every harness is a package of a few files, and every package starts as a copy of one
-template, the `shell` package under [`packages/`](packages/): a manifest (`harness.json`), the CLI's pinned install
-(`install.sh`), one turn (`run.sh`, which runs `map.py`), and the mapping from the request to the CLI's command and
-from the CLI's output to Responses items (`message`, `reasoning`, `shell_call`, `apply_patch_call`, `mcp_call`,
-`function_call`). You write and edit these in the console, install with a click, and test with a request: in the
-chat, or over the API. Any provider that speaks one of the three API shapes (`anthropic`, `openai`, `google`) works,
+The platform knows no CLI and no language. Every harness is a package of three files, and every package starts as a
+copy of one template, the `shell` package under [`packages/`](packages/): a manifest (`harness.json`), the CLI's
+pinned install (`install`), and one turn (`run`: an executable in any language that reads the request and prints
+Responses events). The template's `run` is Python with hgkit, the Responses contract as a library: the request read
+for you, the events (`message`, `reasoning`, `shell_call`, `apply_patch_call`, `mcp_call`, `function_call`) printed
+correctly, and the platform's own validator to check with. You write and edit these in the console, install with a
+click, and test with a request: in the chat, or over the API. Any provider that speaks one of the three API shapes
+(`anthropic`, `openai`, `google`) works,
 including compatible endpoints from other vendors. Or ask the one built-in harness: `harness-package-builder` is
 Claude Code seeded with the skill that writes packages; say "Create a harness package for <name>" in the chat, and
 turn what it wrote into a draft from its session page. See the template's README and
@@ -89,7 +91,7 @@ turn what it wrote into a draft from its session page. See the template's README
 ## How it works
 
 ```
-caller ──Responses──▶ API ──queue (Postgres)──▶ node ──▶ gVisor sandbox ── run.sh ── the CLI
+caller ──Responses──▶ API ──queue (Postgres)──▶ node ──▶ gVisor sandbox ── run ──── the CLI
                        ▲                                     │                 │
                        │ events (SSE)                        │ provider calls  │ egress (allow-only)
                        └─────────────────────────────────────┤                 │
@@ -103,7 +105,8 @@ caller ──Responses──▶ API ──queue (Postgres)──▶ node ──�
   sandbox with the package's seeds (or restores its snapshot), and runs one turn.
 - The **door** is the sandbox's only network path: an allow-listed CONNECT proxy and the relay to the **gateway**,
   which exchanges the turn's token for your provider key.
-- The package's stdout is validated event by event; the terminal event becomes the final `Response`. The session's
+- The package's stdout is validated event by event, with the same reader hgkit gives packages to check themselves;
+  the terminal event becomes the final `Response`. The session's
   workspace is saved, and the sandbox stays warm for the next turn.
 
 The whole design, including the contract, packages, sandboxing, secrets, scale, metering and the extension seam for

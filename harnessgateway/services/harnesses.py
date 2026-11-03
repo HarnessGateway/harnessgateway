@@ -90,9 +90,11 @@ class Harnesses:
 
     async def install_folder(self, org_id: str, folder: Path) -> dict[str, Any]:
         """Install or upgrade from a package folder on this host: the built-in harness package builder, at `init`."""
+        def skip(d: str, names: list[str]) -> set[str]:          # the package's own tests, not its seeds' (the template's)
+            return {n for n in names if n == "__pycache__" or (n == "tests" and Path(d) == folder)}
         with tempfile.TemporaryDirectory(prefix="hg-folder-") as tmp:
             copy = Path(tmp) / "p"
-            shutil.copytree(folder, copy, ignore=shutil.ignore_patterns("__pycache__", "tests"))
+            shutil.copytree(folder, copy, ignore=skip)
             data = await asyncio.to_thread(pkg.pack, copy)
         return await self.install(org_id, data)
 

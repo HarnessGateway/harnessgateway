@@ -9,7 +9,7 @@
 # setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
 # change and weekly (.github/workflows/images.yml).
 #
-# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:2.0.1 .
+# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:2.1.0 .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret: --secret id=ca,src=/path/ca.pem
 FROM cgr.dev/chainguard/wolfi-base@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
@@ -17,6 +17,7 @@ USER 0
 WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
 COPY harnessgateway ./harnessgateway
+COPY sandbox/hgkit ./sandbox/hgkit
 COPY packages ./packages
 COPY console ./console
 RUN --mount=type=secret,id=ca,required=false sh -eu <<'EOF'
@@ -25,7 +26,7 @@ apk update
 apk add --no-cache python-3.12 docker-cli bash tini ca-certificates-bundle    # bash: `bash -n` on package scripts
 python3.12 -m venv /opt/harnessgateway
 /opt/harnessgateway/bin/pip install --no-cache-dir --disable-pip-version-check /src
-cp -r /src/packages /opt/harnessgateway/packages && find /opt/harnessgateway/packages -name tests -type d -prune -exec rm -rf {} +
+cp -r /src/packages /opt/harnessgateway/packages && find /opt/harnessgateway/packages -mindepth 2 -maxdepth 2 -name tests -type d -exec rm -rf {} +   # a package's own tests; its seeds keep theirs
 cp -r /src/console /opt/harnessgateway/console
 /opt/harnessgateway/bin/pip uninstall -y pip
 rm -rf /src /var/cache/apk /etc/apk/cache

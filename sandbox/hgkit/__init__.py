@@ -1,17 +1,26 @@
-"""hgkit: helpers for a HarnessGateway package's mapper, in the sandbox image at /opt/hg/lib (on PYTHONPATH). SPEC §5.7.
+"""hgkit: the Responses contract for a harness package, in Python. Optional: a package in any language prints the
+same JSON lines and imports nothing of this. In the sandbox image at /opt/hg/lib (on PYTHONPATH). SPEC §5.7.
 
-Optional and CLI-agnostic: a package may print Responses events any way it likes. hgkit makes the right sequence easy:
+hgkit knows nothing about any harness: only the request a turn receives and the events it must print.
 
     from hgkit import Request, Emitter
-    req = Request.load()                    # $HG_REQUEST, with readers for the common fields
-    out = Emitter()                         # prints Responses stream events on stdout, one JSON object per line
-    names = req.place_inputs()              # the request's files, written into the workspace by name
-    out.text("Hello")                       # streams into the current assistant message (deltas, then done)
-    out.shell("ls", stdout="a\\nb", exit_code=0)
-    out.ignored(["temperature"])            # request fields this CLI could not honour (metadata.hg_ignored_fields)
-    out.completed(usage=Emitter.usage(10, 5))   # exactly one terminal event, always last
+    req = Request.load()                       # the Responses request at $HG_REQUEST, with readers
+    out = Emitter()                            # Responses stream events on stdout, one JSON object per line
+    req.place_inputs()                         # the request's files, written into the workspace by name
 
-Every event and item matches the OpenAI SDK's models; the platform validates them and assigns sequence numbers.
+    out.think("Looking at the tests")         # a reasoning item, streamed
+    out.say("Running them.")                   # an assistant message, streamed
+    run = out.ran("pytest -q")                 # a shell call now ...
+    run.done(stdout="3 passed", exit=0)        # ... its output when it comes (or both at once: out.ran(cmd, stdout=..))
+    out.wrote("hello.py", "print(1)\\n")       # a file created; out.edited(path, diff), out.deleted(path)
+    call = out.called("github", "get_issue", {"n": 1})   # an MCP tool call; call.done(result) / call.failed(error)
+    out.used("WebSearch", {"q": "x"}, "...")   # any other tool
+    out.ignored(["temperature"])               # request fields this harness could not honour
+    out.done(input=1200, output=340, cached=800)         # exactly one terminal event, always last
+
+Every event matches the OpenAI SDK's models; the platform validates them and assigns sequence numbers.
+`Emitter(validate=True)` checks each event before printing it, and `check(text)` reads a whole output the way the
+platform does: both need the `openai` package (the sandbox image has it).
 """
 from __future__ import annotations
 
@@ -24,12 +33,19 @@ import os
 import shutil
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Request", "Emitter", "State"]
+__all__ = ["Call", "Emitter", "Provider", "Request", "Run", "State", "check"]
 
 FILE_PARTS = ("input_file", "input_image")
+
+
+def check(text: str) -> Any:
+    """A package's whole stdout, read as the platform reads it: (events, outcome), or OutputError naming the field."""
+    from .validate import check as _check
+    return _check(text)
 
 
 def _id(prefix: str) -> str:
@@ -53,12 +69,44 @@ def _decode(data: str) -> bytes:
         return data.encode()
 
 
+def _plus(content: str) -> str:
+    """A new file's content as an apply_patch create diff: every line added."""
+    body = content[:-1] if content.endswith("\n") else content
+    return "\n".join("+" + line for line in body.split("\n")) if content else ""
+
+
+# ── the request ──────────────────────────────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class Provider:
+    """The turn's model provider as the sandbox reaches it: through the door, with the turn's token (SPEC §5.6)."""
+    api: str          # anthropic | openai | google
+    url: str          # the base URL, without /v1: point the CLI here
+    token: str        # the API key to present
+
+
+class State:
+    """Small key/value state kept with the session ($HG_STATE), e.g. the CLI's own session id for --resume."""
+
+    def __init__(self, root: str | None = None):
+        self.root = Path(root or os.environ.get("HG_STATE", "/state"))
+
+    def get(self, key: str, default: str = "") -> str:
+        p = self.root / key
+        return p.read_text().strip() if p.is_file() else default
+
+    def set(self, key: str, value: str) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / key).write_text(value)
+
+
 class Request:
     """The Responses request the platform handed to this turn, as the caller sent it (secret values are placeholders),
-    with readers for the usual fields."""
+    with readers for the usual fields and for the turn's environment."""
 
-    def __init__(self, body: dict[str, Any]):
+    def __init__(self, body: dict[str, Any], env: dict[str, str] | None = None):
         self.body = body
+        self.env = dict(os.environ if env is None else env)
+        self.state = State(self.env.get("HG_STATE"))
 
     @classmethod
     def load(cls, path: str | None = None) -> Request:
@@ -67,6 +115,44 @@ class Request:
     def get(self, key: str, default: Any = None) -> Any:
         return self.body.get(key, default)
 
+    # ── the environment ────────────────────────────────────────────────────────────────────────────────────────────
+    @property
+    def model(self) -> str:
+        """The model name the CLI is given (HG_MODEL): the request's, the session's, or the harness's default."""
+        return self.env.get("HG_MODEL", "")
+
+    @property
+    def provider(self) -> Provider | None:
+        """None for a harness that runs without a model."""
+        url = self.env.get("HG_PROVIDER_URL", "")
+        return Provider(self.env.get("HG_PROVIDER_API", ""), url, self.env.get("HG_PROVIDER_TOKEN", "")) if url else None
+
+    @property
+    def workspace(self) -> Path:
+        return Path(self.env.get("HG_WORKSPACE", "/workspace"))
+
+    @property
+    def session_id(self) -> str:
+        return self.env.get("HG_SESSION", "")
+
+    @property
+    def response_id(self) -> str:
+        return self.env.get("HG_RESPONSE", "")
+
+    @property
+    def turn(self) -> int:
+        return int(self.env.get("HG_TURN") or 1)
+
+    @property
+    def package_version(self) -> str:
+        """The package's version from its manifest (HG_PACKAGE_VERSION): `<CLI version>-<revision>`."""
+        return self.env.get("HG_PACKAGE_VERSION", "")
+
+    @property
+    def cli_version(self) -> str:
+        return self.package_version.rsplit("-", 1)[0]
+
+    # ── the task ───────────────────────────────────────────────────────────────────────────────────────────────────
     def _items(self) -> list[dict[str, Any]]:
         given = self.body.get("input")
         if isinstance(given, str):
@@ -110,24 +196,27 @@ class Request:
         fmt = (self.body.get("text") or {}).get("format")
         return fmt if isinstance(fmt, dict) and fmt.get("type") not in (None, "text") else None
 
-    @staticmethod
-    def mcp_servers(path: str | None = None) -> list[dict[str, Any]]:
+    @property
+    def max_tool_calls(self) -> int | None:
+        v = self.body.get("max_tool_calls")
+        return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+
+    def mcp_servers(self, path: str | None = None) -> list[dict[str, Any]]:
         """The turn's MCP servers, as the platform resolved them: [{label, url, transport, headers, allowed_tools}],
         header values holding placeholders the door replaces on the way out."""
-        p = Path(path or os.environ.get("HG_MCP", "/run/hg/mcp.json"))
+        p = Path(path or self.env.get("HG_MCP", "/run/hg/mcp.json"))
         return json.loads(p.read_text()) if p.is_file() else []
 
-    @staticmethod
-    def input_files(folder: str | None = None) -> dict[str, dict[str, Any]]:
+    def input_files(self, folder: str | None = None) -> dict[str, dict[str, Any]]:
         """Files the request referenced by file_id, already in the sandbox: {file_id: {filename, path, bytes}}."""
-        index = Path(folder or os.environ.get("HG_FILES", "/run/hg/files")) / "index.json"
+        index = Path(folder or self.env.get("HG_FILES", "/run/hg/files")) / "index.json"
         return json.loads(index.read_text()) if index.is_file() else {}
 
     def place_inputs(self, workspace: str | None = None) -> list[str]:
         """Write the input's files (by file_id or inline) into the workspace by name and return the names written. A
         name taken by different bytes gets a numeric suffix; the same bytes under the same name are not written twice.
         Files given only by URL are left to the package."""
-        root = Path(workspace or os.environ.get("HG_WORKSPACE", "/workspace"))
+        root = Path(workspace) if workspace else self.workspace
         index, names = self.input_files(), []
         for n, part in enumerate(p for p in self._user_parts() if p.get("type") in FILE_PARTS):
             entry = index.get(part.get("file_id") or "")
@@ -162,35 +251,67 @@ def _free(root: Path, name: str, content: Path | bytes) -> Path:
     raise FileExistsError(name)
 
 
-class State:
-    """Small key/value state kept with the session ($HG_STATE), e.g. the CLI's own session id for --resume."""
+# ── the response ─────────────────────────────────────────────────────────────────────────────────────────────────────
+class Run:
+    """A shell call the agent started; `done` reports its output."""
 
-    def __init__(self, root: str | None = None):
-        self.root = Path(root or os.environ.get("HG_STATE", "/state"))
+    def __init__(self, out: Emitter, call_id: str):
+        self.out, self.call_id = out, call_id
 
-    def get(self, key: str, default: str = "") -> str:
-        p = self.root / key
-        return p.read_text().strip() if p.is_file() else default
+    def done(self, stdout: str = "", stderr: str = "", exit: int | None = 0, timed_out: bool = False) -> None:
+        outcome = {"type": "timeout"} if timed_out or exit is None else {"type": "exit", "exit_code": exit}
+        self.out.item({"type": "shell_call_output", "call_id": self.call_id, "status": "completed",
+                       "output": [{"stdout": stdout, "stderr": stderr, "outcome": outcome}]})
 
-    def set(self, key: str, value: str) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / key).write_text(value)
+
+class Call:
+    """A tool call the agent made (an MCP tool, or any other); `done` reports its result, `failed` its error."""
+
+    def __init__(self, out: Emitter, call_id: str, item: dict[str, Any] | None, index: int):
+        self.out, self.call_id, self._item, self._index = out, call_id, item, index
+
+    def done(self, output: str = "") -> None:
+        self._finish("completed", output, None)
+
+    def failed(self, error: str = "") -> None:
+        self._finish("failed", error, {"type": "mcp_tool_execution_error", "content": error})
+
+    def cancelled(self) -> None:
+        """The turn ended before the result came."""
+        self._finish("incomplete", "", None)
+
+    def _finish(self, status: str, text: str, error: dict[str, Any] | None) -> None:
+        if self._item is not None:                      # an MCP call: one item, added when called, done now
+            item = {**self._item, "status": status, "output": text if status == "completed" else None, "error": error}
+            self.out.close()
+            self.out.emit({"type": "response.output_item.done", "output_index": self._index, "item": item})
+            self.out.output.append(item)
+        else:                                           # any other tool: its output item
+            self.out.item({"type": "function_call_output", "call_id": self.call_id, "output": text,
+                           "status": "completed" if status == "completed" else "incomplete"})
 
 
 class Emitter:
-    """Prints a valid Responses event stream. Items get output indexes in order; text streams into one message at a
-    time (opened on first text, closed when anything else is emitted or the turn ends)."""
+    """Prints a valid Responses event stream: items in order, text and thinking streamed into one open item at a time
+    (closed when anything else is emitted or the turn ends), exactly one terminal event."""
 
-    def __init__(self, stream: Any = None):
+    def __init__(self, stream: Any = None, validate: bool = False):
         self.stream = stream or sys.stdout
         self.index = 0
         self.output: list[dict[str, Any]] = []
-        self._msg: dict[str, Any] | None = None
+        self._open: dict[str, Any] | None = None      # the message or reasoning item being streamed
         self._ended = False
         self._ignored: list[str] = []
+        self._validate = None
+        if validate:
+            from .validate import check_event
+            self._validate = check_event
 
     def emit(self, event: dict[str, Any]) -> None:
         assert not self._ended, "nothing may follow the terminal event"
+        if self._validate is not None and event["type"] not in ("response.completed", "response.incomplete",
+                                                                "response.failed"):
+            self._validate(event)
         self.stream.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
         self.stream.flush()
 
@@ -199,10 +320,67 @@ class Emitter:
         self.stream.write(text.replace("\n", " ") + "\n")
         self.stream.flush()
 
-    # items ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── streamed items ─────────────────────────────────────────────────────────────────────────────────────────────
+    def say(self, delta: str) -> None:
+        """Assistant text, streamed into the open message (opened on the first delta)."""
+        self._stream("message", delta)
+
+    def think(self, delta: str) -> None:
+        """Reasoning, streamed into the open reasoning item (opened on the first delta)."""
+        self._stream("reasoning", delta)
+
+    def _stream(self, kind: str, delta: str) -> None:
+        if not delta:
+            return
+        if self._open is not None and self._open["kind"] != kind:
+            self.close()
+        if self._open is None:
+            self._open = {"kind": kind, "id": _id("msg" if kind == "message" else "rs"), "index": self.index, "text": ""}
+            base = {"output_index": self.index, "item_id": self._open["id"]}
+            if kind == "message":
+                self.emit({"type": "response.output_item.added", "output_index": self.index,
+                           "item": {"id": self._open["id"], "type": "message", "role": "assistant",
+                                    "status": "in_progress", "content": []}})
+                self.emit({"type": "response.content_part.added", **base, "content_index": 0,
+                           "part": {"type": "output_text", "text": "", "annotations": []}})
+            else:
+                self.emit({"type": "response.output_item.added", "output_index": self.index,
+                           "item": {"id": self._open["id"], "type": "reasoning", "summary": []}})
+                self.emit({"type": "response.reasoning_summary_part.added", **base, "summary_index": 0,
+                           "part": {"type": "summary_text", "text": ""}})
+            self.index += 1
+        o = self._open
+        o["text"] += delta
+        base = {"output_index": o["index"], "item_id": o["id"]}
+        if kind == "message":
+            self.emit({"type": "response.output_text.delta", **base, "content_index": 0, "delta": delta, "logprobs": []})
+        else:
+            self.emit({"type": "response.reasoning_summary_text.delta", **base, "summary_index": 0, "delta": delta})
+
+    def close(self) -> None:
+        """Close the open message or reasoning item, if any (done for you when anything else is emitted)."""
+        o, self._open = self._open, None
+        if o is None:
+            return
+        base = {"output_index": o["index"], "item_id": o["id"]}
+        if o["kind"] == "message":
+            part = {"type": "output_text", "text": o["text"], "annotations": []}
+            self.emit({"type": "response.output_text.done", **base, "content_index": 0, "text": o["text"], "logprobs": []})
+            self.emit({"type": "response.content_part.done", **base, "content_index": 0, "part": part})
+            item: dict[str, Any] = {"id": o["id"], "type": "message", "role": "assistant", "status": "completed",
+                                    "content": [part]}
+        else:
+            part = {"type": "summary_text", "text": o["text"]}
+            self.emit({"type": "response.reasoning_summary_text.done", **base, "summary_index": 0, "text": o["text"]})
+            self.emit({"type": "response.reasoning_summary_part.done", **base, "summary_index": 0, "part": part})
+            item = {"id": o["id"], "type": "reasoning", "summary": [part]}
+        self.emit({"type": "response.output_item.done", "output_index": o["index"], "item": item})
+        self.output.append(item)
+
+    # ── complete items ─────────────────────────────────────────────────────────────────────────────────────────────
     def item(self, item: dict[str, Any]) -> dict[str, Any]:
-        """A complete output item: added, then done."""
-        self.close_text()
+        """A complete output item of any Responses type: added, then done."""
+        self.close()
         item.setdefault("id", _id(item["type"][:4]))
         self.emit({"type": "response.output_item.added", "output_index": self.index, "item": item})
         self.emit({"type": "response.output_item.done", "output_index": self.index, "item": item})
@@ -210,106 +388,112 @@ class Emitter:
         self.index += 1
         return item
 
-    def text(self, delta: str) -> None:
-        if not delta:
-            return
-        if self._msg is None:
-            self._msg = {"id": _id("msg"), "type": "message", "role": "assistant", "status": "in_progress", "content": [],
-                         "_text": "", "_index": self.index}
-            self.emit({"type": "response.output_item.added", "output_index": self.index,
-                       "item": {k: v for k, v in self._msg.items() if not k.startswith("_")}})
-            self.emit({"type": "response.content_part.added", "output_index": self.index, "item_id": self._msg["id"],
-                       "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
-            self.index += 1
-        self._msg["_text"] += delta
-        self.emit({"type": "response.output_text.delta", "output_index": self._msg["_index"], "item_id": self._msg["id"],
-                   "content_index": 0, "delta": delta, "logprobs": []})
-
-    def close_text(self) -> None:
-        m = self._msg
-        if m is None:
-            return
-        self._msg = None
-        part = {"type": "output_text", "text": m["_text"], "annotations": []}
-        base = {"output_index": m["_index"], "item_id": m["id"], "content_index": 0}
-        self.emit({"type": "response.output_text.done", **base, "text": m["_text"], "logprobs": []})
-        self.emit({"type": "response.content_part.done", **base, "part": part})
-        item = {"id": m["id"], "type": "message", "role": "assistant", "status": "completed", "content": [part]}
-        self.emit({"type": "response.output_item.done", "output_index": m["_index"], "item": item})
-        self.output.append(item)
-
-    def message(self, text: str) -> None:
-        """A whole assistant message at once."""
-        self.close_text()
-        self.text(text)
-        self.close_text()
-
-    def reasoning(self, text: str) -> None:
-        if text.strip():
-            self.item({"type": "reasoning", "summary": [{"type": "summary_text", "text": text}]})
-
-    def shell(self, command: str, *, stdout: str = "", stderr: str = "", exit_code: int | None = 0,
-              call_id: str | None = None) -> None:
+    def ran(self, command: str, *, stdout: str | None = None, stderr: str = "", exit: int | None = 0,
+            timed_out: bool = False, timeout_ms: int | None = None, call_id: str | None = None) -> Run:
+        """A shell command. With `stdout` given, the call and its output at once; without, the call now and the
+        returned Run's `done(...)` later."""
         cid = call_id or _id("call")
-        self.item({"type": "shell_call", "call_id": cid, "status": "completed", "action": {"commands": [command]}})
-        outcome = {"type": "exit", "exit_code": exit_code} if exit_code is not None else {"type": "timeout"}
-        self.item({"type": "shell_call_output", "call_id": cid, "status": "completed",
-                   "output": [{"stdout": stdout, "stderr": stderr, "outcome": outcome}]})
+        action: dict[str, Any] = {"commands": [command]}
+        if timeout_ms is not None:
+            action["timeout_ms"] = timeout_ms
+        self.item({"type": "shell_call", "call_id": cid, "status": "completed", "action": action})
+        run = Run(self, cid)
+        if stdout is not None:
+            run.done(stdout, stderr, exit, timed_out)
+        return run
 
-    def patch(self, operation: str, path: str, diff: str = "", *, ok: bool = True, output: str = "",
+    def wrote(self, path: str, content: str = "", *, diff: str | None = None, ok: bool = True, output: str = "",
               call_id: str | None = None) -> None:
-        """operation: create_file | update_file | delete_file."""
+        """A file created (the diff is every line of `content` added, unless given)."""
+        self._patch({"type": "create_file", "path": path, "diff": _plus(content) if diff is None else diff}, ok, output,
+                    call_id)
+
+    def edited(self, path: str, diff: str = "", *, old: str | None = None, new: str | None = None, ok: bool = True,
+               output: str = "", call_id: str | None = None) -> None:
+        """A file changed: a unified diff, or `old` and `new` text to make one from."""
+        if old is not None or new is not None:
+            diff = "@@\n" + "\n".join("-" + x for x in (old or "").split("\n")) + "\n" + \
+                   "\n".join("+" + x for x in (new or "").split("\n"))
+        self._patch({"type": "update_file", "path": path, "diff": diff}, ok, output, call_id)
+
+    def deleted(self, path: str, *, ok: bool = True, output: str = "", call_id: str | None = None) -> None:
+        self._patch({"type": "delete_file", "path": path}, ok, output, call_id)
+
+    def _patch(self, op: dict[str, Any], ok: bool, output: str, call_id: str | None) -> None:
         cid = call_id or _id("call")
-        op: dict[str, Any] = {"type": operation, "path": path}
-        if operation != "delete_file":
-            op["diff"] = diff
         self.item({"type": "apply_patch_call", "call_id": cid, "status": "completed", "operation": op})
         self.item({"type": "apply_patch_call_output", "call_id": cid, "status": "completed" if ok else "failed",
                    "output": output})
 
-    def function(self, name: str, arguments: Any, output: str | None = None, *, ok: bool = True,
-                 call_id: str | None = None) -> None:
+    def called(self, server: str, name: str, arguments: Any, output: str | None = None, error: str | None = None,
+               *, call_id: str | None = None) -> Call:
+        """An MCP tool call. With `output` or `error`, the whole call at once; without, in progress now and the
+        returned Call's `done(result)` or `failed(error)` later."""
+        self.close()
         cid = call_id or _id("call")
-        args = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-        self.item({"type": "function_call", "call_id": cid, "name": name, "arguments": args, "status": "completed"})
-        if output is not None:
-            self.item({"type": "function_call_output", "call_id": cid, "output": output,
-                       "status": "completed" if ok else "incomplete"})
+        item = {"id": f"mcp_{cid[-24:]}", "type": "mcp_call", "server_label": server, "name": name,
+                "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False),
+                "status": "in_progress"}
+        self.emit({"type": "response.output_item.added", "output_index": self.index, "item": item})
+        call = Call(self, cid, item, self.index)
+        self.index += 1
+        if error is not None:
+            call.failed(error)
+        elif output is not None:
+            call.done(output)
+        return call
 
-    def mcp(self, server: str, name: str, arguments: Any, output: str | None = None, error: str | None = None) -> None:
-        args = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-        failure = {"type": "mcp_tool_execution_error", "content": [{"type": "text", "text": error}]} if error else None
-        self.item({"type": "mcp_call", "server_label": server, "name": name, "arguments": args,
-                   "status": "failed" if error else "completed", "output": output, "error": failure})
+    def used(self, name: str, arguments: Any, output: str | None = None, *, ok: bool = True,
+             call_id: str | None = None) -> Call:
+        """Any other tool: a function call. With `output`, the call and its output at once; without, the call now and
+        the returned Call's `done(output)` or `failed(output)` later."""
+        cid = call_id or _id("call")
+        self.item({"type": "function_call", "call_id": cid, "name": name, "status": "completed",
+                   "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)})
+        call = Call(self, cid, None, -1)
+        if output is not None:
+            call.done(output) if ok else call.failed(output)
+        return call
 
     def ignored(self, fields: list[str]) -> None:
         """Request fields this turn did not act on, reported in the terminal event's metadata.hg_ignored_fields."""
         self._ignored += [f for f in dict.fromkeys(fields) if f not in self._ignored]
 
-    # the end ────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # ── the end ────────────────────────────────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def usage(input_tokens: int = 0, output_tokens: int = 0, cached: int = 0, reasoning: int = 0,
-              cache_write: int = 0) -> dict[str, Any]:
-        """Responses usage. input_tokens includes cached and cache-written tokens, as OpenAI counts them."""
-        return {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": input_tokens + output_tokens,
+    def usage(input: int = 0, output: int = 0, cached: int = 0, reasoning: int = 0, cache_write: int = 0
+              ) -> dict[str, Any]:
+        """Responses usage. `input` is every input token, cached and cache-written ones included, as OpenAI counts
+        them (a CLI on the Anthropic API reports cache reads separately: add them)."""
+        return {"input_tokens": input, "output_tokens": output, "total_tokens": input + output,
                 "input_tokens_details": {"cached_tokens": cached, "cache_write_tokens": cache_write},
                 "output_tokens_details": {"reasoning_tokens": reasoning}}
 
-    def _end(self, kind: str, response: dict[str, Any]) -> None:
-        self.close_text()
+    def _end(self, kind: str, response: dict[str, Any], usage: dict[str, Any] | None, metadata: dict[str, str] | None,
+             tokens: dict[str, int]) -> None:
+        self.close()
+        meta = dict(metadata or {})
         if self._ignored:
-            response["metadata"] = {**(response.get("metadata") or {}), "hg_ignored_fields": ",".join(self._ignored)}
+            meta["hg_ignored_fields"] = ",".join(self._ignored)
+        response["usage"] = self.usage(**tokens) if tokens and usage is None else usage
+        response["metadata"] = meta
         self.emit({"type": kind, "response": response})
         self._ended = True
 
-    def completed(self, usage: dict[str, Any] | None = None, metadata: dict[str, str] | None = None) -> None:
-        self._end("response.completed", {"usage": usage, "metadata": metadata or {}})
+    def done(self, usage: dict[str, Any] | None = None, metadata: dict[str, str] | None = None, **tokens: int) -> None:
+        """response.completed: `done(input=.., output=.., cached=..)` or `done(usage={...})`."""
+        self._end("response.completed", {}, usage, metadata, tokens)
 
-    def incomplete(self, reason: str = "max_output_tokens", usage: dict[str, Any] | None = None) -> None:
-        self._end("response.incomplete", {"incomplete_details": {"reason": reason}, "usage": usage})
+    def stopped(self, reason: str = "max_output_tokens", usage: dict[str, Any] | None = None,
+                metadata: dict[str, str] | None = None, **tokens: int) -> None:
+        """response.incomplete: the agent stopped before it was done (an OpenAI reason: max_output_tokens, ...)."""
+        self._end("response.incomplete", {"incomplete_details": {"reason": reason}}, usage, metadata, tokens)
 
-    def failed(self, code: str, message: str, usage: dict[str, Any] | None = None) -> None:
-        self._end("response.failed", {"error": {"code": code, "message": message}, "usage": usage})
+    def failed(self, code: str, message: str, usage: dict[str, Any] | None = None,
+               metadata: dict[str, str] | None = None, **tokens: int) -> None:
+        """response.failed: an OpenAI error code when one fits (rate_limit_exceeded, server_error, invalid_prompt); any
+        other code is reported in metadata.hg_error_code."""
+        self._end("response.failed", {"error": {"code": code, "message": message}}, usage, metadata, tokens)
 
     @property
     def ended(self) -> bool:

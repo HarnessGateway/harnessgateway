@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Claude Code (here the harness package builder), one turn: the Responses request in, `claude -p --output-format stream-json`
 run, Responses events out.
 
@@ -6,14 +7,14 @@ run, Responses events out.
                turn's log, prefixed `claude-stream `)
     Mapper     maps Claude Code's stream-json onto hgkit.Emitter:
                  system init / result                    -> the CLI's session id into $HG_STATE/session (--resume)
-                 stream_event content_block_delta text   -> response.output_text.delta (token level)
-                 thinking (deltas, then the whole block) -> a reasoning item, its summary text streamed as it comes
-                 tool_use Bash                           -> shell_call, its tool_result -> shell_call_output
-                 tool_use Write / Edit / MultiEdit       -> apply_patch_call + apply_patch_call_output (at the result)
-                 tool_use mcp__<server>__<tool>          -> mcp_call (added at the call, done at the result)
-                 any other tool_use                      -> function_call, its tool_result -> function_call_output
-                 result                                  -> usage on the terminal event; success -> completed,
-                                                            error_max_turns -> incomplete, anything else -> failed
+                 stream_event content_block_delta text   -> out.say (token level)
+                 thinking deltas, or the whole block     -> out.think
+                 tool_use Bash                           -> out.ran, its tool_result -> run.done
+                 tool_use Write / Edit / MultiEdit       -> out.wrote / out.edited (at the result)
+                 tool_use mcp__<server>__<tool>          -> out.called (in progress at the call), its result -> call.done
+                 any other tool_use                      -> out.used, its tool_result -> call.done
+                 result                                  -> usage on the terminal event; success -> out.done,
+                                                            error_max_turns -> out.stopped, anything else -> out.failed
 
 Runs on the sandbox's python3; hgkit is on PYTHONPATH there.
 """
@@ -33,7 +34,7 @@ from typing import Any
 
 from hgkit import Emitter, Request, State
 
-CLI_VERSION = "2.1.310"
+CLI_VERSION = os.environ.get("HG_PACKAGE_VERSION", "").rsplit("-", 1)[0]   # the manifest's version is <CLI>-<revision>
 WORKSPACE = os.environ.get("HG_WORKSPACE", "/workspace")
 RAW_PREFIX = "claude-stream "
 # Responses reasoning.effort -> Claude Code --effort (low, medium, high, xhigh, max); "none" turns thinking off.
@@ -78,12 +79,6 @@ def _text(content: Any) -> str:
     return "" if content is None else json.dumps(content, ensure_ascii=False)
 
 
-def _plus(content: str) -> str:
-    """A new file's content as an apply_patch create diff: every line added."""
-    body = content[:-1] if content.endswith("\n") else content
-    return "\n".join("+" + line for line in body.split("\n")) if content else ""
-
-
 def _hunks(patch: Any) -> str:
     """Claude Code's structuredPatch (a list of unified-diff hunks) as diff text."""
     out = []
@@ -106,15 +101,14 @@ class Mapper:
         self.out = out
         self.state = state
         self.labels = {_mcp_name(x): x for x in mcp_labels or []}
-        self.calls: dict[str, dict[str, Any]] = {}    # tool_use id -> {name, input, kind, item, index}
+        self.calls: dict[str, dict[str, Any]] = {}    # tool_use id -> {name, input, kind, handle}
         self.streamed: set[str] = set()                # assistant message ids whose text arrived as deltas
+        self.thought: set[str] = set()                 # assistant message ids whose thinking arrived as deltas
         self.current = ""                              # the message id the stream_events belong to
         self.session_id = ""
         self.result: dict[str, Any] | None = None
         self.api_error = ""                            # the text of a synthetic API-error message, if any
         self.init_seen = False
-        self.thought: set[str] = set()                 # assistant message ids whose thinking was streamed
-        self.rs: dict[str, Any] | None = None          # the reasoning item being streamed
 
     # ── input ──────────────────────────────────────────────────────────────────────────────────────────────────────
     def line(self, raw: str) -> None:
@@ -130,13 +124,13 @@ class Mapper:
             try:
                 self.handle(ev)
             except Exception as e:  # a CLI event this mapper does not expect must not lose the turn
-                self.out.log(f"map.py: could not map a {ev.get('type')} event: {type(e).__name__}: {e}")
+                self.out.log(f"run: could not map a {ev.get('type')} event: {type(e).__name__}: {e}")
 
     def handle(self, ev: dict[str, Any]) -> None:
         kind = ev.get("type")
         sub = ev.get("parent_tool_use_id")             # set on a subagent's messages
-        if kind in ("user", "result") or (kind == "assistant" and not self._thinking_only(ev)):
-            self.close_reasoning()
+        if kind in ("user", "result", "assistant"):    # a whole message, a tool result or the end: nothing stays open
+            self.out.close()
         if kind == "system" and ev.get("subtype") == "init":
             self.init_seen = True
             self._remember(ev.get("session_id"))
@@ -166,48 +160,13 @@ class Mapper:
         elif t == "content_block_delta":
             d = e.get("delta") or {}
             if d.get("type") == "text_delta" and d.get("text"):
-                self.close_reasoning()
                 self.streamed.add(self.current)
-                self.out.text(d["text"])
+                self.out.say(d["text"])
             elif d.get("type") == "thinking_delta" and d.get("thinking"):
-                self._think(d["thinking"])
+                self.thought.add(self.current)
+                self.out.think(d["thinking"])
         elif t == "content_block_stop":
-            self.close_reasoning()
-
-    # ── reasoning, streamed as a summary ───────────────────────────────────────────────────────────────────────────
-    @staticmethod
-    def _thinking_only(ev: dict[str, Any]) -> bool:
-        blocks = (ev.get("message") or {}).get("content")
-        return isinstance(blocks, list) and bool(blocks) and \
-            all(isinstance(b, dict) and b.get("type") in ("thinking", "redacted_thinking") for b in blocks)
-
-    def _think(self, delta: str) -> None:
-        if self.rs is None:
-            self.out.close_text()
-            self.rs = {"id": f"rs_{os.urandom(12).hex()}", "index": self.out.index, "text": ""}
-            self.out.index += 1
-            base = {"item_id": self.rs["id"], "output_index": self.rs["index"]}
-            self.out.emit({"type": "response.output_item.added", "output_index": self.rs["index"],
-                           "item": {"id": self.rs["id"], "type": "reasoning", "summary": []}})
-            self.out.emit({"type": "response.reasoning_summary_part.added", **base, "summary_index": 0,
-                           "part": {"type": "summary_text", "text": ""}})
-        self.thought.add(self.current)
-        self.rs["text"] += delta
-        self.out.emit({"type": "response.reasoning_summary_text.delta", "item_id": self.rs["id"],
-                       "output_index": self.rs["index"], "summary_index": 0, "delta": delta})
-
-    def close_reasoning(self, text: str | None = None) -> None:
-        rs, self.rs = self.rs, None
-        if rs is None:
-            return
-        text = rs["text"] if text is None else text
-        base = {"item_id": rs["id"], "output_index": rs["index"], "summary_index": 0}
-        part = {"type": "summary_text", "text": text}
-        self.out.emit({"type": "response.reasoning_summary_text.done", **base, "text": text})
-        self.out.emit({"type": "response.reasoning_summary_part.done", **base, "part": part})
-        item = {"id": rs["id"], "type": "reasoning", "summary": [part]}
-        self.out.emit({"type": "response.output_item.done", "output_index": rs["index"], "item": item})
-        self.out.output.append(item)
+            self.out.close()
 
     def _assistant(self, ev: dict[str, Any], subagent: bool) -> None:
         msg = ev.get("message") or {}
@@ -223,12 +182,12 @@ class Mapper:
             bt = block.get("type")
             if bt == "text" and not subagent:
                 if msg.get("id") not in self.streamed:          # not already streamed as deltas
-                    self.out.text(str(block.get("text") or ""))
+                    self.out.say(str(block.get("text") or ""))
+                    self.out.close()
             elif bt == "thinking" and not subagent:
-                if self.rs is not None:                          # streamed: close it with the whole block
-                    self.close_reasoning(str(block.get("thinking") or self.rs["text"]))
-                elif msg.get("id") not in self.thought:
-                    self.out.reasoning(str(block.get("thinking") or ""))
+                if msg.get("id") not in self.thought:
+                    self.out.think(str(block.get("thinking") or ""))
+                    self.out.close()
             elif bt == "tool_use":
                 self._tool_use(block)
 
@@ -240,35 +199,27 @@ class Mapper:
         call: dict[str, Any] = {"name": name, "input": args}
         self.calls[cid] = call
         if name == "Bash":
-            action: dict[str, Any] = {"commands": [str(args.get("command", ""))]}
-            if isinstance(args.get("timeout"), int):
-                action["timeout_ms"] = args["timeout"]
-            call["kind"] = "shell"
-            self.out.item({"type": "shell_call", "call_id": cid, "status": "completed", "action": action})
+            timeout = args.get("timeout") if isinstance(args.get("timeout"), int) else None
+            call.update(kind="shell", handle=self.out.ran(str(args.get("command", "")), timeout_ms=timeout, call_id=cid))
         elif name in PATCH_TOOLS:
             call["kind"] = "patch"                                   # emitted with its result (create vs update)
         elif name == "StructuredOutput":
             call["kind"] = "structured"                              # becomes the final message (text.format)
         elif name.startswith("mcp__"):
             _, server, tool = (name.split("__", 2) + ["", ""])[:3]
-            self.out.close_text()
-            item = {"id": f"mcp_{cid[-24:]}", "type": "mcp_call", "server_label": self.labels.get(server, server),
-                    "name": tool, "arguments": json.dumps(args, ensure_ascii=False), "status": "in_progress"}
-            call.update(kind="mcp", item=item, index=self.out.index)
-            self.out.emit({"type": "response.output_item.added", "output_index": self.out.index, "item": item})
-            self.out.index += 1
+            call.update(kind="mcp", handle=self.out.called(self.labels.get(server, server), tool, args, call_id=cid))
         else:
-            call["kind"] = "function"
-            self.out.item({"type": "function_call", "call_id": cid, "name": name,
-                           "arguments": json.dumps(args, ensure_ascii=False), "status": "completed"})
+            call.update(kind="function", handle=self.out.used(name, args, call_id=cid))
 
     def _tool_result(self, block: dict[str, Any], tur: Any) -> None:
         cid = str(block.get("tool_use_id") or "")
         text = _text(block.get("content"))
         error = bool(block.get("is_error"))
-        call = self.calls.pop(cid, {"name": "", "input": {}, "kind": "function"})
-        kind, args = call["kind"], call["input"]
-        tur = tur if isinstance(tur, dict) else {}
+        call = self.calls.pop(cid, None)
+        if call is None:                                             # a result for a call this turn never saw
+            self.out.used("unknown", {}, text, ok=not error, call_id=cid)
+            return
+        kind, args, tur = call["kind"], call["input"], tur if isinstance(tur, dict) else {}
         if kind == "shell":
             if "stdout" in tur or "stderr" in tur:
                 stdout, stderr = str(tur.get("stdout") or ""), str(tur.get("stderr") or "")
@@ -276,13 +227,11 @@ class Mapper:
                 stdout, stderr = ("", text) if error else (text, "")
             m = re.match(r"Exit code (\d+)", text)
             code = int(m.group(1)) if m else (1 if error else 0)
-            outcome = {"type": "timeout"} if tur.get("interrupted") else {"type": "exit", "exit_code": code}
-            self.out.item({"type": "shell_call_output", "call_id": cid, "status": "completed",
-                           "output": [{"stdout": stdout, "stderr": stderr, "outcome": outcome}]})
+            call["handle"].done(stdout, stderr, code, timed_out=bool(tur.get("interrupted")))
         elif kind == "patch":
             path = _rel(str(args.get("file_path") or tur.get("filePath") or ""))
             if call["name"] == "Write" and tur.get("type") != "update":
-                op = {"type": "create_file", "path": path, "diff": _plus(str(args.get("content") or ""))}
+                self.out.wrote(path, str(args.get("content") or ""), ok=not error, output=text, call_id=cid)
             else:
                 diff = _hunks(tur.get("structuredPatch"))
                 if not diff:
@@ -291,22 +240,9 @@ class Mapper:
                         "@@\n" + "\n".join("-" + x for x in str(e.get("old_string", "")).split("\n")) + "\n" +
                         "\n".join("+" + x for x in str(e.get("new_string", e.get("content", ""))).split("\n"))
                         for e in edits if isinstance(e, dict))
-                op = {"type": "update_file", "path": path, "diff": diff}
-            self.out.item({"type": "apply_patch_call", "call_id": cid, "status": "completed", "operation": op})
-            self.out.item({"type": "apply_patch_call_output", "call_id": cid,
-                           "status": "failed" if error else "completed", "output": text})
-        elif kind == "mcp":
-            self.out.close_text()
-            item = {**call["item"], "status": "failed" if error else "completed",
-                    "output": None if error else text,
-                    "error": {"type": "mcp_tool_execution_error", "content": text} if error else None}
-            self.out.emit({"type": "response.output_item.done", "output_index": call["index"], "item": item})
-            self.out.output.append(item)
-        elif kind == "structured":
-            pass
-        else:
-            self.out.item({"type": "function_call_output", "call_id": cid, "output": text,
-                           "status": "incomplete" if error else "completed"})
+                self.out.edited(path, diff, ok=not error, output=text, call_id=cid)
+        elif kind in ("mcp", "function"):
+            call["handle"].failed(text) if error else call["handle"].done(text)
 
     # ── the end ────────────────────────────────────────────────────────────────────────────────────────────────────
     def usage(self) -> dict[str, Any] | None:
@@ -316,36 +252,32 @@ class Mapper:
         cached = int(u.get("cache_read_input_tokens") or 0)
         written = int(u.get("cache_creation_input_tokens") or 0)
         # Anthropic's input_tokens leaves out cache reads and writes; OpenAI's includes them.
-        return Emitter.usage(input_tokens=int(u.get("input_tokens") or 0) + cached + written,
-                             output_tokens=int(u.get("output_tokens") or 0), cached=cached, cache_write=written)
+        return Emitter.usage(input=int(u.get("input_tokens") or 0) + cached + written,
+                             output=int(u.get("output_tokens") or 0), cached=cached, cache_write=written)
 
     def finish(self, exit_code: int | None = None, stderr: str = "") -> None:
         """The terminal event, from the CLI's result (or its absence)."""
-        self.close_reasoning()
-        for cid in list(self.calls):                    # calls that never got a result (interrupted)
-            call = self.calls.pop(cid)
+        self.out.close()
+        for call in self.calls.values():                 # calls that never got a result (interrupted)
             if call["kind"] == "mcp":
-                self.out.close_text()
-                item = {**call["item"], "status": "incomplete"}
-                self.out.emit({"type": "response.output_item.done", "output_index": call["index"], "item": item})
-                self.out.output.append(item)
+                call["handle"].cancelled()
+        self.calls.clear()
         r = self.result
         if r is None:
             tail = (self.api_error or stderr.strip() or "no output")[-1500:]
             self.out.failed("cli_error", f"claude exited {exit_code} without a result: {tail}")
             return
         if r.get("structured_output") is not None:
-            self.out.message(json.dumps(r["structured_output"], ensure_ascii=False))
+            self.out.say(json.dumps(r["structured_output"], ensure_ascii=False))
         usage = self.usage()
         meta = {"claude_session_id": self.session_id, "claude_num_turns": str(r.get("num_turns", "")),
                 "claude_version": CLI_VERSION}
         subtype = str(r.get("subtype") or "")
         if subtype == "success" and not r.get("is_error"):
-            self.out.completed(usage=usage, metadata=meta)
+            self.out.done(usage=usage, metadata=meta)
         elif subtype == "error_max_turns":
             # the CLI stopped at --max-turns (the request's max_tool_calls): what it did so far, marked incomplete
-            self.out._end("response.incomplete", {"incomplete_details": {"reason": "max_messages"}, "usage": usage,
-                                                  "metadata": {**meta, "claude_stop": subtype}})
+            self.out.stopped("max_messages", usage=usage, metadata={**meta, "claude_stop": subtype})
         else:
             errors = r.get("errors") if isinstance(r.get("errors"), list) else []
             message = str(r.get("result") or "").strip() or "; ".join(str(x) for x in errors) or self.api_error \
@@ -469,7 +401,8 @@ def _run(argv: list[str], env: dict[str, str], prompt: str, mapper: Mapper) -> t
 
 
 def run(out: Emitter) -> None:
-    req, state = Request.load(), State()
+    req = Request.load()
+    state = req.state
     out.ignored(ignored(req))
     try:
         files = req.place_inputs()
@@ -483,7 +416,7 @@ def run(out: Emitter) -> None:
     if not prompt:
         out.failed("invalid_prompt", "the request has no input text or files")
         return
-    servers = Request.mcp_servers()
+    servers = req.mcp_servers()
     labels = [s["label"] for s in servers]
     env = environment(req)
     resume = state.get("session")
@@ -506,7 +439,7 @@ def main() -> None:
         import traceback
         traceback.print_exc()
         if not out.ended:
-            out.failed("harness_error", f"the claude-code package failed: {type(e).__name__}: {e}")
+            out.failed("harness_error", f"the harness-package-builder package failed: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
