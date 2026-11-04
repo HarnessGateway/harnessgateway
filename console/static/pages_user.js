@@ -1,6 +1,6 @@
 // The organization's console: the workbench (everyone) and the organization's settings (admins).
 import { METERS, api, bytes, clientOf, date, esc, meter, short, stream, when } from "./api.js";
-import { $, $$, card, confirm, copy, fail, field, input, kv, modal, pill, pre, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { $, $$, card, confirm, fail, field, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
 import { session } from "./session.js";
 
 export function nav(me) {
@@ -60,18 +60,46 @@ const sessions = { title: "Sessions", async render(el, params, me) {
 } };
 
 // ── Playground ────────────────────────────────────────────────────────────────────────────────────────────────────
-const playground = { title: "Playground", async render(el, params, me) {
-  const models = (await list("/v1/models")).map(m => m.id);
-  const body = { model: models[0] || "shell", input: "Write hello.py that prints hello, then run it.", stream: true };
-  el.innerHTML = top("Playground", "A raw Responses request to this platform, and what comes back.") +
-    `<div class="play"><div class="card out"><div class="ch"><h2>Request</h2><div class="acts"><button class="btn2" data-snip="curl">curl</button><button class="btn2" data-snip="python">Python</button><button class="btn2" data-snip="ts">TypeScript</button></div></div>` +
-    `<div class="row" style="margin-bottom:10px">${select("model", models, body.model)}<button class="btn" id="send">Send</button></div>` +
-    `<textarea id="req" spellcheck="false">${esc(JSON.stringify(body, null, 2))}</textarea></div>` +
-    `<div class="card out"><div class="ch"><h2>Response</h2><div class="acts"><span class="muted" id="st"></span></div></div><div id="events" style="max-height:40%;overflow:auto;margin-bottom:10px"></div><pre id="res">—</pre></div></div>`;
-  const req = $("#req", el), res = $("#res", el), events = $("#events", el), st = $("#st", el);
-  $("select[name=model]", el).addEventListener("change", e => {
-    try { const b = JSON.parse(req.value); b.model = e.target.value; req.value = JSON.stringify(b, null, 2); } catch { /* leave the text */ }
-  });
+// A one-off request: pick the harness, the provider and the model as the chat does, edit the request, send it, and
+// read what comes back beside it. The catalog comes from /v1/models, which every key may read.
+function catalogOf(models) {
+  const harnesses = {};
+  for (const m of models) {
+    const [name, provider, ...rest] = m.id.split("/");
+    const h = harnesses[name] = harnesses[name] || { name, providers: [], model: "" };
+    if (provider) { h.providers.push(provider); h.model = h.model || rest.join("/"); }
+  }
+  return Object.values(harnesses);
+}
+const playground = { title: "Playground", async render(el) {
+  const harnesses = catalogOf(await list("/v1/models"));
+  const body = { model: "", input: "Write hello.py that prints hello, then run it.", stream: true };
+  el.innerHTML = top("Playground", "One request to this platform, as any OpenAI SDK would send it, and the one response that comes back.") +
+    `<div class="route card" id="route">${select("harness", harnesses.map(h => h.name), "", 'title="Harness"')}<span class="sep">/</span>` +
+    `${select("provider", [], "", 'title="Provider"')}<span class="sep">/</span>` +
+    `<input name="model" list="pg-models" spellcheck="false" autocomplete="off" title="Model (empty: the harness's default)"><datalist id="pg-models"></datalist>` +
+    `<button class="btn" id="send" style="margin-left:auto">Send</button></div>` +
+    `<div class="play"><div class="card out"><div class="ch"><h2>Request</h2><span class="muted small">POST /v1/responses</span></div><textarea id="req" spellcheck="false"></textarea></div>` +
+    `<div class="card out"><div class="ch"><h2>Response</h2><div class="acts"><span class="muted" id="st"></span></div></div><div id="events"></div><pre id="res">—</pre></div></div>`;
+  const route = $("#route", el), req = $("#req", el), res = $("#res", el), events = $("#events", el), st = $("#st", el);
+  const hsel = $("[name=harness]", route), psel = $("[name=provider]", route), minput = $("[name=model]", route);
+  const harness = () => harnesses.find(h => h.name === hsel.value);
+  const picked = () => { const h = harness(); return h && h.providers.length ? [h.name, psel.value, minput.value.trim()].filter(Boolean).join("/") : hsel.value; };
+  const sync = () => {                                   // the pickers write the request's model
+    try { const b = JSON.parse(req.value); b.model = picked(); req.value = JSON.stringify(b, null, 2); } catch { /* leave the text */ }
+  };
+  const fillProviders = () => {
+    const h = harness(), solo = !h || !h.providers.length;
+    psel.innerHTML = (h ? h.providers : []).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+    psel.hidden = solo; $$(".sep", route).forEach(x => { x.hidden = solo; }); minput.hidden = solo;
+    minput.value = ""; minput.placeholder = h && h.model ? `${h.model} (default)` : "model";
+    $("#pg-models", el).innerHTML = h && h.model ? `<option value="${esc(h.model)}">` : "";
+    sync();
+  };
+  req.value = JSON.stringify(body, null, 2);
+  if (!harnesses.length) { route.innerHTML = `<span class="muted">No harness installed yet: add one under Setup → Harnesses.</span>`; return; }
+  hsel.addEventListener("change", fillProviders); psel.addEventListener("change", sync); minput.addEventListener("input", sync);
+  fillProviders();
   $("#send", el).addEventListener("click", async () => {
     let b; try { b = JSON.parse(req.value); } catch (e) { fail(new Error("the request is not valid JSON: " + e.message)); return; }
     events.innerHTML = ""; res.textContent = "…"; st.textContent = "sending"; $("#send", el).disabled = true;
@@ -92,18 +120,6 @@ const playground = { title: "Playground", async render(el, params, me) {
         res.textContent = JSON.stringify(r, null, 2); st.textContent = r.status;
       }
     } catch (e) { res.textContent = e.message; st.textContent = "error"; } finally { $("#send", el).disabled = false; }
-  });
-  el.addEventListener("click", e => {
-    const s = e.target.closest("[data-snip]");
-    if (!s) return;
-    let b; try { b = JSON.parse(req.value); } catch { b = {}; }
-    const base = me.api.replace(/\/$/, "") + "/v1", j = JSON.stringify(b, null, 2);
-    const snippets = {
-      curl: `curl ${base}/responses -H "authorization: Bearer $HG_API_KEY" -H 'content-type: application/json' -d '${j.replace(/'/g, "'\\''")}'`,
-      python: `from openai import OpenAI\nclient = OpenAI(base_url="${base}", api_key=os.environ["HG_API_KEY"])\nr = client.responses.create(**${j})\nprint(r.output_text)`,
-      ts: `import OpenAI from "openai";\nconst client = new OpenAI({ baseURL: "${base}", apiKey: process.env.HG_API_KEY });\nconst r = await client.responses.create(${j});\nconsole.log(r.output_text);`,
-    };
-    modal({ title: `As ${s.dataset.snip}`, wide: true, body: pre(snippets[s.dataset.snip]) + `<p class="muted small">Use an API key from the organization (admins: API keys page). The console's own keys never leave the server.</p>`, submit: "Copy", onSubmit: () => copy(snippets[s.dataset.snip]) });
   });
 } };
 
@@ -284,14 +300,14 @@ const providers = { title: "Providers", async render(el, params, me) {
     `<button class="btn" id="add">Add provider</button>`) +
     `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` }, { h: "API shape", cell: p => pill(p.api, "b") },
       { h: "Base URL", cell: p => `<span class="mono">${esc(p.base_url)}</span>` }, { h: "Updated", cell: p => when(p.updated_at) },
-      { h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${p.name}" data-api="${p.api}" data-url="${esc(p.base_url)}">Replace key</button><button class="btn2 danger" data-del="${p.name}">Delete</button>` }],
+      { h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${p.name}" data-api="${p.api}" data-url="${esc(p.base_url)}">Edit</button><button class="btn2 danger" data-del="${p.name}">Delete</button>` }],
       rows, "No provider yet. Harnesses that call a model need one.")}</div>`;
   const dialog = (name = "", apiShape = "anthropic", url = "") => modal({ title: name ? `Provider ${name}` : "Add provider", submit: "Save", body:
     field("Name", input("name", name, `${name ? "readonly" : ""} pattern="[a-z0-9][a-z0-9._\\-]*" required placeholder="anthropic"`)) +
     field("API shape", select("api", [["anthropic", "anthropic (Messages)"], ["openai", "openai (Responses / Chat Completions)"], ["google", "google (Gemini)"]], apiShape)) +
     field("Base URL", input("base_url", url || { anthropic: "https://api.anthropic.com", openai: "https://api.openai.com", google: "https://generativelanguage.googleapis.com" }[apiShape], 'required')) +
-    field("API key", input("key", "", 'type="password" autocomplete="off" required'), "write-only"),
-    onSubmit: async d => { await api("PUT", `/v1/providers/${d.name}`, { api: d.api, base_url: d.base_url, key: d.key }); toast("Saved", "ok"); rerender(); } });
+    field("API key", input("key", "", `type="password" autocomplete="off"${name ? ' placeholder="leave empty to keep the stored key"' : " required"}`), "write-only; never shown again"),
+    onSubmit: async d => { await api("PUT", `/v1/providers/${d.name}`, { api: d.api, base_url: d.base_url, ...(d.key ? { key: d.key } : {}) }); toast("Saved", "ok"); rerender(); } });
   $("#add", el).addEventListener("click", () => dialog());
   el.addEventListener("click", async e => {
     const ed = e.target.closest("[data-edit]"); if (ed) { dialog(ed.dataset.edit, ed.dataset.api, ed.dataset.url); return; }

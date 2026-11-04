@@ -34,7 +34,7 @@ Without `HG_OPERATOR_KEY` the deployer console is off. The server needs Python 3
 
 The modules follow a first sign-in: set it up, try it, let applications in, watch what it does.
 
-**Setup.** *Providers*: API shape, base URL, key (write-only). *Harnesses*: the installed packages and your
+**Setup.** *Providers*: API shape, base URL, key (write-only; leave it empty when editing to keep the stored one). *Harnesses*: the installed packages and your
 drafts, one card each. One harness is built in: `harness-package-builder`, Claude Code seeded with the skill that
 writes packages, installed by `init`. Every other harness is one someone wrote: **New harness** copies the template
 (the `shell` package, `HG_TEMPLATE_DIR`) into a draft under the name you give, and the draft editor (file tree,
@@ -50,11 +50,9 @@ as installed, its manifest, settings, secrets (write-only, "set" marks, clear) a
 interrupts it (`POST /v1/responses/{id}/cancel`) and continues from where it stopped. **Rewind** on one of your
 messages takes it back to edit and resend; **Branch** on a reply opens a new chat that continues from it. Both send the
 next message with `previous_response_id` naming the earlier reply, and the platform forks the session from the state
-saved after it; the earlier branch keeps its session under Sessions. *Playground* sends a raw
-Responses request (streamed or not), shows the events as they arrive and the final Response, and renders the same
-call as curl, Python or TypeScript.
+saved after it; the earlier branch keeps its session under Sessions. *Playground* is for one request: pick the harness, the provider and the model as in the chat, edit the Responses request, send it (streamed or not), and read the events and the final Response beside it.
 
-**Access.** *API keys*: create (shown once), revoke. *Members*: console users of the organization and their role.
+**Access.** *API keys*: create (shown once, with a copy-to-clipboard button), revoke. *Members*: console users of the organization and their role.
 
 **Observability.** *Sessions* lists every session of the organization with its harness, turns, state, saved size and
 last turn and the client that created it, whichever application that was: the chat, your own application on the
