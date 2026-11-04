@@ -189,6 +189,7 @@ export const session = { title: "Session", async render(el, params, me) {
       `<div class="kv"><span class="k">Workspace</span><span class="v">${bytes(md.bytes)}</span></div>` +
       `<div class="kv"><span class="k">Last active</span><span class="v">${esc(when(container.last_active_at))}</span></div>` +
       `<div class="kv"><span class="k">Session</span><span class="v mono">${esc(sid)}</span></div>` +
+      (md.forked_from ? `<div class="kv"><span class="k">Forked from</span><span class="v mono">${esc(md.forked_from)}</span></div>` : "") +
       `<div class="acts" style="margin-left:auto">` +
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : "") +
       (admin && md.harness === "harness-package-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +

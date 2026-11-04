@@ -88,7 +88,7 @@ is for the people who maintain it:
 | `run` | an executable, in any language: one turn. Read the request, run the CLI, print events. In Python with hgkit (`#!/usr/bin/env python3`): `Request.load()` → the CLI's command and environment; run it; its output → `out.say`, `out.think`, `out.ran`, `out.wrote` / `out.edited`, `out.called`, `out.used`; `req.state` for the CLI's session id; one terminal event (`out.done`, `out.stopped`, `out.failed`) |
 | `seeds/home/` | tailored only: the agent's standing configuration, in the CLI's own files (instructions, permission rules, hooks, skills). Reseeded in every new sandbox, so it always wins |
 | `seeds/workspace/` | tailored only, when the agent needs a starter project or reference files |
-| `README.md` | Files; The command; Request fields (a table: field → where it goes, and the ignored ones); Output mapping (CLI output → events); Known limits; Tests. Tailored: also Purpose; What it may and may not do; Operator settings |
+| `README.md` | Files; The command; Request fields (a table: field → where it goes, and the ignored ones); Output mapping (CLI output → events); Known limits (among them any state the CLI keeps outside the sandbox, which a rewind of the session cannot restore); Tests. Tailored: also Purpose; What it may and may not do; Operator settings |
 | `tests/` | the recorded CLI output as fixtures and a `test_run.py` that runs the mapper on them and checks every line with `hgkit.check` |
 
 A vanilla package has no `seeds/` unless the CLI cannot run headless without a config file; then the minimum, and

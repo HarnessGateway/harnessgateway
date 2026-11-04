@@ -52,7 +52,8 @@ class Containers:
                 "metadata": {"harness": row["harness"], "model": row["model"], "turns": str(row["turns"]),
                              "state": _state(row), "store": "true" if row["store"] else "false",
                              "bytes": str(row["snapshot_bytes"]), "last_response_id": row.get("last_response_id") or "",
-                             "created_by": row.get("created_by") or ""}}
+                             "created_by": row.get("created_by") or "",
+                             **({"forked_from": row["forked_from"]} if row.get("forked_from") else {})}}
 
     async def list(self, org_id: str, limit: int, after: str | None, order: str) -> dict[str, Any]:
         limit = check_limit(limit)

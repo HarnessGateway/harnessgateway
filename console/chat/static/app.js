@@ -67,7 +67,10 @@ function renderAssistant(c, turn, live, ti) {
   if (turn.error) html += `<div class="error">${esc(turn.error)}</div>`;
   else if (turn.status && turn.status !== "completed") html += `<div class="status">${esc(turn.status === "cancelled" ? (turn.interrupted ? "Interrupted" : "Stopped") : turn.status)}</div>`;
   if (live && (!turn.segments.length || turn.segments.at(-1).t === "text")) html += `<span class="dot"></span>`;
-  if (!live && replyText(turn)) html += `<div class="actions"><button data-reply="copy" title="Copy">${ic(I.copy, 16)}<span></span></button></div>`;
+  if (!live && (replyText(turn) || turn.rid)) html += `<div class="actions">` +
+    (replyText(turn) ? `<button data-reply="copy" title="Copy">${ic(I.copy, 16)}<span></span></button>` : "") +
+    (turn.rid && turn.status ? `<button data-reply="branch" title="Branch from here: a new chat that continues from this reply; this one stays as it is">${ic(I.branch, 16)}<span>Branch</span></button>` : "") +
+    `</div>`;
   return html;
 }
 function renderChats() {
@@ -116,10 +119,14 @@ function render() {
   $("harness").parentElement.title = locked ? "A chat keeps its harness: start a new chat for another" : "Harness";
   if (blank) col.innerHTML = `<div class="hello"><h1>What should we build?</h1><p>The agent works in its own sandbox. What it makes opens on the right.</p></div>`;
   else {
+    const busy = !!liveTurn(c);
     col.innerHTML = c.turns.map((t, i) => t.role === "user"
-      ? `<div class="msg user"><div class="bubble">${esc(t.text)}</div>` + (t.attachments && t.attachments.length ? `<div class="attached">` + t.attachments.map(a => `<span class="tile" style="cursor:default">${badge(a.name)}<span class="nm">${esc(a.name)}</span></span>`).join("") + `</div>` : "") + `</div>`
+      ? `<div class="msg user" id="t${i}"><div class="bubble">${esc(t.text)}</div>` + (t.attachments && t.attachments.length ? `<div class="attached">` + t.attachments.map(a => `<span class="tile" style="cursor:default">${badge(a.name)}<span class="nm">${esc(a.name)}</span></span>`).join("") + `</div>` : "") +
+        `<div class="actions"><button data-user="copy" title="Copy">${ic(I.copy, 16)}<span></span></button>` +
+        (busy ? "" : `<button data-user="rewind" title="Rewind: take this message back, edit it and send again; the conversation continues from before it, in a new branch">${ic(I.rewind, 16)}<span>Rewind</span></button>`) + `</div></div>`
       : `<div class="msg assistant" id="t${i}">${renderAssistant(c, t, isLive(t), i)}</div>`).join("");
     c.turns.forEach((t, i) => { if (t.role === "assistant") enhance($("t" + i), { diagrams: !isLive(t) }); });
+    if (c.rewound) col.insertAdjacentHTML("beforeend", `<div class="rewound">${esc(c.rewound)}</div>`);
   }
   $("log").scrollTop = $("log").scrollHeight;
   renderPanel();
@@ -230,7 +237,7 @@ async function follow(c, turn, url, init, before) {
         if (!text.startsWith("data: ")) continue;
         const ev = JSON.parse(text.slice(6));
         if (ev.type === "start") {
-          turn.rid = ev.id; c.session = ev.session || c.session;
+          turn.rid = ev.id; c.session = ev.session || c.session; c.rewound = null;
           if (turn === lastAssistant(c)) c.previous = ev.id;
           if (turn.stopping) post("api/cancel", { id: ev.id }).catch(() => {});
           save(); renderChats();
@@ -285,6 +292,34 @@ async function send() {
   await follow(c, turn, "api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, input: text, previous: running ? running.rid : c.previous, attachments: attachments.map(a => a.id) }) }, before);
   if (turn.status === "completed") remember(picked.provider, picked.model);
+}
+// Rewind and branch are the platform's fork: a message sent with previous_response_id naming an earlier reply continues
+// from the state saved after that reply, in a new session, and the earlier branch keeps its own. Nothing here is special
+// to the chat: any client gets the same by naming an earlier response. The two differ only in what this page shows.
+
+/** Rewind: take the user message at index i back. The view ends before it, its text returns to the composer to edit
+ *  and send again, and that send continues from the reply before it (or starts the chat over when there is none). */
+function rewind(c, i) {
+  const turn = c.turns[i];
+  if (!turn || turn.role !== "user" || liveTurn(c)) return;
+  const before = [...c.turns.slice(0, i)].reverse().find(t => t.role === "assistant" && t.rid);
+  c.turns = c.turns.slice(0, i);
+  c.previous = before ? before.rid : null;
+  if (!before) { c.session = null; files = []; resetPanel(); }
+  c.rewound = before ? "Rewound. The next message continues from the reply above, in a new branch; the earlier branch stays under Sessions." : null;
+  $("input").value = turn.text; grow();
+  save(); render(); $("input").focus();
+}
+
+/** Branch: a new chat that continues from the assistant reply at index i; this chat stays as it is. */
+function branch(c, i) {
+  const turn = c.turns[i];
+  if (!turn || turn.role !== "assistant" || !turn.rid) return;
+  const copy = { id: newId(), title: `${c.title} (branch)`, model: c.model, previous: turn.rid, session: null,
+                 turns: JSON.parse(JSON.stringify(c.turns.slice(0, i + 1))),
+                 rewound: "A branch. The next message continues from the reply above, in a new session; the chat it came from is unchanged." };
+  chats.unshift(copy); current = copy.id; files = []; resetPanel();
+  save(); render(); $("input").focus();
 }
 function stop() {
   const t = liveTurn(chat());
@@ -387,8 +422,16 @@ function wire() {
     if (open) { e.preventDefault(); openFile(open.dataset.open); return; }
     const reply = e.target.closest("[data-reply]");
     if (reply) {
-      const turn = chat()?.turns[+reply.closest(".msg").id.slice(1)];
-      if (turn) copyText(replyText(turn)).then(() => flash(reply));
+      const c = chat(), i = +reply.closest(".msg").id.slice(1), turn = c?.turns[i];
+      if (turn && reply.dataset.reply === "copy") copyText(replyText(turn)).then(() => flash(reply));
+      else if (turn && reply.dataset.reply === "branch") branch(c, i);
+      return;
+    }
+    const user = e.target.closest("[data-user]");
+    if (user) {
+      const c = chat(), i = +user.closest(".msg").id.slice(1), turn = c?.turns[i];
+      if (turn && user.dataset.user === "copy") copyText(turn.text).then(() => flash(user));
+      else if (turn && user.dataset.user === "rewind") rewind(c, i);
       return;
     }
     const act = e.target.closest(".cb [data-act]");

@@ -1,7 +1,9 @@
 """Turns from the caller's side: a Responses request in, a Response out (SPEC §4, §6.3).
 
 `Turns.create` routes `model` to a harness and a provider, resolves the turn's MCP servers (taking the caller's own
-credentials out of the request), lets extensions admit it, and queues it on its session. `EventBus` wakes every stream
+credentials out of the request), lets extensions admit it, and queues it on its session: the one `previous_response_id`
+names when that response is the session's last, else a fork, a new session restored from the state saved after that
+response (its checkpoint), as the Responses API's tree of responses means it. `EventBus` wakes every stream
 following a turn, across API replicas, through Postgres NOTIFY. `record_events` and `conclude` are the writes every
 side of a turn shares."""
 from __future__ import annotations
@@ -185,10 +187,10 @@ class Turns:
         harness = await tx.one("SELECT * FROM harnesses WHERE name = %s", path.harness)
         if not harness:
             raise NotFound(f"no harness {path.harness} installed", param="model", code="model_not_found")
-        prev, session = None, None
+        prev, session, fork = None, None, None
         if routing.previous_response_id:
-            prev = await tx.one("SELECT session_id, provider_id, provider_model FROM turns WHERE id = %s",
-                                routing.previous_response_id)
+            prev = await tx.one("SELECT id, session_id, seq, status, provider_id, provider_model, snapshot_key, files_key "
+                                "FROM turns WHERE id = %s", routing.previous_response_id)
             if not prev:
                 raise NotFound(f"no response {routing.previous_response_id}", param="previous_response_id")
             session = await tx.get("SELECT * FROM sessions WHERE id = %s FOR UPDATE", prev["session_id"])
@@ -198,6 +200,8 @@ class Turns:
             if session["harness"] != path.harness:
                 raise Conflict(f"that session runs {session['harness']}, not {path.harness}: a session keeps its harness; "
                                "the provider and model may change", param="model", code="harness_mismatch")
+            if prev["seq"] != session["turns"]:              # an earlier response: continue from the state after it
+                fork = await self._checkpoint(p.org_id, prev, session)
         manifest = Manifest.model_validate(session["manifest"] if session else harness["manifest"])
         missing = [k for k, s in manifest.settings.items() if s.required and s.default is None and k not in
                    harness["settings"]] + [k for k, s in manifest.secrets.items() if s.required and k not in harness["secrets"]]
@@ -218,7 +222,14 @@ class Turns:
         org = await tx.get("SELECT egress FROM orgs WHERE id = %s", p.org_id)
         resolved = mcp.resolve(manifest.mcp, body, egress.Policy.of(org["egress"], manifest.run_entries()))
         await self.objects.put(request_key, dumps(resolved.body).encode(), org_id=p.org_id, kind="request")
-        if session is None:
+        if fork is not None and session is not None:   # a new session, pinned like its parent, from the checkpoint
+            parent, session = session, {"id": fork["id"], "turns": 0}
+            await tx.run("INSERT INTO sessions (id, org_id, harness, digest, manifest, provider_id, model, store, "
+                         "snapshot_key, files_key, snapshot_bytes, forked_from) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                         "%s, %s, %s)", session["id"], p.org_id, path.harness, parent["digest"], parent["manifest"],
+                         provider_id, model, routing.store, fork["snapshot_key"], fork["files_key"], fork["bytes"],
+                         routing.previous_response_id)
+        elif session is None:
             session = {"id": ids.new("session"), "turns": 0}
             await tx.run("INSERT INTO sessions (id, org_id, harness, digest, manifest, provider_id, model, store) VALUES "
                          "(%s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, path.harness, harness["digest"],
@@ -240,6 +251,29 @@ class Turns:
                                     metadata={"session_id": session["id"]})
         await record_events(tx, turn, [{"type": "response.created", "response": partial}])
         return turn
+
+    async def _checkpoint(self, org_id: str, prev: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+        """The state saved after `prev`, copied under the new session so the parent's deletion cannot take it away:
+        {id, snapshot_key, files_key, bytes} for the session about to be created."""
+        rid = prev["id"]
+        if not Status(prev["status"]).final:
+            raise Conflict(f"{rid} is still running; continue from it once it has ended", param="previous_response_id")
+        if prev["snapshot_key"] is None:
+            if session["saving_turn_id"] == rid:
+                raise Conflict(f"the state after {rid} is still being saved; try again shortly",
+                               param="previous_response_id")
+            if session["snapshot_seq"] > prev["seq"]:        # ended without a save of its own, before a later one landed
+                raise Conflict(f"the state after {rid} was not saved, so nothing can continue from it",
+                               param="previous_response_id")
+        sid = ids.new("session")
+        if prev["snapshot_key"] is None:                     # the session had no state yet: the fork starts from the seeds
+            return {"id": sid, "snapshot_key": None, "files_key": None, "bytes": 0}
+        stem = f"{prev['seq']:08d}-fork"
+        snapshot = org_key(org_id, "sessions", sid, "snapshots", f"{stem}.tgz")
+        listing = org_key(org_id, "sessions", sid, "snapshots", f"{stem}.json")
+        size = await self.objects.copy(prev["snapshot_key"], snapshot, org_id=org_id, kind="snapshot")
+        await self.objects.copy(prev["files_key"], listing, org_id=org_id, kind="snapshot")
+        return {"id": sid, "snapshot_key": snapshot, "files_key": listing, "bytes": size}
 
     @staticmethod
     async def _provider(tx: Tx, manifest: Manifest, path: contract.ModelPath, harness: dict[str, Any],
