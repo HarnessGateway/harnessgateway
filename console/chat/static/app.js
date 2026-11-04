@@ -122,7 +122,8 @@ function render() {
     const busy = !!liveTurn(c);
     col.innerHTML = c.turns.map((t, i) => t.role === "user"
       ? `<div class="msg user" id="t${i}"><div class="bubble">${esc(t.text)}</div>` + (t.attachments && t.attachments.length ? `<div class="attached">` + t.attachments.map(a => `<span class="tile" style="cursor:default">${badge(a.name)}<span class="nm">${esc(a.name)}</span></span>`).join("") + `</div>` : "") +
-        (busy ? "" : `<div class="actions"><button data-user="rewind" title="Rewind: take this message back, edit it and send again; the conversation continues from before it, in a new branch">${ic(I.rewind, 16)}<span>Rewind</span></button></div>`) + `</div>`
+        `<div class="actions"><button data-user="copy" title="Copy">${ic(I.copy, 16)}<span></span></button>` +
+        (busy ? "" : `<button data-user="rewind" title="Rewind: take this message back, edit it and send again; the conversation continues from before it, in a new branch">${ic(I.rewind, 16)}<span>Rewind</span></button>`) + `</div></div>`
       : `<div class="msg assistant" id="t${i}">${renderAssistant(c, t, isLive(t), i)}</div>`).join("");
     c.turns.forEach((t, i) => { if (t.role === "assistant") enhance($("t" + i), { diagrams: !isLive(t) }); });
     if (c.rewound) col.insertAdjacentHTML("beforeend", `<div class="rewound">${esc(c.rewound)}</div>`);
@@ -426,8 +427,13 @@ function wire() {
       else if (turn && reply.dataset.reply === "branch") branch(c, i);
       return;
     }
-    const user = e.target.closest("[data-user=rewind]");
-    if (user) { const c = chat(); if (c) rewind(c, +user.closest(".msg").id.slice(1)); return; }
+    const user = e.target.closest("[data-user]");
+    if (user) {
+      const c = chat(), i = +user.closest(".msg").id.slice(1), turn = c?.turns[i];
+      if (turn && user.dataset.user === "copy") copyText(turn.text).then(() => flash(user));
+      else if (turn && user.dataset.user === "rewind") rewind(c, i);
+      return;
+    }
     const act = e.target.closest(".cb [data-act]");
     if (act) codeAction(act, view => openPanel("view", view));
   });
