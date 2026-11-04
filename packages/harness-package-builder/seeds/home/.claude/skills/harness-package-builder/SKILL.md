@@ -77,14 +77,16 @@ beside it as its own package (default: yes, so the organization can tailor again
 
 ## Working with the person
 
-Each turn is one headless run, so you cannot wait for an answer inside a turn: ask by ending your reply, numbered,
-with a proposed default for each question, three to six at most, only what changes what you will build
-(`reference/tailoring.md` has the tailoring questions). Send the plan as a short table and ask for a go. Then work
-**one stage per turn** and end each turn with a short status and what comes next: every turn's end is a checkpoint
-the person can rewind to or branch from, and a long turn cannot be steered. Keep `BUILD.md` in the package folder
-current as you go (stage reached, the pinned version, decisions, hosts observed, what was recorded, what is left):
-it is how a resumed, rewound or forked session, or a turn that was interrupted, knows where it is. Explain each
-tailoring choice in one sentence as you make it; the README is the lasting version.
+Each turn is one headless run, so you cannot wait for an answer inside a turn: ask by ending your reply. Ask only
+what changes what you will build, numbered, with a proposed default for each, three to six at most
+(`reference/tailoring.md` has the tailoring questions); for a tailored package send the plan as a short table and
+ask for a go. Then **build the whole package in one turn**: a vanilla package from the name alone, a tailored one
+from the go. Stop between the stages below only when the person asks to go step by step, or when a stage needs an
+answer you do not have. Keep `BUILD.md` in the package folder current as you go (stage reached, the pinned version,
+decisions, hosts observed, what was recorded, what is left): every turn's end is a checkpoint the person can rewind
+to or branch from, and the journal is how a resumed, rewound, forked or interrupted session knows where it is. End
+with a short status. Explain each tailoring choice in one sentence as you make it; the README is the lasting
+version.
 
 ## The stages
 
@@ -92,8 +94,8 @@ tailoring choice in one sentence as you make it; the README is the lasting versi
 and how it is installed on Linux; its headless mode and machine-readable output; how a session is resumed by id and
 where its store lives; how it takes a base URL, an API key and a model, and which API shapes it speaks; how prompts,
 telemetry and update checks are switched off; where it reads instruction files, permission rules, hooks, MCP
-config. Your knowledge may be stale: the current docs and `--help` win. End the turn with a findings table (the
-version you will pin, the hosts you expect, the mechanisms) and, for a tailored package, the plan.
+config. Your knowledge may be stale: the current docs and `--help` win. Write the findings (the version you will
+pin, the hosts you expect, the mechanisms) into `BUILD.md`; for a tailored package they are the plan you send.
 
 **2. Install and record.** Install the pinned release the documented way into `/tmp/tools`; scratch runs stay under
 `/tmp` (the workspace is snapshotted; only the package belongs in it). Run the CLI against this session's provider
@@ -102,7 +104,7 @@ model. **Observe egress rather than guess it:** run both the install and the CLI
 which logs every host they ask for; those lists are `install.egress` and `run.egress`. Record as fixtures: a text
 turn, a tool turn, a resumed turn, a turn you kill mid-way (SIGTERM) and the turn that resumes it, a provider error,
 a stopped-short turn. A CLI whose shape differs from the provider's cannot be run here: write the mapping from its
-documented output, say so, and keep the fixtures to what you could record. End the turn with what was recorded.
+documented output, say so, and keep the fixtures to what you could record. Note what was recorded in `BUILD.md`.
 
 **3. Write and validate.** `run` from the template; the mapping in `reference/request-fields.md` and
 `reference/events.md`; both continuity paths; `out.ignored([...])` for fields the CLI cannot honour; the CLI's raw

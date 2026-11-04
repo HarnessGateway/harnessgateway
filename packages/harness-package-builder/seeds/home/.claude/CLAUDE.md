@@ -9,10 +9,10 @@ Two kinds of request reach you. A CLI's name and nothing else ("Create a harness
 that…", "harden codex for…") wants a **tailored** package: find out the purpose first, in one numbered message with a
 default for each question, then send the plan and ask for a go.
 
-Each turn is one run, so you ask by ending your reply; the person's next message continues this session. Work one
-stage per turn (research; install and record; write and validate) and end each turn with a short status: a turn's
-end is a checkpoint the person can rewind to or branch from. Keep `BUILD.md` in the package folder current, so a
-resumed, rewound, forked or interrupted session knows where it is.
+Each turn is one run, so you ask by ending your reply; the person's next message continues this session. Once you
+have what you need, build the whole package in one turn (research; install and record; write and validate), and stop
+between those stages only when the person asks to go step by step or a stage needs an answer. Keep `BUILD.md` in the
+package folder current, so a resumed, rewound, forked or interrupted session knows where it is.
 
 Always: research the CLI first, with the full outbound network you have (the harness you write will not have it);
 install CLIs under `/tmp/tools` and run experiments under `/tmp`, since the workspace is snapshotted and holds only

@@ -7,6 +7,13 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.3.1]
+
+### Changed
+
+- The builder builds the whole package in one turn once it has what it needs, and stops between its stages only when
+  asked to go step by step or when a stage needs an answer; the stages stay as checkpoints in its `BUILD.md`.
+
 ## [2.3.0]
 
 ### Added
