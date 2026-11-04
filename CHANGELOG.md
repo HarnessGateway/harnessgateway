@@ -11,8 +11,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 
 ### Changed
 
-- The builder builds the whole package in one turn once it has what it needs, and stops between its stages only when
-  asked to go step by step or when a stage needs an answer; the stages stay as checkpoints in its `BUILD.md`.
+- The builder's skill is a skill again: what a harness package is and how to build one, with the questions to ask
+  the person. The stages, the build journal and the per-turn pacing of 2.3.0 are gone.
 
 ## [2.3.0]
 
