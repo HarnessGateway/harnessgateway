@@ -220,38 +220,7 @@ class Request:
     def transcript(self, limit: int = 60_000) -> str:
         """The history as plain text a CLI can be given as context: what each side said, the commands run, the files
         changed, the tools called; the most recent `limit` characters."""
-        lines: list[str] = []
-        for turn in self.history():
-            for item in turn.get("input") or []:
-                role = item.get("role", "user") if item.get("type", "message") == "message" else ""
-                text = _text(item.get("content")) if role else ""
-                names = [p.get("filename") or p.get("file_id") or "image" for p in (item.get("content") or [])
-                         if isinstance(p, dict) and p.get("type") in FILE_PARTS] if isinstance(item.get("content"), list) else []
-                if text or names:
-                    lines.append(f"{'User' if role == 'user' else 'Instructions'}: {text}"
-                                 + (f" [attached: {', '.join(names)}]" if names else ""))
-            for item in turn.get("output") or []:
-                kind = item.get("type")
-                if kind == "message":
-                    lines.append(f"Assistant: {_text(item.get('content'))}")
-                elif kind == "shell_call":
-                    lines.append("Ran: " + " && ".join((item.get("action") or {}).get("commands") or []))
-                elif kind == "shell_call_output":
-                    for r in item.get("output") or []:
-                        o = r.get("outcome") or {}
-                        tail = ((r.get("stdout") or "") + (r.get("stderr") or "")).strip()
-                        lines.append(f"  -> {'timeout' if o.get('type') == 'timeout' else 'exit ' + str(o.get('exit_code', 0))}"
-                                     + (f": {tail[-400:]}" if tail else ""))
-                elif kind == "apply_patch_call":
-                    op = item.get("operation") or {}
-                    lines.append(f"{VERBS.get(str(op.get('type')), 'Changed')}: {op.get('path', '')}")
-                elif kind in ("function_call", "mcp_call"):
-                    name = f"{item.get('server_label')}.{item.get('name')}" if kind == "mcp_call" else item.get("name", "tool")
-                    lines.append(f"Used: {name}({str(item.get('arguments', ''))[:300]})")
-                elif kind == "function_call_output":
-                    lines.append(f"  -> {str(item.get('output', ''))[-400:]}")
-            if turn.get("status") == "cancelled":
-                lines.append("(this turn was interrupted before it finished)")
+        lines = [line for turn in self.history() for line in _transcript_lines(turn)]
         text = "\n".join(lines)
         return text if len(text) <= limit else "…" + text[-limit:]
 
@@ -285,6 +254,50 @@ class Request:
                 continue
             names.append(target.name)
         return names
+
+
+def _transcript_lines(turn: dict[str, Any]) -> list[str]:
+    """One history turn as transcript lines: who said what, then what the agent did."""
+    lines: list[str] = []
+    for item in turn.get("input") or []:
+        if item.get("type", "message") != "message":
+            continue
+        content, role = item.get("content"), item.get("role", "user")
+        names = [p.get("filename") or p.get("file_id") or "image" for p in content
+                 if isinstance(p, dict) and p.get("type") in FILE_PARTS] if isinstance(content, list) else []
+        text = _text(content)
+        if text or names:
+            lines.append(f"{'User' if role == 'user' else 'Instructions'}: {text}"
+                         + (f" [attached: {', '.join(names)}]" if names else ""))
+    for item in turn.get("output") or []:
+        lines += _action_lines(item)
+    if turn.get("status") == "cancelled":
+        lines.append("(this turn was interrupted before it finished)")
+    return lines
+
+
+def _action_lines(item: dict[str, Any]) -> list[str]:
+    kind = item.get("type")
+    if kind == "message":
+        return [f"Assistant: {_text(item.get('content'))}"]
+    if kind == "shell_call":
+        return ["Ran: " + " && ".join((item.get("action") or {}).get("commands") or [])]
+    if kind == "shell_call_output":
+        out = []
+        for r in item.get("output") or []:
+            o, tail = r.get("outcome") or {}, ((r.get("stdout") or "") + (r.get("stderr") or "")).strip()
+            end = "timeout" if o.get("type") == "timeout" else f"exit {o.get('exit_code', 0)}"
+            out.append(f"  -> {end}" + (f": {tail[-400:]}" if tail else ""))
+        return out
+    if kind == "apply_patch_call":
+        op = item.get("operation") or {}
+        return [f"{VERBS.get(str(op.get('type')), 'Changed')}: {op.get('path', '')}"]
+    if kind in ("function_call", "mcp_call"):
+        name = f"{item.get('server_label')}.{item.get('name')}" if kind == "mcp_call" else item.get("name", "tool")
+        return [f"Used: {name}({str(item.get('arguments', ''))[:300]})"]
+    if kind == "function_call_output":
+        return [f"  -> {str(item.get('output', ''))[-400:]}"]
+    return []
 
 
 def _free(root: Path, name: str, content: Path | bytes) -> Path:
