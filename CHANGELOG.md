@@ -13,6 +13,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 
 - Providers: the console's **Replace key** is **Edit**, and `PUT /v1/providers/{name}` on an existing provider may
   leave `key` out to keep the stored one; a new provider still needs it.
+- API keys and initial passwords, shown once at creation, have a copy-to-clipboard button beside them.
 
 ## [2.2.0]
 

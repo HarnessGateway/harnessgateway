@@ -60,8 +60,11 @@ export function modal({ title, body, submit = "Save", wide = false, onSubmit = n
 }
 export const confirm = (title, text, submit = "Delete") => modal({ title, body: `<p>${esc(text)}</p>`, submit, danger: true, onSubmit: () => true });
 export function reveal(title, label, secret, note) {
-  return modal({ title, body: `<p>${esc(note)}</p>${field(label, `<div class="secret">${esc(secret)}</div>`)}`,
-                 submit: "Done", onSubmit: () => true });
+  const shown = modal({ title, submit: "Done", onSubmit: () => true, body: `<p>${esc(note)}</p>` +
+    field(label, `<div class="secret-row"><div class="secret">${esc(secret)}</div>` +
+                 `<button type="button" class="ib" data-copy title="Copy to clipboard">${ic(I.copy, 16)}</button></div>`) });
+  $(".backdrop [data-copy]")?.addEventListener("click", () => copy(secret));
+  return shown;
 }
 // Renders the current page again (through the router, on a fresh element).
 export const rerender = () => window.dispatchEvent(new Event("hashchange"));
@@ -88,5 +91,6 @@ export const I = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M17 11a3 3 0 1 0 0-6M22 20a6 6 0 0 0-5-5.9"/>',
   side: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M10 4v16"/>',
   tag: '<path d="M20 12 12 20 3 11V4h7l10 8Z"/><path d="M7 8h.01"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
 };
 export const ic = (d, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;

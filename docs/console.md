@@ -54,7 +54,7 @@ saved after it; the earlier branch keeps its session under Sessions. *Playground
 Responses request (streamed or not), shows the events as they arrive and the final Response, and renders the same
 call as curl, Python or TypeScript.
 
-**Access.** *API keys*: create (shown once), revoke. *Members*: console users of the organization and their role.
+**Access.** *API keys*: create (shown once, with a copy-to-clipboard button), revoke. *Members*: console users of the organization and their role.
 
 **Observability.** *Sessions* lists every session of the organization with its harness, turns, state, saved size and
 last turn and the client that created it, whichever application that was: the chat, your own application on the
