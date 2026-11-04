@@ -68,7 +68,8 @@ messages takes it back, puts its text in the composer to edit and resend, and th
 message that names an earlier reply in `previous_response_id` is the platform's fork: a new session restored from the
 state saved after that reply (workspace, the agent's memory), while the earlier branch keeps its own session. Picking
 another **harness** in the header continues the chat on it: a fork onto that harness, with the workspace and the
-conversation so far. Nothing
+conversation so far. A fork asked for while the previous turn's state is still being saved waits for the save (the
+platform answers 409 until it lands; this server retries). Nothing
 in it is special to this page: any client rewinds or branches the same way, by naming an earlier response. Workspace files are read from the session's last save; after a
 turn, the page waits for the save to land (`metadata.state` of `GET /v1/containers/{id}`), then opens what the turn
 made.
