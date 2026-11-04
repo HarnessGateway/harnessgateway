@@ -7,6 +7,21 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.2.0]
+
+### Added
+
+- Rewind, with fork semantics, as the Responses API means it: `previous_response_id` naming an earlier response of a
+  session starts a new session restored from the state saved after that response (workspace, `$HG_STATE`, the
+  package's `persist` paths, so the CLI's own memory rewinds with it), pinned to the same package; the original
+  session is untouched, and the container's `metadata.forked_from` names the response. Every turn's snapshot is kept
+  for its session's life (its checkpoint) instead of the superseded one being deleted; a fork copies its checkpoint
+  under the new session. No harness is involved or told: from inside the sandbox a fork is a continuation on a fresh
+  box. Migration 0004.
+- The chat: **Rewind** on one of your messages takes it back to edit and resend, and **Branch** on a reply opens a new
+  chat that continues from it; both name the earlier reply in `previous_response_id`. Interrupt is as before. The
+  console's session page names what a session was forked from.
+
 ## [2.1.0]
 
 ### Changed

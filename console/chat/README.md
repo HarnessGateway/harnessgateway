@@ -59,6 +59,14 @@ The side panel lists the session's workspace files and renders what the agent ma
 | `static/util.js`, `static/app.css`, `static/index.html` | Helpers, styles, markup |
 
 Conversations are kept in the browser (localStorage); a chat is renamed from its row (the pencil, or a double
-click), and the chat list collapses like the file panel (the state is remembered). Workspace files are read from the session's last save; after a
+click), and the chat list collapses like the file panel (the state is remembered).
+
+Three ways to change course, all on the public API: sending while the agent works **interrupts** it
+(`POST /v1/responses/{id}/cancel`) and the next message continues from where it stopped; **Rewind** on one of your
+messages takes it back, puts its text in the composer to edit and resend, and the send names the reply before it;
+**Branch** on a reply opens a new chat holding the conversation up to that reply, whose next message names it. A
+message that names an earlier reply in `previous_response_id` is the platform's fork: a new session restored from the
+state saved after that reply (workspace, the agent's memory), while the earlier branch keeps its own session. Nothing
+in it is special to this page: any client rewinds or branches the same way, by naming an earlier response. Workspace files are read from the session's last save; after a
 turn, the page waits for the save to land (`metadata.state` of `GET /v1/containers/{id}`), then opens what the turn
 made.

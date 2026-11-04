@@ -36,6 +36,10 @@ Day to day, from `/opt/harnessgateway`:
 | Upgrade | set `HG_PLATFORM_IMAGE` / `HG_SANDBOX_IMAGE` in `.env`, then `docker compose up -d --wait` (migrations run at start) |
 | Back up | `docker compose exec postgres pg_dump -U postgres harnessgateway`, plus the `objects` volume (or your bucket), plus `.env` |
 
+Every turn's snapshot is kept for its session's life (a later request may fork from it), so the object store grows with
+the turns that changed state; the organization's `retention_days` capacity bounds it, and deleting a session deletes
+its snapshots.
+
 The node finishes saves under way and removes its sandboxes when it stops (compose gives it two minutes). A session
 whose sandbox is gone restores from its last save on its next turn, on any node.
 
@@ -57,7 +61,7 @@ them:
      -e HG_API_URL=https://hg.internal -e HG_GATEWAY_URL=https://hg.internal/gateway \
      -e HG_NODE_JOIN_TOKEN=hgj_… -e HG_UPLINK_NETWORK=bridge -e HG_NODE_DIR=/var/lib/harnessgateway \
      -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \
-     ghcr.io/harnessgateway/harnessgateway:2.1.0 node
+     ghcr.io/harnessgateway/harnessgateway:2.2.0 node
    ```
 
    The node directory is mounted at the same path inside and out: sandboxes are sibling containers that bind-mount
@@ -99,8 +103,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_NODE_SLOTS` | node | `4` | turns run at once |
 | `HG_NODE_WARM_MAX` | node | `32` | idle sandboxes kept warm |
 | `HG_NODE_DIR` | node | `/var/lib/harnessgateway` | sessions, tools, the node's CA and credential |
-| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.1.0` | the image every sandbox runs |
-| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.1.0` | the image doors run |
+| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.2.0` | the image every sandbox runs |
+| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.2.0` | the image doors run |
 | `HG_UPLINK_NETWORK` | node | `hg-uplink` | the Docker network doors join to reach the gateway and the internet |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | node | — | see above |
 | `HG_ALLOW_PRIVATE_EGRESS` | all | `0` | let providers and sandbox egress reach private addresses |

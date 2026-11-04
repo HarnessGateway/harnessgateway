@@ -6,7 +6,8 @@
     finish   the process is gone: a turn without a terminal event is concluded from the outcome; the turn's token is
              revoked and its caller bindings deleted; the session is released; links to save its state are returned.
     saved    the state is saved (or was unchanged, or could not be): the session's snapshot advances if this save is
-             newer than the one it points at.
+             newer than the one it points at, and the turn records the snapshot that holds the state after it (its
+             checkpoint: what a later `previous_response_id` naming this turn forks from). Every snapshot is kept.
 """
 from __future__ import annotations
 
@@ -129,6 +130,9 @@ class Delivery:
                     saving = rid
                 await tx.run("UPDATE sessions SET running_turn_id = NULL, saving_turn_id = %s, last_active_at = now() "
                              "WHERE id = %s", saving, session["id"])
+            if saving != rid:                                  # nothing to save: the state after this turn is the last saved
+                await tx.run("UPDATE turns SET snapshot_key = %s, files_key = %s WHERE id = %s",
+                             session["snapshot_key"], session["files_key"], rid)
             links = self._save_links(turn) if saving == rid else None
             final = await tx.get("SELECT * FROM turns WHERE id = %s", rid)
             harness = session["harness"]
@@ -190,9 +194,9 @@ class Delivery:
     # ── saved ──────────────────────────────────────────────────────────────────────────────────────────────────────
     async def saved(self, node_id: str, rid: str, report: dict[str, Any]) -> None:
         """Report: snapshot {key, files_key, bytes} when a new one was uploaded; none when the state was unchanged or
-        could not be saved (error says why), so the session keeps its last."""
+        could not be saved (error says why), so the session keeps its last. Every snapshot is kept: each is the
+        checkpoint of the turn that made it."""
         saved = report.get("snapshot") if isinstance(report.get("snapshot"), dict) else None
-        stale: list[str] = []
         async with self.db.platform() as tx:
             turn = await self._turn(tx, node_id, rid)
             session = await tx.get("SELECT * FROM sessions WHERE id = %s FOR UPDATE", turn["session_id"])
@@ -205,15 +209,15 @@ class Delivery:
                              "(%s, %s, 'snapshot', 0) ON CONFLICT (key) DO NOTHING",
                              saved["key"], turn["org_id"], size, saved["files_key"], turn["org_id"])
                 if turn["seq"] > session["snapshot_seq"] and session["status"] == "active":
-                    stale = [k for k in (session["snapshot_key"], session["files_key"]) if k]
                     await tx.run("UPDATE sessions SET snapshot_key = %s, files_key = %s, snapshot_bytes = %s, "
                                  "snapshot_seq = %s WHERE id = %s", saved["key"], saved["files_key"], size, turn["seq"],
                                  session["id"])
-                else:
-                    stale = [saved["key"], saved["files_key"]]
+                await tx.run("UPDATE turns SET snapshot_key = %s, files_key = %s WHERE id = %s", saved["key"],
+                             saved["files_key"], rid)
+            elif not report.get("error"):                     # unchanged: the state after this turn is the last saved
+                await tx.run("UPDATE turns SET snapshot_key = %s, files_key = %s WHERE id = %s",
+                             session["snapshot_key"], session["files_key"], rid)
             if session["saving_turn_id"] == rid:
                 await tx.run("UPDATE sessions SET saving_turn_id = NULL WHERE id = %s", session["id"])
         if report.get("error"):
             log.warning("saving the state of %s after %s failed: %s", turn["session_id"], rid, str(report["error"])[:500])
-        for key in stale:
-            await self.objects.delete(key)

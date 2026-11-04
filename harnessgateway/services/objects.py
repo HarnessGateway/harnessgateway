@@ -2,6 +2,7 @@
 is metered without listing the store (SPEC §12)."""
 from __future__ import annotations
 
+import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -44,6 +45,14 @@ class Objects:
 
     async def get(self, key: str) -> bytes:
         return await self.store.get(key)
+
+    async def copy(self, src: str, dst: str, *, org_id: str | None, kind: str) -> int:
+        """`src` copied to `dst`, streamed through a file so a large snapshot never sits in memory; its size."""
+        with tempfile.NamedTemporaryFile(prefix="hg-copy-") as tmp:
+            async for chunk in self.store.stream(src):
+                tmp.write(chunk)
+            tmp.flush()
+            return await self.put_file(dst, Path(tmp.name), org_id=org_id, kind=kind)
 
     def stream(self, key: str) -> AsyncIterator[bytes]:
         return self.store.stream(key)

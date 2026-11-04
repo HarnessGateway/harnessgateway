@@ -76,6 +76,31 @@ def test_a_turn_runs_in_a_sandbox_and_the_session_continues(api):
     assert all("stdout_key" not in rec["data"] for rec in traces["data"])
 
 
+def test_an_earlier_response_forks_from_its_checkpoint(api):
+    r1 = turn(api, {"input": "echo one > a.txt; ls *.txt"})
+    r2 = turn(api, {"input": "echo two > b.txt; ls *.txt", "previous_response_id": r1["id"]})
+    assert text(r2) == "a.txt\nb.txt\n" and r2["metadata"]["session_id"] == r1["metadata"]["session_id"]
+    for _ in range(100):                                  # the fork needs r1's checkpoint, recorded once its save landed
+        f = api.post("/v1/responses", json={"model": "shell", "input": "ls *.txt; cat a.txt", "previous_response_id": r1["id"]})
+        if f.status_code != 409:
+            break
+        time.sleep(0.3)
+    assert f.status_code == 200, f.text
+    fork = f.json()
+    assert fork["status"] == "completed" and text(fork) == "a.txt\none\n"          # the state after r1: no b.txt
+    sid, parent = fork["metadata"]["session_id"], r1["metadata"]["session_id"]
+    assert sid != parent
+    assert api.get(f"/v1/containers/{sid}").json()["metadata"]["forked_from"] == r1["id"]
+    assert "forked_from" not in api.get(f"/v1/containers/{parent}").json()["metadata"]
+    r3 = turn(api, {"input": "ls *.txt", "previous_response_id": r2["id"]})               # the parent kept its own state
+    assert text(r3) == "a.txt\nb.txt\n" and r3["metadata"]["session_id"] == parent
+    r4 = turn(api, {"input": "ls *.txt", "previous_response_id": fork["id"]})            # and the fork continues as a session
+    assert text(r4) == "a.txt\n" and r4["metadata"]["session_id"] == sid
+    assert api.delete(f"/v1/containers/{parent}").json()["deleted"]                # the fork outlives its parent
+    r5 = turn(api, {"input": "cat a.txt", "previous_response_id": r4["id"]})
+    assert r5["status"] == "completed" and text(r5) == "one\n"
+
+
 def test_the_stream_is_the_responses_event_sequence(api):
     with api.stream("POST", "/v1/responses", json={"model": "shell", "input": "echo streamed", "stream": True}) as r:
         kinds = [line[len("event: "):] for line in r.iter_lines() if line.startswith("event: ")]

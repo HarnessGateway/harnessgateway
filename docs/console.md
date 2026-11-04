@@ -46,7 +46,11 @@ harness of that name is upgraded in place, and the draft is gone. Open a harness
 as installed, its manifest, settings, secrets (write-only, "set" marks, clear) and its default provider and model;
 **Edit** opens it as a draft. *Egress*: the organization's allow and deny entries, and what each harness adds.
 
-**Workbench.** *Chat* is `console/chat` embedded; attachments go with a message. *Playground* sends a raw
+**Workbench.** *Chat* is `console/chat` embedded; attachments go with a message. Sending while the agent works
+interrupts it (`POST /v1/responses/{id}/cancel`) and continues from where it stopped. **Rewind** on one of your
+messages takes it back to edit and resend; **Branch** on a reply opens a new chat that continues from it. Both send the
+next message with `previous_response_id` naming the earlier reply, and the platform forks the session from the state
+saved after it; the earlier branch keeps its session under Sessions. *Playground* sends a raw
 Responses request (streamed or not), shows the events as they arrive and the final Response, and renders the same
 call as curl, Python or TypeScript.
 

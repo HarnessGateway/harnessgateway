@@ -100,7 +100,7 @@ platform reads only what routes and secures a turn:
 |---|---|
 | `model` | `harness[/provider[/model]]`: the installed harness, the org's provider, the model name the CLI gets. Absent parts fall back: provider to the session's, the harness's default, else the org's only provider of an API the package speaks; model to the session's last, the harness's default, the manifest's default. |
 | `input` | `file_id` references in `input_file`/`input_image` parts are checked and delivered to the sandbox. |
-| `previous_response_id` | the session to continue. Its harness must match the request's (409 `harness_mismatch`); provider and model may change. |
+| `previous_response_id` | the response to continue from. Its session's last response: the turn joins that session. An earlier response: a **fork**, a new session restored from the state saved after that response (§6.4), named in the container's `metadata.forked_from`; the original session is untouched. Responses form a tree, as in OpenAI's API. The harness must match the request's (409 `harness_mismatch`); provider and model may change. 409 while that response is still running or its state still being saved. |
 | `tools[type=mcp]` | resolved per §3.3; secret values extracted per §8.3. |
 | `stream`, `background`, `store` | delivery and retention. `store: false` runs a session that is not snapshotted and cannot be continued. |
 | `metadata` | echoed. |
@@ -306,8 +306,11 @@ One turn per session runs at a time; later turns of a session queue in order.
 
 ### 6.3 Continuity
 
-`previous_response_id` continues its session: same harness, same composed package digests (a session is pinned to the
-version it started on), provider and model free to change. A session ends when deleted, or after the org's retention.
+`previous_response_id` continues from a response: on the session's last response, the same session; on an earlier
+one, a fork: a new session, pinned to the same package digest, restored from that response's checkpoint. Either way
+the harness is the same and provider and model are free to change. A session ends when deleted, or after the org's
+retention. A client rewinds a conversation by naming an earlier response; nothing else is needed, and the harness is not
+told, because from inside the sandbox a fork is a continuation on a fresh box.
 
 ### 6.4 Snapshots
 
@@ -317,6 +320,12 @@ listing's hash is the state's fingerprint; when unchanged, nothing is uploaded. 
 the object store with the workspace's file list (for the Containers API). Restore unpacks it after the home seeds, so
 the session's own state wins. Every outcome (completed, failed, cancelled, timed out) is snapshotted. A node lost
 mid-turn loses that turn's changes; the session restores from its last snapshot.
+
+Every snapshot is kept for the session's life (its retention, or its deletion): each turn records the snapshot that
+holds the state after it, its **checkpoint**, which a later request forks from by naming the turn (§4.1). A fork copies
+the checkpoint under the new session, so deleting the parent cannot take it away. A turn that changed nothing points at
+the previous checkpoint; one whose save failed has none, and cannot be forked from. Storage is metered (§12) and bounded
+by the organization's retention.
 
 ## 7. Network
 
@@ -549,7 +558,7 @@ All under `/v1`, JSON, bearer API key. OpenAI-shaped endpoints match OpenAI's re
 | `DELETE /responses/{id}` | refused while running |
 | `GET /responses/{id}/input_items` | |
 | `POST /files`, `GET /files`, `GET /files/{id}`, `GET /files/{id}/content`, `DELETE /files/{id}` | ≤512 MiB per file |
-| `GET /containers`, `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session; created by its first response. `metadata` names its harness, model, turns, state, saved bytes, last response and `created_by` (the first turn's actor: `key:<id>`, or what an extension's principal names) |
+| `GET /containers`, `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session; created by its first response. `metadata` names its harness, model, turns, state, saved bytes, last response, `created_by` (the first turn's actor: `key:<id>`, or what an extension's principal names) and, for a fork, `forked_from` (the response it continued from) |
 | `GET /containers/{id}/files`, `GET …/files/{fid}`, `GET …/files/{fid}/content` | the workspace as of the last snapshot |
 | `POST /containers/{id}/files` (multipart `file`, optional `path`), `DELETE …/files/{fid}` | staged; applied before the session's next turn |
 | `GET /containers/{id}/responses` | the session's responses in turn order, each as `GET /responses/{id}` returns it |
@@ -587,8 +596,8 @@ Upgrading a harness affects new sessions only.
 | `packages` | digest, manifest, object key (shared across orgs; content-addressed) |
 | `harnesses` | org, name, package digest, manifest, settings, sealed secrets, default provider, default model |
 | `files` | org, id, filename, bytes, object key |
-| `sessions` | org, id, harness name, package digest, manifest, provider, model, store, status, snapshot key, node, running turn, timestamps |
-| `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the key, or the extension's principal, that created it) |
+| `sessions` | org, id, harness name, package digest, manifest, provider, model, store, status, snapshot key, node, running turn, forked_from, timestamps |
+| `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the key, or the extension's principal, that created it), snapshot key (its checkpoint) |
 | `turn_events` / `live_events` | kept events / deltas (purged after the turn), by (turn, seq) |
 | `turn_bindings` | sealed caller secrets of a turn, deleted at its end |
 | `turn_tokens` | digest, turn, org, provider, node, expiry, revoked |
