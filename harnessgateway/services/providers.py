@@ -30,17 +30,23 @@ class Providers:
         self.db, self.vault, self.allow_private = db, vault, allow_private
 
     async def put(self, org_id: str, name: str, api: object, base_url: object, key: object) -> dict[str, Any]:
+        """Create or update. The key is required for a new provider; an update without one keeps the stored key."""
         ids.check_name(name, "provider")
         if api not in PROVIDER_APIS:
             raise Invalid(f"api is one of {', '.join(PROVIDER_APIS)}", param="api")
-        if not isinstance(key, str) or not 1 <= len(key) <= KEY_MAX:
+        if key is not None and (not isinstance(key, str) or not 1 <= len(key) <= KEY_MAX):
             raise Invalid("key is the provider's API key", param="key")
         url = WIRES[str(api)].base(await asyncio.to_thread(check_url, str(base_url), allow_private=self.allow_private,
                                                            param="base_url"))
         async with self.db.tenant(org_id) as tx:
-            row = await tx.one("SELECT id FROM providers WHERE name = %s", name)
+            row = await tx.one("SELECT id, sealed_key FROM providers WHERE name = %s", name)
         provider_id = row["id"] if row else ids.new("provider")
-        sealed = await self.vault.seal(org_id, key_context(provider_id), key)
+        if isinstance(key, str):
+            sealed = await self.vault.seal(org_id, key_context(provider_id), key)
+        elif row:
+            sealed = row["sealed_key"]
+        else:
+            raise Invalid("key is the provider's API key", param="key")
         async with self.db.tenant(org_id) as tx:
             await tx.run("INSERT INTO providers (id, org_id, name, api, base_url, sealed_key) VALUES (%s, %s, %s, %s, %s, %s) "
                          "ON CONFLICT (org_id, name) DO UPDATE SET api = EXCLUDED.api, base_url = EXCLUDED.base_url, "

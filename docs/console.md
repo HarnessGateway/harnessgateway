@@ -34,7 +34,7 @@ Without `HG_OPERATOR_KEY` the deployer console is off. The server needs Python 3
 
 The modules follow a first sign-in: set it up, try it, let applications in, watch what it does.
 
-**Setup.** *Providers*: API shape, base URL, key (write-only). *Harnesses*: the installed packages and your
+**Setup.** *Providers*: API shape, base URL, key (write-only; leave it empty when editing to keep the stored one). *Harnesses*: the installed packages and your
 drafts, one card each. One harness is built in: `harness-package-builder`, Claude Code seeded with the skill that
 writes packages, installed by `init`. Every other harness is one someone wrote: **New harness** copies the template
 (the `shell` package, `HG_TEMPLATE_DIR`) into a draft under the name you give, and the draft editor (file tree,

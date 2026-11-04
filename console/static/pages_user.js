@@ -284,14 +284,14 @@ const providers = { title: "Providers", async render(el, params, me) {
     `<button class="btn" id="add">Add provider</button>`) +
     `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` }, { h: "API shape", cell: p => pill(p.api, "b") },
       { h: "Base URL", cell: p => `<span class="mono">${esc(p.base_url)}</span>` }, { h: "Updated", cell: p => when(p.updated_at) },
-      { h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${p.name}" data-api="${p.api}" data-url="${esc(p.base_url)}">Replace key</button><button class="btn2 danger" data-del="${p.name}">Delete</button>` }],
+      { h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${p.name}" data-api="${p.api}" data-url="${esc(p.base_url)}">Edit</button><button class="btn2 danger" data-del="${p.name}">Delete</button>` }],
       rows, "No provider yet. Harnesses that call a model need one.")}</div>`;
   const dialog = (name = "", apiShape = "anthropic", url = "") => modal({ title: name ? `Provider ${name}` : "Add provider", submit: "Save", body:
     field("Name", input("name", name, `${name ? "readonly" : ""} pattern="[a-z0-9][a-z0-9._\\-]*" required placeholder="anthropic"`)) +
     field("API shape", select("api", [["anthropic", "anthropic (Messages)"], ["openai", "openai (Responses / Chat Completions)"], ["google", "google (Gemini)"]], apiShape)) +
     field("Base URL", input("base_url", url || { anthropic: "https://api.anthropic.com", openai: "https://api.openai.com", google: "https://generativelanguage.googleapis.com" }[apiShape], 'required')) +
-    field("API key", input("key", "", 'type="password" autocomplete="off" required'), "write-only"),
-    onSubmit: async d => { await api("PUT", `/v1/providers/${d.name}`, { api: d.api, base_url: d.base_url, key: d.key }); toast("Saved", "ok"); rerender(); } });
+    field("API key", input("key", "", `type="password" autocomplete="off"${name ? ' placeholder="leave empty to keep the stored key"' : " required"}`), "write-only; never shown again"),
+    onSubmit: async d => { await api("PUT", `/v1/providers/${d.name}`, { api: d.api, base_url: d.base_url, ...(d.key ? { key: d.key } : {}) }); toast("Saved", "ok"); rerender(); } });
   $("#add", el).addEventListener("click", () => dialog());
   el.addEventListener("click", async e => {
     const ed = e.target.closest("[data-edit]"); if (ed) { dialog(ed.dataset.edit, ed.dataset.api, ed.dataset.url); return; }

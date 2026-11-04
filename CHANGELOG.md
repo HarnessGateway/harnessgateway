@@ -7,6 +7,13 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.2.1]
+
+### Changed
+
+- Providers: the console's **Replace key** is **Edit**, and `PUT /v1/providers/{name}` on an existing provider may
+  leave `key` out to keep the stored one; a new provider still needs it.
+
 ## [2.2.0]
 
 ### Added

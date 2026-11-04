@@ -570,7 +570,7 @@ All under `/v1`, JSON, bearer API key. OpenAI-shaped endpoints match OpenAI's re
 | Endpoint | Notes |
 |---|---|
 | `GET/POST/DELETE /keys` | create returns the key once |
-| `GET/PUT/DELETE /providers/{name}` | `{api, base_url, key}`; the key is write-only |
+| `GET/PUT/DELETE /providers/{name}` | `{api, base_url, key}`; the key is write-only, and may be left out when updating (the stored one is kept) |
 | `GET/PUT /egress` | the org's egress entries |
 | `GET /harnesses`, `GET /harnesses/{name}` | manifest, digest, which settings and secrets are set (never values); `GET /harnesses/{name}/files` and `/files/{path}` read the package |
 | `POST /harnesses` | install or upgrade from a multipart `package` archive (the package folder as a tar, gzipped or not) |
