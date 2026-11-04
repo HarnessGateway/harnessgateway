@@ -272,6 +272,11 @@ sys.stdout.write(open(os.environ["FAKE_STREAM"]).read())
 '''
 
 
+HISTORY = [{"id": "resp_0", "status": "completed",
+            "input": [{"type": "message", "role": "user", "content": "the codeword is tangerine"}],
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Noted."}]}]}]
+
+
 def _turn(tmp_path: Path, request: dict, servers: list[dict] | None = None) -> tuple[subprocess.CompletedProcess, Path]:
     bin_dir, ws, st = tmp_path / "bin", tmp_path / "workspace", tmp_path / "state"
     for d in (bin_dir, ws, st):
@@ -281,7 +286,9 @@ def _turn(tmp_path: Path, request: dict, servers: list[dict] | None = None) -> t
     cli.chmod(cli.stat().st_mode | stat.S_IEXEC)
     (tmp_path / "request.json").write_text(json.dumps(request))
     (tmp_path / "mcp.json").write_text(json.dumps(servers or []))
+    (tmp_path / "history.json").write_text(json.dumps(HISTORY))
     env = {**os.environ, "HG_REQUEST": str(tmp_path / "request.json"), "HG_MCP": str(tmp_path / "mcp.json"),
+           "HG_HISTORY": str(tmp_path / "history.json"),
            "HG_STATE": str(st), "HG_WORKSPACE": str(ws), "HG_FILES": str(tmp_path / "files"),
            "HG_MODEL": "deepseek-flash", "HG_PROVIDER_URL": "http://hg-door:8080", "HG_PROVIDER_TOKEN": "turn-token",
            "HG_TURN": "2", "HG_PACKAGE_VERSION": "2.1.310-2", "TMPDIR": str(tmp_path), "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -307,8 +314,11 @@ def test_run_end_to_end_with_lost_session(tmp_path):
     calls = _calls(tmp_path)
     assert len(calls) == 2                                       # resume failed (transcript gone), then a fresh session
     assert calls[0]["argv"][calls[0]["argv"].index("--resume") + 1] == "old-session"
+    assert calls[0]["prompt"] == "make hello.py"                 # a resumed CLI session has the conversation already
     assert "--resume" not in calls[1]["argv"]
-    assert calls[1]["prompt"] == "make hello.py" and calls[1]["instructions"] == "Be brief."
+    assert calls[1]["prompt"].startswith("Earlier in this conversation") and "tangerine" in calls[1]["prompt"] \
+        and calls[1]["prompt"].endswith("\n\n---\n\nmake hello.py")        # the fresh one is given the history
+    assert calls[1]["instructions"] == "Be brief."
     assert calls[1]["cwd"] == str(tmp_path / "workspace")
     assert calls[1]["env"] == {"ANTHROPIC_BASE_URL": "http://hg-door:8080", "ANTHROPIC_API_KEY": "turn-token",
                                "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-flash"}
@@ -327,6 +337,7 @@ def test_run_places_files_and_takes_mcp_servers_from_hg_mcp(tmp_path):
     assert read(proc.stdout)["status"] == "completed"
     (call,) = _calls(tmp_path)
     assert (tmp_path / "workspace" / "notes.txt").read_text() == "hello\n"
-    assert call["prompt"] == "summarize\n\nAttached files (saved in the working directory): notes.txt"
+    assert call["prompt"].endswith("---\n\nsummarize\n\nAttached files (saved in the working directory): notes.txt")
+    assert "tangerine" in call["prompt"]                          # no CLI session yet: the history is the context
     assert call["instructions"] == "You are terse."
     assert set(json.loads(call["mcp"])["mcpServers"]) == {"docs", "wiki"}     # from $HG_MCP, not from `tools`

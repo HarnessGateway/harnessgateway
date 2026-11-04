@@ -68,7 +68,7 @@ Three questions place everything:
 | Per-call knobs | `reasoning`, `text.format`, `max_output_tokens`, `max_tool_calls`, `stream`, `background`, `store` | defaults and their mapping to the CLI | the request wins where the CLI honours it; otherwise the package reports it ignored |
 | Egress | — | `run.egress`, `install.egress` (allow and `!deny` entries) | the org's entries apply to every harness; a harness widens or narrows them for its sandboxes; a deny wins (§7.2) |
 | Secrets | an MCP tool's `authorization`/`headers` values (the caller's own token) | secret names, the hosts each may reach | values sealed in the org, injected at the door, scoped to hosts (§8) |
-| Continuity | `previous_response_id` | `persist`: the CLI's session store | platform snapshots workspace, state and `persist` (§6.4) |
+| Continuity | `previous_response_id` | `persist`: the CLI's session store | the platform snapshots workspace, state and `persist` (§6.4) and hands every turn the session's conversation so far in Responses form (§5.6); a package resumes its CLI natively when it can and from that history otherwise |
 
 **Home holds the IP, the workspace holds the work.** `seeds/home` is laid down in every new sandbox and is not persisted
 (unless named in `persist`, which a package uses only for the CLI's session store). So the org's instructions, skills
@@ -100,7 +100,7 @@ platform reads only what routes and secures a turn:
 |---|---|
 | `model` | `harness[/provider[/model]]`: the installed harness, the org's provider, the model name the CLI gets. Absent parts fall back: provider to the session's, the harness's default, else the org's only provider of an API the package speaks; model to the session's last, the harness's default, the manifest's default. |
 | `input` | `file_id` references in `input_file`/`input_image` parts are checked and delivered to the sandbox. |
-| `previous_response_id` | the response to continue from. Its session's last response: the turn joins that session. An earlier response: a **fork**, a new session restored from the state saved after that response (§6.4), named in the container's `metadata.forked_from`; the original session is untouched. Responses form a tree, as in OpenAI's API. The harness must match the request's (409 `harness_mismatch`); provider and model may change. 409 while that response is still running or its state still being saved. |
+| `previous_response_id` | the response to continue from. Its session's last response: the turn joins that session. An earlier response: a **fork**, a new session restored from the state saved after that response (§6.4), named in the container's `metadata.forked_from`; the original session is untouched. Responses form a tree, as in OpenAI's API. Provider and model may change. Another harness in `model` is a fork onto it: a new session on that harness, restored from the checkpoint's workspace only (the old package's `$HG_STATE` and `persist` paths are the old CLI's), with the conversation reaching the new harness as the session's history (§5.6). 409 while that response is still running or its state still being saved. |
 | `tools[type=mcp]` | resolved per §3.3; secret values extracted per §8.3. |
 | `stream`, `background`, `store` | delivery and retention. `store: false` runs a session that is not snapshotted and cannot be continued. |
 | `metadata` | echoed. |
@@ -154,7 +154,7 @@ anything else         the package's own (modules, README, tests): the platform r
 
 The platform reads the manifest, runs the two executables and copies the seeds; it knows no language. `install` and
 `run` are scripts whose first line names their interpreter, or Linux binaries, and are run as they are (the platform
-marks them executable at install). `install.sh` and `run.sh`, run with bash, are accepted for packages written before 2.1.
+marks them executable at install).
 
 A package is identified by its **digest**: SHA-256 over every file's path, executable bit and bytes. It moves as a
 canonical gzipped tar (sorted, owner 0, mtime 0), so the same files give the same bytes. Limits: 5,000 files, 256 MiB
@@ -225,6 +225,8 @@ turn's process; its terminal event ends the turn's response. After the terminal 
 | `/run/hg/request.json` (`HG_REQUEST`) | the request as stored (secret values replaced by placeholders) |
 | `/run/hg/files/` (`HG_FILES`) | `file_id` inputs at `<id>/<filename>`, and `index.json`: `{id: {filename, path, bytes}}` |
 | `/run/hg/mcp.json` (`HG_MCP`) | the turn's MCP servers: `[{label, url, transport, headers, allowed_tools}]`, header values holding placeholders |
+| `/run/hg/history.json` (`HG_HISTORY`) | the session's earlier turns in order, through every fork back to the root: `[{id, status, input, output}]`, the input items (file bytes left out) and output items of each, in Responses form; `[]` on a first turn. The conversation in the platform's own format, for a package whose CLI cannot resume its own session (§6.3) |
+| `/run/hg/history.json` (`HG_HISTORY`) | the session's earlier turns in order, through every fork back to the root: `[{id, status, input, output}]`, the input items (file bytes left out) and output items of each, in Responses form; `[]` on a first turn. The conversation in the platform's own format, for a package whose CLI cannot resume its own session (§6.3) |
 | `HG_WORKSPACE` = `/workspace` | the session's workspace (persisted) |
 | `HG_STATE` = `/state` | the package's small session state, e.g. the CLI's session id (persisted) |
 | `HOME` = `/home/hg` | seeded from `seeds/home` in every new box; only `persist` paths survive |
@@ -244,7 +246,8 @@ and harness-agnostic: it knows the request a turn receives and the events it mus
 
 - `Request`: the request, with readers for prompt text, instructions (request + system/developer messages), reasoning
   effort, text format, MCP servers (`/run/hg/mcp.json`), `place_inputs()`, which writes `file_id` and inline files
-  into the workspace by name (a collision gets a numeric suffix) and returns their names, and the turn's environment
+  into the workspace by name (a collision gets a numeric suffix) and returns their names, `history()` and
+  `transcript()` (the session's history, as items and as plain text a CLI can be given), and the turn's environment
   (`model`, `provider`, `state`, ids, the package version).
 - `Emitter`: prints valid events, named by what the agent did: `say` and `think` (streamed), `ran`, `wrote`,
   `edited`, `deleted`, `called` (MCP), `used` (any tool), each as the whole call or a handle whose `done`/`failed`
@@ -306,11 +309,20 @@ One turn per session runs at a time; later turns of a session queue in order.
 
 ### 6.3 Continuity
 
-`previous_response_id` continues from a response: on the session's last response, the same session; on an earlier
-one, a fork: a new session, pinned to the same package digest, restored from that response's checkpoint. Either way
-the harness is the same and provider and model are free to change. A session ends when deleted, or after the org's
-retention. A client rewinds a conversation by naming an earlier response; nothing else is needed, and the harness is not
-told, because from inside the sandbox a fork is a continuation on a fresh box.
+`previous_response_id` continues from a response: on the session's last response and the same harness, the same
+session; on an earlier response, a fork: a new session, pinned to the same package digest, restored from that
+response's checkpoint; on another harness, a fork onto it: a new session pinned to that harness's package, restored
+from the checkpoint's workspace only. Provider and model are free to change at any point. A session ends when deleted,
+or after the org's retention.
+
+The platform carries the conversation in two harness-agnostic forms, and knows no CLI to do so. The snapshot (§6.4)
+carries the CLI's own session store where the package named it in `persist`; it is the richer form and the package's
+first choice. The history (`/run/hg/history.json`, §5.6) carries every earlier turn's input and output items in
+Responses form, the platform's own record; it is what a package continues from when the CLI's session is not there:
+a turn killed mid-way (a stop or an interrupt), a fork onto this harness from another, a CLI that keeps no session.
+How a CLI is resumed, and how the history becomes its context, is the package's; the platform only moves the two.
+A client rewinds, branches or switches harness by naming an earlier response; nothing else is needed, and the harness
+is not told, because from inside the sandbox each is a continuation on a fresh box.
 
 ### 6.4 Snapshots
 
@@ -323,8 +335,9 @@ mid-turn loses that turn's changes; the session restores from its last snapshot.
 
 Every snapshot is kept for the session's life (its retention, or its deletion): each turn records the snapshot that
 holds the state after it, its **checkpoint**, which a later request forks from by naming the turn (§4.1). A fork copies
-the checkpoint under the new session, so deleting the parent cannot take it away. A turn that changed nothing points at
-the previous checkpoint; one whose save failed has none, and cannot be forked from. Storage is metered (§12) and bounded
+the checkpoint under the new session, so deleting the parent cannot take it away. A turn that changed nothing, or saved
+nothing of its own (cancelled before it ran, lost with its node), points at the last checkpoint before it; one whose
+save failed has none, and cannot be forked from. Storage is metered (§12) and bounded
 by the organization's retention.
 
 ## 7. Network

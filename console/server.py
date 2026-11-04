@@ -45,7 +45,7 @@ DRAFT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
 DRAFT_FILE_MAX = 4 * 1024 * 1024
 # every new harness starts as a copy of the template: the shell package, the smallest complete package on the contract
 TEMPLATE_DIR = Path(os.environ.get("HG_TEMPLATE_DIR") or Path(__file__).resolve().parents[1] / "packages" / "shell")
-EXECUTABLES = ("install", "run")                            # the package's two executables (or install.sh / run.sh)
+EXECUTABLES = ("install", "run")                            # the package's two executables
 BUILDER = "harness-package-builder"                        # the built-in whose sessions' workspaces hold packages to import
 COOKIE = "hgc"
 SESSION_S = 12 * 3600
@@ -442,7 +442,7 @@ class Handler(chat.Handler):
                 data = self.rfile.read(size)
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_bytes(data)
-                if p.name in EXECUTABLES or p.suffix == ".sh":
+                if p.name in EXECUTABLES:
                     p.chmod(0o755)
                 self._json(200, {"path": rel, "bytes": len(data)})
             elif method == "DELETE":
@@ -522,7 +522,7 @@ class Handler(chat.Handler):
                         p = st.draft_file(name, f["path"][len(prefix):])
                         p.parent.mkdir(parents=True, exist_ok=True)
                         p.write_bytes(content.content)
-                        if p.name in EXECUTABLES or p.suffix == ".sh":
+                        if p.name in EXECUTABLES:
                             p.chmod(0o755)
                         found += 1
                     if not page.get("has_more"):

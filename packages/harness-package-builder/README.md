@@ -35,14 +35,15 @@ the image, and `scripts/sync-builder-seeds` keeps the template and the guide ins
 | `install` | Claude Code, pinned to the manifest's version, into `$HG_TOOLS` |
 | `run` | one turn: the request → `claude -p --output-format stream-json`; its stream → Responses events, with hgkit |
 | `seeds/home/.claude/CLAUDE.md` | the builder's standing instructions |
-| `seeds/home/.claude/skills/harness-package-builder/` | the skill, self-contained: `SKILL.md`; `reference/events.md` (what a package prints), `reference/request-fields.md`, `reference/tailoring.md` (a purpose as a package), `reference/packages.md` (a copy of `docs/packages.md`); `assets/template/` (a copy of `packages/shell`) |
+| `seeds/home/.claude/skills/harness-package-builder/` | the skill, self-contained: `SKILL.md`; `reference/events.md` (what a package prints), `reference/request-fields.md`, `reference/tailoring.md` (a purpose as a package), `reference/packages.md` (a copy of `docs/packages.md`); `assets/template/` (a copy of `packages/shell`), `assets/observe-egress.py` (the hosts a command asks for) |
 | `tests/` | the mapper run on streams recorded from real turns; `run` end to end against a fake `claude` |
 
 ## The command, request fields, output mapping, known limits
 
 The request's input is the prompt on stdin, `instructions` are appended to the system prompt, `reasoning.effort`,
 `text.format` and `max_tool_calls` map to the CLI's flags, the turn's MCP servers become its MCP config, turns after
-the first resume the CLI's session; assistant text streams (`out.say`), thinking streams (`out.think`), Bash becomes
+the first resume the CLI's session (and a turn whose CLI session is gone, or a fork onto this harness, starts a fresh
+one from the session's history); assistant text streams (`out.say`), thinking streams (`out.think`), Bash becomes
 `out.ran`, Write/Edit become `out.wrote` / `out.edited`, MCP tools `out.called`, other tools `out.used`.
 
 What the builder can try in its sandbox is bounded by this session's provider: `HG_PROVIDER_URL` and

@@ -7,6 +7,36 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.3.0]
+
+### Added
+
+- Every turn receives the session's conversation so far in Responses form: `/run/hg/history.json` (`HG_HISTORY`),
+  each earlier turn's input and output items through every fork back to the root, a cancelled turn's partial output
+  included. It is the platform's own record and the harness-agnostic way a package continues when its CLI's session
+  is not there: a turn killed by a stop or an interrupt, a fork onto this harness from another, a CLI without a
+  session. hgkit reads it (`req.history()`) and renders it as text for a CLI (`req.transcript()`); the built-in
+  builder starts a fresh CLI session from it when its own cannot be resumed.
+- A session may change harness: `previous_response_id` with another harness in `model` is a fork onto it, a new
+  session on that harness restored from the checkpoint's workspace only (not the old package's `$HG_STATE` or
+  `persist` paths), with the conversation as its history. The chat's harness picker is no longer locked once a chat
+  has started; picking another harness continues the chat on it.
+- The builder's skill is rewritten: shorter, harness-agnostic, staged (research, then install and record, then write
+  and validate, one turn each), with a build journal in the package folder, egress observed through a logging proxy
+  rather than guessed, `defaults.model` set to a model the organization's provider serves, and a continuity checklist
+  every package must pass (the session id saved as soon as the CLI reports it, a killed turn resumed, a first turn
+  continued from the history).
+
+### Fixed
+
+- A fork from a turn that saved nothing of its own (cancelled before it ran, lost with its node) started from the
+  package's seeds; it now starts from the last checkpoint before that turn.
+- `harness_mismatch` (409) is gone: a different harness is a fork onto it.
+
+### Removed
+
+- `install.sh` and `run.sh`: a package's executables are `install` and `run`, and nothing else is run.
+
 ## [2.2.1]
 
 ### Changed

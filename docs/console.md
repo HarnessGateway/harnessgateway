@@ -50,7 +50,8 @@ as installed, its manifest, settings, secrets (write-only, "set" marks, clear) a
 interrupts it (`POST /v1/responses/{id}/cancel`) and continues from where it stopped. **Rewind** on one of your
 messages takes it back to edit and resend; **Branch** on a reply opens a new chat that continues from it. Both send the
 next message with `previous_response_id` naming the earlier reply, and the platform forks the session from the state
-saved after it; the earlier branch keeps its session under Sessions. *Playground* is for one request: pick the harness, the provider and the model as in the chat, edit the Responses request, send it (streamed or not), and read the events and the final Response beside it.
+saved after it; the earlier branch keeps its session under Sessions. Picking another harness continues the chat on
+it, in a new session with the workspace and the conversation so far. *Playground* is for one request: pick the harness, the provider and the model as in the chat, edit the Responses request, send it (streamed or not), and read the events and the final Response beside it.
 
 **Access.** *API keys*: create (shown once, with a copy-to-clipboard button), revoke. *Members*: console users of the organization and their role.
 

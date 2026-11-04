@@ -42,13 +42,8 @@ def test_an_executable_without_a_shebang_or_a_missing_one_is_refused(tmp_path):
         pkg.validate(write(tmp_path / "a", {"harness.json": MANIFEST, "install": "#!/bin/sh\n", "run": "print(1)\n"}))
     with pytest.raises(Invalid, match="needs `run`"):
         pkg.validate(write(tmp_path / "b", {"harness.json": MANIFEST, "install": "#!/bin/sh\n"}))
-
-
-def test_the_sh_scripts_are_still_accepted_and_parsed_as_bash(tmp_path):
-    folder = write(tmp_path / "p", {"harness.json": MANIFEST, "install.sh": "true\n", "run.sh": "exec python3 map.py\n"})
-    assert pkg.validate(folder).name == "p"
-    with pytest.raises(Invalid, match="run.sh is not valid bash"):
-        pkg.validate(write(tmp_path / "q", {"harness.json": MANIFEST, "install.sh": "true\n", "run.sh": "if then\n"}))
+    with pytest.raises(Invalid, match="needs `install`"):                       # run.sh is not run
+        pkg.validate(write(tmp_path / "c", {"harness.json": MANIFEST, "install.sh": "true\n", "run": "#!/bin/sh\n"}))
 
 
 def test_an_archive_round_trips_with_its_executable_bits(tmp_path):

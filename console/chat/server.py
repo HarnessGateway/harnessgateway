@@ -4,8 +4,9 @@ folded under each reply, and a side panel with the session's workspace files tha
 HTML pages run live; images, SVG, PDF, audio and video play; markdown, notebooks, CSV, JSON, code and text render in
 place at any size; Word documents, spreadsheets and Mermaid diagrams render in a sandbox. Files you attach go to the
 agent with your message. The header picks the harness and the provider from what your organization has installed and
-connected; type the model, or leave it empty for the harness's default. A chat keeps its harness; its provider and
-model can change from one message to the next.
+connected; type the model, or leave it empty for the harness's default. Harness, provider and model can change
+from one message to the next; another harness continues the chat in a new session with the workspace and the
+conversation so far.
 
 Turns run in the background on the platform: move to another chat or start a new one while the agent works, and come
 back to it (a running chat pulses in the sidebar); a reload picks running turns up again. Stop ends a turn; sending a

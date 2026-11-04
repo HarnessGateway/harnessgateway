@@ -40,6 +40,8 @@ from typing import Any
 __all__ = ["Call", "Emitter", "Provider", "Request", "Run", "State", "check"]
 
 FILE_PARTS = ("input_file", "input_image")
+VERBS = {"create_file": "Created", "update_file": "Edited", "delete_file": "Deleted"}
+VERBS = {"create_file": "Created", "update_file": "Edited", "delete_file": "Deleted"}
 
 
 def check(text: str) -> Any:
@@ -206,6 +208,52 @@ class Request:
         header values holding placeholders the door replaces on the way out."""
         p = Path(path or self.env.get("HG_MCP", "/run/hg/mcp.json"))
         return json.loads(p.read_text()) if p.is_file() else []
+
+    def history(self, path: str | None = None) -> list[dict[str, Any]]:
+        """The session's earlier turns in order, as the platform recorded them (`$HG_HISTORY`): [{id, status, input,
+        output}], each in Responses form, file bytes left out; empty on a session's first turn. What a package
+        continues from when its CLI's own session is not there: a turn killed mid-way, a fork onto this harness from
+        another, a CLI that keeps no session."""
+        p = Path(path or self.env.get("HG_HISTORY", "/run/hg/history.json"))
+        return json.loads(p.read_text()) if p.is_file() else []
+
+    def transcript(self, limit: int = 60_000) -> str:
+        """The history as plain text a CLI can be given as context: what each side said, the commands run, the files
+        changed, the tools called; the most recent `limit` characters."""
+        lines: list[str] = []
+        for turn in self.history():
+            for item in turn.get("input") or []:
+                role = item.get("role", "user") if item.get("type", "message") == "message" else ""
+                text = _text(item.get("content")) if role else ""
+                names = [p.get("filename") or p.get("file_id") or "image" for p in (item.get("content") or [])
+                         if isinstance(p, dict) and p.get("type") in FILE_PARTS] if isinstance(item.get("content"), list) else []
+                if text or names:
+                    lines.append(f"{'User' if role == 'user' else 'Instructions'}: {text}"
+                                 + (f" [attached: {', '.join(names)}]" if names else ""))
+            for item in turn.get("output") or []:
+                kind = item.get("type")
+                if kind == "message":
+                    lines.append(f"Assistant: {_text(item.get('content'))}")
+                elif kind == "shell_call":
+                    lines.append("Ran: " + " && ".join((item.get("action") or {}).get("commands") or []))
+                elif kind == "shell_call_output":
+                    for r in item.get("output") or []:
+                        o = r.get("outcome") or {}
+                        tail = ((r.get("stdout") or "") + (r.get("stderr") or "")).strip()
+                        lines.append(f"  -> {'timeout' if o.get('type') == 'timeout' else 'exit ' + str(o.get('exit_code', 0))}"
+                                     + (f": {tail[-400:]}" if tail else ""))
+                elif kind == "apply_patch_call":
+                    op = item.get("operation") or {}
+                    lines.append(f"{VERBS.get(str(op.get('type')), 'Changed')}: {op.get('path', '')}")
+                elif kind in ("function_call", "mcp_call"):
+                    name = f"{item.get('server_label')}.{item.get('name')}" if kind == "mcp_call" else item.get("name", "tool")
+                    lines.append(f"Used: {name}({str(item.get('arguments', ''))[:300]})")
+                elif kind == "function_call_output":
+                    lines.append(f"  -> {str(item.get('output', ''))[-400:]}")
+            if turn.get("status") == "cancelled":
+                lines.append("(this turn was interrupted before it finished)")
+        text = "\n".join(lines)
+        return text if len(text) <= limit else "…" + text[-limit:]
 
     def input_files(self, folder: str | None = None) -> dict[str, dict[str, Any]]:
         """Files the request referenced by file_id, already in the sandbox: {file_id: {filename, path, bytes}}."""

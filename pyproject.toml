@@ -1,6 +1,6 @@
 [project]
 name = "harnessgateway"
-version = "2.2.1"
+version = "2.3.0"
 description = "Coding-agent harnesses as an API: OpenAI Responses in, sandboxed harness packages, Responses out."
 readme = "README.md"
 requires-python = ">=3.12"

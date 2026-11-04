@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from harnessgateway.domain.contract import ModelPath, OutputError, Routing, outcome, read_line, response
+from harnessgateway.domain.contract import ModelPath, OutputError, Routing, history_entry, outcome, read_line, response
 from harnessgateway.errors import Invalid
 
 
@@ -59,3 +59,21 @@ def test_outcome_and_response():
     assert doc["status"] == "failed" and doc["output"][0]["content"][0]["text"] == "hi"
     assert doc["error"]["code"] == "server_error" and doc["metadata"]["hg_error_code"] == "cli_error"
     assert doc["metadata"]["a"] == "b" and doc["completed_at"] == 2
+
+
+def test_a_history_entry_keeps_the_conversation_and_drops_file_bytes():
+    parts_in = [{"type": "input_text", "text": "look"},
+                {"type": "input_file", "filename": "a.txt", "file_data": "data:text/plain;base64,aGk="},
+                {"type": "input_image", "image_url": "data:image/png;base64,iVBOR", "detail": "auto"},
+                {"type": "input_image", "image_url": "https://x.example/a.png", "detail": "auto"}]
+    body = {"input": [{"role": "user", "content": parts_in}]}
+    resp = {"id": "resp_1", "output": [{"type": "message", "role": "assistant",
+                                        "content": [{"type": "output_text", "text": "hi"}]}]}
+    e = history_entry("resp_1", "completed", body, resp)
+    parts = e["input"][0]["content"]
+    assert e["status"] == "completed" and e["output"] == resp["output"]
+    assert parts[1] == {"type": "input_file", "filename": "a.txt"} and parts[2] == {"type": "input_image", "detail": "auto"}
+    assert parts[3]["image_url"] == "https://x.example/a.png"
+    assert history_entry("resp_2", "cancelled", {"input": "hi"}, None) == {
+        "id": "resp_2", "status": "cancelled", "input": [{"type": "message", "role": "user",
+                                                           "content": [{"type": "input_text", "text": "hi"}]}], "output": []}

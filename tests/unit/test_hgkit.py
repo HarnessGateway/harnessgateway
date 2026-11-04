@@ -172,3 +172,37 @@ def test_the_command_line_check(tmp_path):
     for args in (["check", "--help"], ["check", str(tmp_path / "absent.jsonl")], []):
         r = subprocess.run([sys.executable, "-m", "hgkit", *args], capture_output=True, text=True, env=env)
         assert r.returncode == 2 and r.stdout == "" and r.stderr.strip()
+
+
+PATCH = {"type": "create_file", "path": "hello.py", "diff": "+print(1)"}
+SHELL_OUT = [{"stdout": "1\n", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}]
+HISTORY = [
+    {"id": "resp_1", "status": "completed",
+     "input": [{"type": "message", "role": "system", "content": "Be brief."},
+               {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "make hello.py"},
+                                                                {"type": "input_file", "filename": "spec.md"}]}],
+     "output": [{"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking"}]},
+                {"type": "apply_patch_call", "call_id": "c1", "operation": PATCH},
+                {"type": "apply_patch_call_output", "call_id": "c1", "status": "completed", "output": ""},
+                {"type": "shell_call", "call_id": "c2", "action": {"commands": ["python3 hello.py"]}},
+                {"type": "shell_call_output", "call_id": "c2", "output": SHELL_OUT},
+                {"type": "mcp_call", "id": "m1", "server_label": "docs", "name": "search", "arguments": "{\"q\": \"x\"}",
+                 "status": "completed", "output": "found"},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done."}]}]},
+    {"id": "resp_2", "status": "cancelled", "input": [{"type": "message", "role": "user", "content": "now tests"}],
+     "output": [{"type": "function_call", "call_id": "c3", "name": "WebSearch", "arguments": "{}"}]},
+]
+
+
+def test_history_and_transcript_render_the_conversation(tmp_path):
+    (tmp_path / "history.json").write_text(json.dumps(HISTORY))
+    req = Request({"input": "next"}, env={"HG_HISTORY": str(tmp_path / "history.json")})
+    assert req.history() == HISTORY
+    text = req.transcript()
+    assert text.splitlines() == [
+        "Instructions: Be brief.", "User: make hello.py [attached: spec.md]", "Created: hello.py", "Ran: python3 hello.py",
+        "  -> exit 0: 1", "Used: docs.search({\"q\": \"x\"})", "Assistant: Done.", "User: now tests", "Used: WebSearch({})",
+        "(this turn was interrupted before it finished)"]
+    assert req.transcript(limit=20).startswith("…") and len(req.transcript(limit=20)) == 21
+    assert Request({"input": "x"}, env={"HG_HISTORY": str(tmp_path / "absent.json")}).history() == [] \
+        and Request({"input": "x"}, env={}).transcript() == ""
