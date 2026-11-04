@@ -40,7 +40,6 @@ A folder `/workspace/<name>/`. Three files make it; the rest is for the people w
 | `seeds/workspace/` | tailored only: a starter project, when the purpose needs one |
 | `README.md` | Files; The command; Request fields (field → where it goes; the ignored ones); Output mapping; Continuity (how the CLI resumes, and from the history); Known limits; Tests. Tailored: also Purpose; May and may not (as proven); Operator settings |
 | `tests/` | recorded CLI output as fixtures, and a `test_run.py` that runs `run` on them and checks every line with `hgkit.check` |
-| `BUILD.md` | your journal (below) |
 
 A vanilla package has no `seeds/` unless the CLI cannot run headless without a config file, and then the minimum.
 Delete the template's `seeds/workspace/README.md`. `install` and `run` are executable and start with a shebang line.
@@ -77,48 +76,44 @@ beside it as its own package (default: yes, so the organization can tailor again
 
 ## Working with the person
 
-Each turn is one headless run, so you cannot wait for an answer inside a turn: ask by ending your reply, numbered,
-with a proposed default for each question, three to six at most, only what changes what you will build
-(`reference/tailoring.md` has the tailoring questions). Send the plan as a short table and ask for a go. Then work
-**one stage per turn** and end each turn with a short status and what comes next: every turn's end is a checkpoint
-the person can rewind to or branch from, and a long turn cannot be steered. Keep `BUILD.md` in the package folder
-current as you go (stage reached, the pinned version, decisions, hosts observed, what was recorded, what is left):
-it is how a resumed, rewound or forked session, or a turn that was interrupted, knows where it is. Explain each
-tailoring choice in one sentence as you make it; the README is the lasting version.
+Each turn is one headless run, so you cannot wait for an answer inside a turn: ask by ending your reply. Ask only
+what changes what you will build, numbered, with a proposed default for each, three to six at most
+(`reference/tailoring.md` has the tailoring questions). For a tailored package send the plan as a short table and
+ask for a go; for a vanilla one, build. Explain each tailoring choice in one sentence as you make it; the README is
+the lasting version. End with a short summary: what you pinned, the egress and why, what maps to what, the two
+continuity paths, what the operator must set, what you could not try. The person installs the package from the
+console (New harness from workspace, on this session's page); a turn on it is the real test, and the session page
+shows every host the door denied, which they bring back to you.
 
-## The stages
+## How to build one
 
-**1. Research.** From the CLI's official home (repository, documentation, registry page), the latest stable release
-and how it is installed on Linux; its headless mode and machine-readable output; how a session is resumed by id and
-where its store lives; how it takes a base URL, an API key and a model, and which API shapes it speaks; how prompts,
-telemetry and update checks are switched off; where it reads instruction files, permission rules, hooks, MCP
-config. Your knowledge may be stale: the current docs and `--help` win. End the turn with a findings table (the
-version you will pin, the hosts you expect, the mechanisms) and, for a tailored package, the plan.
+**Research the CLI first.** From its official home (repository, documentation, registry page): the latest stable
+release and how it is installed on Linux; its headless mode and machine-readable output; how a session is resumed
+by id and where its store lives; how it takes a base URL, an API key and a model, and which API shapes it speaks;
+how prompts, telemetry and update checks are switched off; where it reads instruction files, permission rules,
+hooks, MCP config. Your knowledge may be stale: the current docs and `--help` win.
 
-**2. Install and record.** Install the pinned release the documented way into `/tmp/tools`; scratch runs stay under
-`/tmp` (the workspace is snapshotted; only the package belongs in it). Run the CLI against this session's provider
-when the shapes match: `HG_PROVIDER_URL` (no `/v1`), `HG_PROVIDER_TOKEN`, `HG_PROVIDER_API`, `HG_MODEL`; pin the
-model. **Observe egress rather than guess it:** run both the install and the CLI through `assets/observe-egress.py`,
-which logs every host they ask for; those lists are `install.egress` and `run.egress`. Record as fixtures: a text
-turn, a tool turn, a resumed turn, a turn you kill mid-way (SIGTERM) and the turn that resumes it, a provider error,
-a stopped-short turn. A CLI whose shape differs from the provider's cannot be run here: write the mapping from its
-documented output, say so, and keep the fixtures to what you could record. End the turn with what was recorded.
+**Install it and record real runs.** Install the pinned release the documented way into `/tmp/tools`; scratch runs
+stay under `/tmp` (the workspace is snapshotted; only the package belongs in it). Run the CLI against this session's
+provider when the shapes match: `HG_PROVIDER_URL` (no `/v1`), `HG_PROVIDER_TOKEN`, `HG_PROVIDER_API`, `HG_MODEL`;
+pin the model. **Observe egress rather than guess it:** run both the install and the CLI through
+`assets/observe-egress.py`, which logs every host they ask for; those lists are `install.egress` and `run.egress`.
+Record as fixtures: a text turn, a tool turn, a resumed turn, a turn you kill mid-way (SIGTERM) and the turn that
+resumes it, a provider error, a stopped-short turn. A CLI whose shape differs from the provider's cannot be run
+here: write the mapping from its documented output, say so, and keep the fixtures to what you could record.
 
-**3. Write and validate.** `run` from the template; the mapping in `reference/request-fields.md` and
-`reference/events.md`; both continuity paths; `out.ignored([...])` for fields the CLI cannot honour; the CLI's raw
-lines in the log with `out.log(...)`. Then the checklist below, the tests, `install` run end to end into a scratch
-`$HG_TOOLS`, and hand back: the version pinned, the egress and why, what maps to what, the two continuity paths,
-what the operator must set, what you could not try. The person installs it from the console (New harness from
-workspace, on this session's page); a turn on it is the real test, and the session page shows every host the door
-denied, which they bring back to you.
+**Write `run` and validate it.** Start from the template; map the request with `reference/request-fields.md` and
+print events with `reference/events.md`; implement both continuity paths; `out.ignored([...])` for fields the CLI
+cannot honour; the CLI's raw lines in the log with `out.log(...)`. Then the checklist below, the tests, and
+`install` run end to end into a scratch `$HG_TOOLS`.
 
-**Tailored, between 1 and 2:** give it the purpose in `seeds/home` (the CLI's instruction file: what it does, how
-it answers, what it refuses); fence it inside with the CLI's permission mechanism (tools allowed, everything else
-denied, paths and commands restricted, a hook for what the rules cannot express); its tools as the `mcp` catalog with
-`allowed_tools` narrowed and each credential a declared `secret` bound to the server's host; its knobs as
-`settings` and `secrets`; `run.egress` only what the purpose needs beyond the provider and the catalog's hosts,
-including any host a login or OAuth flow redirects to; `run.timeout_s` to what a task takes. Then record, in stage
-2, a realistic run and a forbidden one (the path, host or tool it may not use) that shows the refusal.
+**Tailored: the organization's layer.** Give it the purpose in `seeds/home` (the CLI's instruction file: what it
+does, how it answers, what it refuses); fence it inside with the CLI's permission mechanism (tools allowed,
+everything else denied, paths and commands restricted, a hook for what the rules cannot express); its tools as the
+`mcp` catalog with `allowed_tools` narrowed and each credential a declared `secret` bound to the server's host; its
+knobs as `settings` and `secrets`; `run.egress` only what the purpose needs beyond the provider and the catalog's
+hosts, including any host a login or OAuth flow redirects to; `run.timeout_s` to what a task takes. Record a
+realistic run and a forbidden one (the path, host or tool it may not use) that shows the refusal.
 `reference/tailoring.md` has the layers and where each CLI keeps its mechanisms.
 
 ## The checklist, before any hand-back

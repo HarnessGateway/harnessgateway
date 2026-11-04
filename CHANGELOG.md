@@ -7,6 +7,13 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.3.1]
+
+### Changed
+
+- The builder's skill is a skill again: what a harness package is and how to build one, with the questions to ask
+  the person. The stages, the build journal and the per-turn pacing of 2.3.0 are gone.
+
 ## [2.3.0]
 
 ### Added

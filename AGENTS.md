@@ -9,6 +9,11 @@ through a **harness package** (a CLI with its configuration) in a gVisor sandbox
 keeping the session so the next request continues it. The request serves the task; the package defines the agent.
 Self-hosted is one organization; a SaaS adds tenants through the extension seam.
 
+A **harness package project** is a folder: `harness.json` (the manifest), `install` (the CLI, pinned, into `$HG_TOOLS`),
+`run` (one turn: the request in, Responses events out), optional `seeds/home` and `seeds/workspace`, a README and
+`tests/` on recorded output. `docs/packages.md` is the guide to building one; `packages/shell` is the template every
+package starts from; `packages/harness-package-builder` is the built-in agent that writes them.
+
 **`SPEC.md` is the specification.** Read it before changing behaviour, and change it first when the design changes.
 The code is checked against it; a change the spec does not describe is a spec change.
 
