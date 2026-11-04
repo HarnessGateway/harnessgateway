@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 - Providers: the console's **Replace key** is **Edit**, and `PUT /v1/providers/{name}` on an existing provider may
   leave `key` out to keep the stored one; a new provider still needs it.
 - API keys and initial passwords, shown once at creation, have a copy-to-clipboard button beside them.
+- The Playground is a one-off request: the harness / provider / model picker the chat has, the request on the
+  left, the response on the right; the curl, Python and TypeScript snippets are gone.
 
 ## [2.2.0]
 

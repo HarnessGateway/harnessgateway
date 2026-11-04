@@ -105,6 +105,12 @@ iframe.chat { width:100%; height:100%; border:0; display:block; background:#fff;
 .play { display:grid; grid-template-columns:1fr 1fr; gap:14px; height:calc(100vh - 150px); }
 .play textarea { flex:1; min-height:300px; }
 .play .out { display:flex; flex-direction:column; min-height:0; } .play .out pre { flex:1; overflow:auto; }
+.play #events { max-height:40%; overflow:auto; margin-bottom:10px; }
+.route { display:flex; align-items:center; gap:6px; margin-bottom:14px; padding:10px 14px; }
+.route select, .route input { border:0; background:transparent; padding:6px 8px; font-weight:600; max-width:260px; text-overflow:ellipsis; }
+.route select:hover, .route input:hover, .route select:focus, .route input:focus { background:var(--hover); box-shadow:none; }
+.route input { font-weight:500; width:240px; } .route input::placeholder { color:var(--muted); font-weight:500; }
+.route .sep { color:var(--muted); }
 .ev { font:12px/1.5 var(--mono); padding:3px 0; border-bottom:1px dashed var(--line); color:var(--soft); } .ev b { color:var(--blue); }
 
 /* harness cards */
