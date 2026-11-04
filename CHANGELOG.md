@@ -7,6 +7,21 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.3.2]
+
+### Fixed
+
+- A package's output may carry a NUL character (a binary read back as text, echoed by the CLI); Postgres holds none
+  in text or jsonb, so the turn's events could not be stored and the turn failed. The database boundary now stands
+  U+FFFD in for NUL, in every parameter at any depth.
+- When delivering a turn's output failed, the node stopped reading the process's stdout, the process could not reach
+  its end, and the turn's failure was reported as a bare `TimeoutError` in place of its cause. The node drains the
+  output to its end and reports the delivery failure; a process that still does not exit is logged, not an error.
+- A box's `/tmp` is a tmpfs, and the kernel charges it to the box's memory: with the default capacity (4096 MB of
+  memory, a 4096 MB `/tmp`) a package that filled `/tmp` starved its own processes and the box was killed. The memory
+  limit is now `memory_mb` for the processes plus `tmp_mb` for `/tmp`. A box killed for its memory is reported as
+  such ("the sandbox ran out of memory: …") in place of an exit code without a terminal event.
+
 ## [2.3.1]
 
 ### Changed

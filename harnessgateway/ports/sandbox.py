@@ -46,6 +46,10 @@ class Box(Protocol):
 
     async def alive(self) -> bool: ...
 
+    async def oom_killed(self) -> bool:
+        """Whether the box died of its memory limit."""
+        ...
+
     async def sh(self, script: str, *args: str, timeout: float = 300) -> bytes:
         """Run a bash script inside the box as its user; its stdout."""
         ...

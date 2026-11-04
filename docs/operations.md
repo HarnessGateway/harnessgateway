@@ -61,7 +61,7 @@ them:
      -e HG_API_URL=https://hg.internal -e HG_GATEWAY_URL=https://hg.internal/gateway \
      -e HG_NODE_JOIN_TOKEN=hgj_… -e HG_UPLINK_NETWORK=bridge -e HG_NODE_DIR=/var/lib/harnessgateway \
      -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \
-     ghcr.io/harnessgateway/harnessgateway:2.3.1 node
+     ghcr.io/harnessgateway/harnessgateway:2.3.2 node
    ```
 
    The node directory is mounted at the same path inside and out: sandboxes are sibling containers that bind-mount
@@ -103,8 +103,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_NODE_SLOTS` | node | `4` | turns run at once |
 | `HG_NODE_WARM_MAX` | node | `32` | idle sandboxes kept warm |
 | `HG_NODE_DIR` | node | `/var/lib/harnessgateway` | sessions, tools, the node's CA and credential |
-| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.3.1` | the image every sandbox runs |
-| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.3.1` | the image doors run |
+| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.3.2` | the image every sandbox runs |
+| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.3.2` | the image doors run |
 | `HG_UPLINK_NETWORK` | node | `hg-uplink` | the Docker network doors join to reach the gateway and the internet |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | node | — | see above |
 | `HG_ALLOW_PRIVATE_EGRESS` | all | `0` | let providers and sandbox egress reach private addresses |
@@ -116,7 +116,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_CONSOLE_KEY`, `HG_CONSOLE_PORT` | compose `console` | —, `8800` | the admin key the consoles use (written by `install.sh`); their port |
 | `HG_DEFAULT_<FIELD>` | api | see below | an organization's capacity unless an extension sets its own |
 
-Capacity fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096), `pids` (1024), `tmp_mb` (4096),
+Capacity fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: the box's processes), `pids` (1024),
+`tmp_mb` (4096: its `/tmp`, a tmpfs charged to the box on top of `memory_mb`),
 `max_sandboxes` (0: none), `max_running_turns` (0: none), `idle_ttl_s` (300: a warm sandbox's idle life),
 `turn_timeout_s` (0: none), `retention_days` (0: sessions are kept until deleted), `node_pool` (""),
 `observability` (`metadata` or `full`: whether traces keep bodies).

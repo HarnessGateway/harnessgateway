@@ -121,6 +121,8 @@ The package's `run` prints one JSON object per stdout line. A line that parses a
 - Exactly one terminal event (`response.completed`, `response.incomplete`, `response.failed`) ends the package's
   output; anything printed after it fails the turn.
 - Delta events stream live and are discarded once their item is done; every other event is kept.
+- Stored text holds no NUL: where a package's output carries U+0000 (a binary read back as text), U+FFFD stands
+  in, in every stored record. Nothing else in an event is changed.
 - The final `Response` echoes the request's parameters (secrets redacted), the package's `output` (or the items it
   completed), `usage`, `error`/`incomplete_details`, and `metadata`: the request's, the package's, plus `session_id`
   and, on platform-caused endings, `hg_reason`.
@@ -281,7 +283,9 @@ One per session at a time, on one node:
 
 - gVisor (`runsc`); another runtime only when the operator sets `HG_UNSAFE_RUNTIME` for development.
 - uid 10001, no capabilities, `no-new-privileges`, read-only root, `/tmp` a size-limited tmpfs.
-- CPU, memory, swap (= memory), pids limits from the org's capacity.
+- CPU, memory, swap (= memory), pids limits from the org's capacity. The memory limit is `memory_mb` for the box's
+  processes plus `tmp_mb`: `/tmp` is a tmpfs, which the kernel charges to the box. A box killed for its memory ends
+  its turn with a failure that says so.
 - Writable: `/workspace`, `/state`, `/home/hg` (bind mounts of the node's per-session directories). Read-only:
   `/run/hg`, `/opt/hg/package`, `/opt/hg/tools`, `/opt/hg/runtime`.
 - An internal network whose only peer is the box's door; no DNS (the door resolves names); proxy variables point at the
@@ -435,7 +439,8 @@ or URL cannot have it injected; it is refused rather than given the value.
   There is no org-management API.
 - **Multi-tenant**: the extension seam (§13) authenticates its own users, creates and suspends orgs, sets each org's
   capacity, and gates turns. The core services (`Orgs`, `Keys`, …) are the API it calls.
-- **Capacity** (per org): `vcpus`, `memory_mb`, `pids`, `tmp_mb` per box; `max_sandboxes`, `max_running_turns`;
+- **Capacity** (per org): `vcpus`, `memory_mb` (the processes), `pids`, `tmp_mb` (`/tmp`, a tmpfs charged on top of
+  `memory_mb`) per box; `max_sandboxes`, `max_running_turns`;
   `idle_ttl_s`; `turn_timeout_s`; `retention_days`; `node_pool`; `observability` (§11). Self-hosted takes defaults from
   configuration.
 

@@ -56,8 +56,19 @@ class Tx:
 
 
 def _params(args: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Dicts are stored as jsonb; lists stay Postgres arrays (for = ANY(...))."""
-    return tuple(Jsonb(a) if isinstance(a, dict) else a for a in args)
+    """Dicts are stored as jsonb; lists stay Postgres arrays (for = ANY(...)). Postgres text and jsonb hold no NUL, and
+    a package's output may carry one (a binary read back as text): U+FFFD stands in."""
+    return tuple(Jsonb(_without_nul(a)) if isinstance(a, dict) else _without_nul(a) for a in args)
+
+
+def _without_nul(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("\0", "\ufffd")
+    if isinstance(value, dict):
+        return {k: _without_nul(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_without_nul(v) for v in value]
+    return value
 
 
 class Database:
