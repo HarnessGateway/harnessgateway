@@ -3,7 +3,7 @@ is metered without listing the store (SPEC §12)."""
 from __future__ import annotations
 
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from ..db import Database
@@ -46,13 +46,18 @@ class Objects:
     async def get(self, key: str) -> bytes:
         return await self.store.get(key)
 
-    async def copy(self, src: str, dst: str, *, org_id: str | None, kind: str) -> int:
-        """`src` copied to `dst`, streamed through a file so a large snapshot never sits in memory; its size."""
-        with tempfile.NamedTemporaryFile(prefix="hg-copy-") as tmp:
+    async def copy(self, src: str, dst: str, *, org_id: str | None, kind: str,
+                   transform: Callable[[Path, Path], None] | None = None) -> int:
+        """`src` copied to `dst`, streamed through a file so a large snapshot never sits in memory (through
+        `transform(src_file, dst_file)` when given); its size."""
+        with tempfile.NamedTemporaryFile(prefix="hg-copy-") as tmp, tempfile.NamedTemporaryFile(prefix="hg-copy-") as out:
             async for chunk in self.store.stream(src):
                 tmp.write(chunk)
             tmp.flush()
-            return await self.put_file(dst, Path(tmp.name), org_id=org_id, kind=kind)
+            if transform is None:
+                return await self.put_file(dst, Path(tmp.name), org_id=org_id, kind=kind)
+            transform(Path(tmp.name), Path(out.name))
+            return await self.put_file(dst, Path(out.name), org_id=org_id, kind=kind)
 
     def stream(self, key: str) -> AsyncIterator[bytes]:
         return self.store.stream(key)

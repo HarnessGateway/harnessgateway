@@ -400,6 +400,16 @@ def _run(argv: list[str], env: dict[str, str], prompt: str, mapper: Mapper) -> t
     return code, "".join(tail)
 
 
+def with_history(req: Request, prompt: str) -> str:
+    """The earlier conversation as context, for a turn the CLI's own session does not cover (a fresh CLI session
+    after a fork onto this harness, or a session the CLI lost)."""
+    transcript = req.transcript()
+    if not transcript:
+        return prompt
+    return ("Earlier in this conversation, before this turn (the platform's record; continue from it):\n\n"
+            f"{transcript}\n\n---\n\n{prompt}")
+
+
 def run(out: Emitter) -> None:
     req = Request.load()
     state = req.state
@@ -421,13 +431,13 @@ def run(out: Emitter) -> None:
     env = environment(req)
     resume = state.get("session")
     mapper = Mapper(out, state, labels)
-    code, stderr = _run(command(req, servers, resume=resume), env, prompt, mapper)
+    code, stderr = _run(command(req, servers, resume=resume), env, prompt if resume else with_history(req, prompt), mapper)
     said = stderr + mapper.api_error + json.dumps((mapper.result or {}).get("errors") or [])
     if resume and not mapper.init_seen and "No conversation found" in said:
-        out.log(f"the CLI session {resume} is gone; starting a new one")
+        out.log(f"the CLI session {resume} is gone; starting a new one from the session's history")
         state.set("session", "")
         mapper = Mapper(out, state, labels)
-        code, stderr = _run(command(req, servers), env, prompt, mapper)
+        code, stderr = _run(command(req, servers), env, with_history(req, prompt), mapper)
     mapper.finish(code, stderr)
 
 

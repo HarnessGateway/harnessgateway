@@ -90,7 +90,8 @@ line. Exactly one terminal event (`response.completed`, `.incomplete`, `.failed`
 validates every event against the OpenAI SDK's models and assigns sequence numbers.
 
 What a turn sees (SPEC §5.6): `HG_REQUEST`, `HG_FILES` (file_id inputs and `index.json`), `HG_MCP` (the turn's
-servers, header values holding placeholders), `HG_WORKSPACE`, `HG_STATE`, `HOME`, `HG_PACKAGE_DIR`, `HG_TOOLS`,
+servers, header values holding placeholders), `HG_HISTORY` (the session's earlier turns, in Responses form),
+`HG_WORKSPACE`, `HG_STATE`, `HOME`, `HG_PACKAGE_DIR`, `HG_TOOLS`,
 `HG_PACKAGE_VERSION`, `HG_SESSION`, `HG_RESPONSE`, `HG_TURN`, `HG_MODEL`, `HG_PROVIDER_API`, `HG_PROVIDER_URL`
 (`http://hg-door:8080`: point the CLI's base URL here), `HG_PROVIDER_TOKEN` (use it as the API key), each declared
 setting as a variable, each declared secret as a variable holding its placeholder.
@@ -112,6 +113,8 @@ system = req.instructions                  # `instructions` + system/developer m
 model, provider = req.model, req.provider  # provider.url (no /v1), provider.token, provider.api
 servers = req.mcp_servers()                # [{label, url, transport, headers, allowed_tools}]
 resume = req.state.get("session")          # small key/values kept with the session ($HG_STATE)
+earlier = req.history()                    # the session's earlier turns: [{id, status, input, output}]
+context = req.transcript()                 # the same as plain text, for a CLI that must be told
 
 out.think("Reading the tests")             # reasoning, streamed
 out.say("Hel"); out.say("lo")              # assistant text, streamed
@@ -135,11 +138,26 @@ placeholder exactly where the CLI would put the token (an `Authorization` header
 secret to that host in the manifest. The provider key is the same idea: `HG_PROVIDER_TOKEN` is a per-turn token the
 gateway exchanges for the organization's real key.
 
-## Persistence
+## Persistence and continuity
 
 The workspace and `$HG_STATE` survive across turns and sandboxes; under `$HOME`, only the paths in `persist`
 (use it for the CLI's session store, nothing else). Everything else in `$HOME` is reseeded from `seeds/home` in every
 new sandbox, so the agent's configuration is always the package's.
+
+A conversation reaches the next turn two ways, and `run` must handle both, because a client may stop or interrupt a
+turn, rewind to an earlier response, branch from one, or continue on another harness, all by naming a response
+(SPEC §6.3), and the platform never tells the package which happened:
+
+1. **The CLI's own session**, where `persist` keeps its store. Save the CLI's session id in `req.state` the moment the
+   CLI reports it, never only at the end of a successful turn: a stopped turn still has to resume. Resume with it on
+   the next turn.
+2. **The history** (`req.history()`, `$HG_HISTORY`): every earlier turn's input and output items, in Responses form,
+   including a cancelled turn's partial output. When there is no session id, or the CLI refuses the one saved, give
+   the CLI the conversation from the history (`req.transcript()` renders it as text; a package may instead write it
+   into the CLI's own transcript format) and start a fresh CLI session. A fork onto this harness from another arrives
+   this way: the workspace and the history, nothing of the other CLI.
+
+Native resume is the richer path; the history is what makes every path work.
 
 ## Your organization's agent
 
@@ -164,6 +182,9 @@ passes live.
   installed) reads the whole output as the platform does and names the first line and field it would refuse.
 - **In tests:** `hgkit.check(text)` returns `(events, outcome)` or raises `OutputError`; run `run` on recorded CLI
   output and assert on the outcome. The template's `tests/` show the shape.
+- **Continuity:** before a package is handed over, prove with real runs that a turn killed mid-way (SIGTERM to the
+  CLI) is resumed by the next, that a first turn given a history continues the conversation, that a provider error
+  and a stopped-short turn map cleanly, and that no placeholder or token appears in what `run` prints.
 
 Live: install (**Install** on the draft in the console, or `POST /v1/harnesses` with a multipart `package` archive),
 then send a turn with `"model": "my-agent/provider/model"`, and read `GET /v1/traces/{response_id}` for the harness's

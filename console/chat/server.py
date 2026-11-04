@@ -4,8 +4,9 @@ folded under each reply, and a side panel with the session's workspace files tha
 HTML pages run live; images, SVG, PDF, audio and video play; markdown, notebooks, CSV, JSON, code and text render in
 place at any size; Word documents, spreadsheets and Mermaid diagrams render in a sandbox. Files you attach go to the
 agent with your message. The header picks the harness and the provider from what your organization has installed and
-connected; type the model, or leave it empty for the harness's default. A chat keeps its harness; its provider and
-model can change from one message to the next.
+connected; type the model, or leave it empty for the harness's default. Harness, provider and model can change
+from one message to the next; another harness continues the chat in a new session with the workspace and the
+conversation so far.
 
 Turns run in the background on the platform: move to another chat or start a new one while the agent works, and come
 back to it (a running chat pulses in the sidebar); a reload picks running turns up again. Stop ends a turn; sending a
@@ -45,6 +46,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 BODY_MAX = 32 * 1024 * 1024                    # an attachment (20 MB) as base64, with room to spare
 ATTACH_MAX = 20 * 1024 * 1024
 CACHE_BYTES = 256 * 1024 * 1024                # workspace files kept in memory, so a video seeks without refetching
+SAVING_RETRIES, SAVING_WAIT_S = 60, 1.5       # a fork asked for while the turn before it is still being saved
 SESSION = re.compile(r"cntr_[0-9a-f]{8,64}")
 RESPONSE = re.compile(r"resp_[0-9a-f]{8,64}")
 RANGE = re.compile(r"bytes=(\d*)-(\d*)")
@@ -428,18 +430,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         try:
-            with self.http.stream(method, path, timeout=httpx.Timeout(60, read=300), **kwargs) as r:
-                if r.status_code >= 400:
-                    r.read()
-                    try:
-                        message = r.json()["error"]["message"]
-                    except (ValueError, KeyError, TypeError):
-                        message = r.text[:500]
-                    self._send({"type": "end", "status": "failed", "error": message})
-                    return
-                for line in r.iter_lines():
-                    if line.startswith("data: "):
-                        self._event(json.loads(line[6:]))
+            for attempt in range(SAVING_RETRIES):
+                with self.http.stream(method, path, timeout=httpx.Timeout(60, read=300), **kwargs) as r:
+                    if r.status_code >= 400:
+                        r.read()
+                        if r.status_code == 409 and "being saved" in r.text and attempt < SAVING_RETRIES - 1:
+                            time.sleep(SAVING_WAIT_S)     # a fork right after a turn: its state is still being saved
+                            continue
+                        try:
+                            message = r.json()["error"]["message"]
+                        except (ValueError, KeyError, TypeError):
+                            message = r.text[:500]
+                        self._send({"type": "end", "status": "failed", "error": message})
+                        return
+                    for line in r.iter_lines():
+                        if line.startswith("data: "):
+                            self._event(json.loads(line[6:]))
+                return
         except (BrokenPipeError, ConnectionResetError):
             pass                                          # the page went away; the turn goes on
         except Exception as e:                            # the platform went away mid-turn

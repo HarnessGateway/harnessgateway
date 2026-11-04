@@ -111,17 +111,15 @@ function render() {
   renderChats();
   $("session").textContent = c && c.session ? c.session : "";
   if (shownChat !== current) { shownChat = current; if (c) setPick(c.model); }
-  const locked = !blank;                              // a session keeps its harness; provider and model may change
-  const hv = $("harness").value, all = catalog.harnesses.map(h => h.name);
-  if (locked) options($("harness"), [], hv);          // only its own harness, so the label is as wide as its name
-  else if ($("harness").options.length !== all.length) options($("harness"), all, hv);
-  $("harness").disabled = locked; $("harness").parentElement.classList.toggle("locked", locked);
-  $("harness").parentElement.title = locked ? "A chat keeps its harness: start a new chat for another" : "Harness";
+  const hv = $("harness").value, all = catalog.harnesses.map(h => h.name);   // harness, provider and model may all change
+  if ($("harness").options.length !== all.length) options($("harness"), all, hv);
+  $("harness").parentElement.title = blank ? "Harness" : "Harness: another one continues this chat on it, in a new session";
   if (blank) col.innerHTML = `<div class="hello"><h1>What should we build?</h1><p>The agent works in its own sandbox. What it makes opens on the right.</p></div>`;
   else {
     const busy = !!liveTurn(c);
     col.innerHTML = c.turns.map((t, i) => t.role === "user"
       ? `<div class="msg user" id="t${i}"><div class="bubble">${esc(t.text)}</div>` + (t.attachments && t.attachments.length ? `<div class="attached">` + t.attachments.map(a => `<span class="tile" style="cursor:default">${badge(a.name)}<span class="nm">${esc(a.name)}</span></span>`).join("") + `</div>` : "") +
+        (t.note ? `<div class="status">${esc(t.note)}</div>` : "") +
         `<div class="actions"><button data-user="copy" title="Copy">${ic(I.copy, 16)}<span></span></button>` +
         (busy ? "" : `<button data-user="rewind" title="Rewind: take this message back, edit it and send again; the conversation continues from before it, in a new branch">${ic(I.rewind, 16)}<span>Rewind</span></button>`) + `</div></div>`
       : `<div class="msg assistant" id="t${i}">${renderAssistant(c, t, isLive(t), i)}</div>`).join("");
@@ -280,10 +278,12 @@ async function send() {
     running.interrupted = true;
     post("api/cancel", { id: running.rid }).catch(() => {});
   }
+  const from = c.turns.length ? (c.model || "").split("/")[0] : "", to = model.split("/")[0];
   c.model = model;
   const attachments = pending.filter(p => p.id).map(p => ({ id: p.id, name: p.name }));
   pending = []; renderPending();
-  c.turns.push({ role: "user", text, attachments });
+  c.turns.push({ role: "user", text, attachments,
+                 note: from && from !== to ? `Continued on ${to}: a new session with the workspace and the conversation so far; the earlier session stays under Sessions.` : "" });
   const turn = { role: "assistant", segments: [], status: null, error: null, rid: null };
   c.turns.push(turn);
   const before = Object.fromEntries(files.map(f => [f.path, f]));

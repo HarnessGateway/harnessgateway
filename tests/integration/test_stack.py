@@ -55,8 +55,12 @@ def test_a_turn_runs_in_a_sandbox_and_the_session_continues(api):
     r1 = turn(api, {"input": "echo one > a.txt; id -u; pwd"})
     assert r1["status"] == "completed" and text(r1) == "10001\n/workspace\n"
     assert r1["output"][0]["type"] == "shell_call" and r1["metadata"]["session_id"].startswith("cntr_")
-    r2 = turn(api, {"input": "cat a.txt; echo $HG_TURN", "previous_response_id": r1["id"]})
-    assert r2["status"] == "completed" and text(r2) == "one\n2\n"
+    r2 = turn(api, {"input": "cat a.txt; echo $HG_TURN; jq -c '[.[] | [.id, .status, .input[0].content[0].text, "
+                            "(.output[] | select(.type == \"message\") | .content[0].text)]]' $HG_HISTORY",
+                    "previous_response_id": r1["id"]})
+    assert r2["status"] == "completed" and text(r2).startswith("one\n2\n")
+    assert json.loads(text(r2).splitlines()[2]) == [[r1["id"], "completed", "echo one > a.txt; id -u; pwd",
+                                                      "10001\n/workspace\n"]]
     assert r2["metadata"]["session_id"] == r1["metadata"]["session_id"]
     files = api.get(f"/v1/containers/{r1['metadata']['session_id']}/files").json()["data"]
     assert "/workspace/a.txt" in {f["path"] for f in files}
@@ -189,5 +193,24 @@ def test_a_package_adds_the_organizations_seeds_settings_secrets_and_mcp(api):
         assert lines[4].startswith("Bearer hgs_") and "test-token-123" not in json.dumps(got)
         if os.environ.get("HG_TEST_MCP_SERVER"):             # a test server answering mcp.hg-test.dev, checking the token
             assert json.loads(lines[5]) == {"authorized": True}
+        # a switch of harness: previous_response_id from a shell session, this harness in model
+        s1 = turn(api, {"input": "echo carried > a.txt; echo kept > $HG_STATE/k"})
+        s2 = turn(api, {"input": "cat a.txt; cat $HG_STATE/k", "previous_response_id": s1["id"]})
+        assert text(s2) == "carried\nkept\n"
+        for _ in range(100):                                  # once s2's save has landed
+            sw = api.post("/v1/responses", json={"model": "hg-test-seeds", "previous_response_id": s2["id"],
+                                                 "input": "cat a.txt; ls $HG_STATE | wc -l; echo $GREETING; cat $HOME/AGENTS.md; "
+                                                          "jq -r '.[].input[0].content[0].text' $HG_HISTORY"})
+            if sw.status_code != 409:
+                break
+            time.sleep(0.3)
+        assert sw.status_code == 200, sw.text
+        got = sw.json()
+        assert got["status"] == "completed", got
+        assert text(got).splitlines() == ["carried", "0", "hi", "be kind", "echo carried > a.txt; echo kept > $HG_STATE/k",
+                                          "cat a.txt; cat $HG_STATE/k"]
+        sid = got["metadata"]["session_id"]
+        c = api.get(f"/v1/containers/{sid}").json()["metadata"]
+        assert sid != s1["metadata"]["session_id"] and c["harness"] == "hg-test-seeds" and c["forked_from"] == s2["id"]
     finally:
         api.delete("/v1/harnesses/hg-test-seeds")

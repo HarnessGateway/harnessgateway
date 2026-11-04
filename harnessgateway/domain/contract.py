@@ -125,6 +125,25 @@ def input_items(body: dict[str, Any]) -> list[dict[str, Any]]:
     return [i for i in given or [] if isinstance(i, dict)]
 
 
+def history_entry(rid: str, status: str, body: dict[str, Any], response: dict[str, Any] | None) -> dict[str, Any]:
+    """One earlier turn as a package sees it in the session's history (SPEC §5.6): its input items with any file
+    bytes left out, and the output items it produced, both in Responses form."""
+    inputs = []
+    for item in input_items(body):
+        item = dict(item)
+        if isinstance(item.get("content"), list):
+            item["content"] = [_without_bytes(p) for p in item["content"]]
+        inputs.append(item)
+    return {"id": rid, "status": status, "input": inputs, "output": list((response or {}).get("output") or [])}
+
+
+def _without_bytes(part: Any) -> Any:
+    if isinstance(part, dict) and part.get("type") in ("input_file", "input_image"):
+        return {k: v for k, v in part.items()
+                if k != "file_data" and not (k == "image_url" and isinstance(v, str) and v.startswith("data:"))}
+    return part
+
+
 def response(*, rid: str, body: dict[str, Any], created: float, status: str, output: list[dict[str, Any]] | None = None,
              usage: dict[str, Any] | None = None, error: dict[str, Any] | None = None,
              incomplete: dict[str, Any] | None = None, metadata: dict[str, str] | None = None,

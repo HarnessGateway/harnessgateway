@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .. import ids
-from ..db import Database, Tx
+from ..db import Database, Tx, dumps
 from ..domain import contract, egress
 from ..domain.capacity import Capacity
 from ..domain.manifest import Manifest
@@ -25,7 +25,7 @@ from ..extensions import Extensions, TurnSummary
 from .harnesses import archive_key, secret_context
 from .objects import Objects, org_key
 from .principal import NodeIdentity
-from .turns import conclude, record_events, request_body
+from .turns import conclude, history, record_events, request_body
 from .vault import Vault
 
 LOST_AFTER_S = 45
@@ -195,12 +195,15 @@ class Scheduler:
         ops = await tx.all("SELECT id, op, path, object_key FROM container_ops WHERE session_id = %s AND applied_at IS NULL "
                            "ORDER BY created_at", session["id"])
         org_id, sid, o = turn["org_id"], session["id"], self.objects
+        history_key = org_key(org_id, "turns", rid, "history.json")
+        await o.put(history_key, dumps(await history(tx, o, session, turn["seq"])).encode(), org_id=org_id, kind="request")
         packages = {"digest": session["digest"], "url": o.link_get(archive_key(session["digest"])),
                     "manifest": manifest.model_dump()}
         return {
             "turn_id": rid, "org_id": org_id, "session_id": sid, "seq": turn["seq"], "harness": session["harness"],
             "model": turn["provider_model"], "store": session["store"], "held": held, "timeout_s": timeout,
             "observability": capacity.observability, "package": packages, "request_url": o.link_get(turn["request_key"]),
+            "history_url": o.link_get(history_key),
             "box": {"vcpus": capacity.vcpus, "memory_mb": capacity.memory_mb, "pids": capacity.pids,
                     "tmp_mb": capacity.tmp_mb, "idle_ttl_s": capacity.idle_ttl_s},
             "egress": {"run": egress.Policy.of(org["egress"], manifest.run_entries()).entries(),

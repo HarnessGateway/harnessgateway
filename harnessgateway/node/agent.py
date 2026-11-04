@@ -392,8 +392,7 @@ class Node:
             start, started = time.time(), time.monotonic()
             try:
                 await box.start()
-                proc = await box.exec(["bash", "-c", 'mkdir -p "$HOME" && cd /tmp && if [ -x /opt/hg/package/install ]; '
-                                       'then exec /opt/hg/package/install; else exec bash /opt/hg/package/install.sh; fi'], {})
+                proc = await box.exec(["bash", "-c", 'mkdir -p "$HOME" && cd /tmp && exec /opt/hg/package/install'], {})
                 code, tail = await self._drain(proc, manifest["install"]["timeout_s"])
                 if code is None:
                     raise InstallFailed(f"install ran past its {manifest['install']['timeout_s']}s")
@@ -482,6 +481,7 @@ class Node:
         """/run/hg (a directory only the node writes), the staged container files applied, and the door's rules."""
         run = empty_dir(self.dir / "sessions" / job["session_id"] / "run")
         await self.client.download(job["request_url"], run / "request.json")
+        await self.client.download(job["history_url"], run / "history.json")
         (run / "mcp.json").write_text(json.dumps(job["mcp"]))
         files = empty_dir(run / "files")
         index = {}
@@ -576,10 +576,10 @@ class Node:
     def _env(job: dict[str, Any]) -> dict[str, str]:
         provider = job["provider"] or {}
         return {**job["env"], "HG_CONTRACT": "1", "HG_REQUEST": "/run/hg/request.json", "HG_FILES": "/run/hg/files",
-                "HG_MCP": "/run/hg/mcp.json", "HG_WORKSPACE": state.BOX_WORKSPACE, "HG_STATE": state.BOX_STATE,
-                "HOME": state.BOX_HOME, "HG_PACKAGE_DIR": "/opt/hg/package", "HG_TOOLS": "/opt/hg/tools",
-                "HG_SESSION": job["session_id"], "HG_RESPONSE": job["turn_id"], "HG_TURN": str(job["seq"]),
-                "HG_PACKAGE_VERSION": str(job["package"]["manifest"]["version"]),
+                "HG_MCP": "/run/hg/mcp.json", "HG_HISTORY": "/run/hg/history.json", "HG_WORKSPACE": state.BOX_WORKSPACE,
+                "HG_STATE": state.BOX_STATE, "HOME": state.BOX_HOME, "HG_PACKAGE_DIR": "/opt/hg/package",
+                "HG_TOOLS": "/opt/hg/tools", "HG_SESSION": job["session_id"], "HG_RESPONSE": job["turn_id"],
+                "HG_TURN": str(job["seq"]), "HG_PACKAGE_VERSION": str(job["package"]["manifest"]["version"]),
                 "HG_MODEL": job["model"] or "", "HG_PROVIDER_API": provider.get("api", ""),
                 "HG_PROVIDER_URL": "http://hg-door:8080" if provider else "", "HG_PROVIDER_TOKEN": provider.get("token", "")}
 

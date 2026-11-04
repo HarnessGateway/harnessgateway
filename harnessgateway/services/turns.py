@@ -2,8 +2,10 @@
 
 `Turns.create` routes `model` to a harness and a provider, resolves the turn's MCP servers (taking the caller's own
 credentials out of the request), lets extensions admit it, and queues it on its session: the one `previous_response_id`
-names when that response is the session's last, else a fork, a new session restored from the state saved after that
-response (its checkpoint), as the Responses API's tree of responses means it. `EventBus` wakes every stream
+names when that response is the session's last and the harness is the same, else a fork, a new session restored from
+the state saved after that response (its checkpoint), as the Responses API's tree of responses means it. A fork onto
+another harness carries the workspace only (the old harness's state is the old CLI's), plus the conversation, which
+every turn receives as its session's history in Responses form. `EventBus` wakes every stream
 following a turn, across API replicas, through Postgres NOTIFY. `record_events` and `conclude` are the writes every
 side of a turn shares."""
 from __future__ import annotations
@@ -11,9 +13,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import posixpath
+import tarfile
 import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from .. import ids
@@ -98,6 +103,42 @@ async def record_events(tx: Tx, turn: dict[str, Any], events: list[dict[str, Any
 
 async def request_body(objects: Objects, turn: dict[str, Any]) -> dict[str, Any]:
     return json.loads(await objects.get(turn["request_key"]))  # type: ignore[no-any-return]
+
+
+def _workspace_only(src: Path, dst: Path) -> None:
+    """A snapshot archive reduced to its workspace: what a fork onto another harness carries."""
+    with tarfile.open(src, "r:gz") as tin, tarfile.open(dst, "w:gz") as tout:
+        for m in tin:
+            name = posixpath.normpath(m.name.removeprefix("./"))
+            if name == "workspace" or name.startswith("workspace/"):
+                tout.addfile(m, tin.extractfile(m) if m.isfile() else None)
+
+
+async def history(tx: Tx, objects: Objects, session: dict[str, Any], before_seq: int) -> list[dict[str, Any]]:
+    """The session's earlier turns in order, as a package receives them (SPEC §5.6): through every fork back to the
+    root, each turn as `contract.history_entry`. A turn whose request is gone is left out."""
+    chain: list[tuple[dict[str, Any], int]] = []
+    s, upto = session, before_seq - 1
+    while True:
+        chain.append((s, upto))
+        if not s.get("forked_from"):
+            break
+        prev = await tx.one("SELECT session_id, seq FROM turns WHERE id = %s", s["forked_from"])
+        parent = await tx.one("SELECT * FROM sessions WHERE id = %s", prev["session_id"]) if prev else None
+        if not prev or not parent:
+            break
+        s, upto = parent, prev["seq"]
+    out: list[dict[str, Any]] = []
+    for s, upto in reversed(chain):
+        rows = await tx.all("SELECT id, status, request_key, response FROM turns WHERE session_id = %s AND seq <= %s "
+                            "AND status <> 'queued' ORDER BY seq", s["id"], upto)
+        for t in rows:
+            try:
+                body = await request_body(objects, t)
+            except KeyError:
+                continue
+            out.append(contract.history_entry(t["id"], t["status"], body, t["response"]))
+    return out
 
 
 async def completed_items(tx: Tx, rid: str) -> list[dict[str, Any]]:
@@ -187,7 +228,7 @@ class Turns:
         harness = await tx.one("SELECT * FROM harnesses WHERE name = %s", path.harness)
         if not harness:
             raise NotFound(f"no harness {path.harness} installed", param="model", code="model_not_found")
-        prev, session, fork = None, None, None
+        prev, session, fork, switch = None, None, None, False
         if routing.previous_response_id:
             prev = await tx.one("SELECT id, session_id, seq, status, provider_id, provider_model, snapshot_key, files_key "
                                 "FROM turns WHERE id = %s", routing.previous_response_id)
@@ -197,12 +238,10 @@ class Turns:
             if session["status"] != "active" or not session["store"]:
                 raise Invalid(f"{routing.previous_response_id} belongs to a session that was not stored or has ended",
                               param="previous_response_id")
-            if session["harness"] != path.harness:
-                raise Conflict(f"that session runs {session['harness']}, not {path.harness}: a session keeps its harness; "
-                               "the provider and model may change", param="model", code="harness_mismatch")
-            if prev["seq"] != session["turns"]:              # an earlier response: continue from the state after it
-                fork = await self._checkpoint(p.org_id, prev, session)
-        manifest = Manifest.model_validate(session["manifest"] if session else harness["manifest"])
+            switch = session["harness"] != path.harness      # another harness: a fork onto it, with the workspace
+            if switch or prev["seq"] != session["turns"]:    # and the conversation; an earlier response: the state after it
+                fork = await self._checkpoint(p.org_id, prev, session, workspace_only=switch)
+        manifest = Manifest.model_validate(harness["manifest"] if session is None or switch else session["manifest"])
         missing = [k for k, s in manifest.settings.items() if s.required and s.default is None and k not in
                    harness["settings"]] + [k for k, s in manifest.secrets.items() if s.required and k not in harness["secrets"]]
         if missing:
@@ -222,11 +261,12 @@ class Turns:
         org = await tx.get("SELECT egress FROM orgs WHERE id = %s", p.org_id)
         resolved = mcp.resolve(manifest.mcp, body, egress.Policy.of(org["egress"], manifest.run_entries()))
         await self.objects.put(request_key, dumps(resolved.body).encode(), org_id=p.org_id, kind="request")
-        if fork is not None and session is not None:   # a new session, pinned like its parent, from the checkpoint
-            parent, session = session, {"id": fork["id"], "turns": 0}
+        if fork is not None and session is not None:   # a new session from the checkpoint, pinned like its parent
+            parent, session = session, {"id": fork["id"], "turns": 0}   # (or, on a switch, to the new harness)
+            pinned = harness if switch else parent
             await tx.run("INSERT INTO sessions (id, org_id, harness, digest, manifest, provider_id, model, store, "
                          "snapshot_key, files_key, snapshot_bytes, forked_from) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                         "%s, %s, %s)", session["id"], p.org_id, path.harness, parent["digest"], parent["manifest"],
+                         "%s, %s, %s)", session["id"], p.org_id, path.harness, pinned["digest"], pinned["manifest"],
                          provider_id, model, routing.store, fork["snapshot_key"], fork["files_key"], fork["bytes"],
                          routing.previous_response_id)
         elif session is None:
@@ -252,27 +292,33 @@ class Turns:
         await record_events(tx, turn, [{"type": "response.created", "response": partial}])
         return turn
 
-    async def _checkpoint(self, org_id: str, prev: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+    async def _checkpoint(self, org_id: str, prev: dict[str, Any], session: dict[str, Any],
+                          workspace_only: bool = False) -> dict[str, Any]:
         """The state saved after `prev`, copied under the new session so the parent's deletion cannot take it away:
-        {id, snapshot_key, files_key, bytes} for the session about to be created."""
+        {id, snapshot_key, files_key, bytes} for the session about to be created. A turn that saved nothing of its
+        own (unchanged, cancelled before it ran, lost with its node) points at the session's last save before it.
+        `workspace_only` (a fork onto another harness) leaves out $HG_STATE and the old package's persist paths."""
         rid = prev["id"]
         if not Status(prev["status"]).final:
             raise Conflict(f"{rid} is still running; continue from it once it has ended", param="previous_response_id")
-        if prev["snapshot_key"] is None:
+        source, listing_src = prev["snapshot_key"], prev["files_key"]
+        if source is None:
             if session["saving_turn_id"] == rid:
                 raise Conflict(f"the state after {rid} is still being saved; try again shortly",
                                param="previous_response_id")
             if session["snapshot_seq"] > prev["seq"]:        # ended without a save of its own, before a later one landed
                 raise Conflict(f"the state after {rid} was not saved, so nothing can continue from it",
                                param="previous_response_id")
+            source, listing_src = session["snapshot_key"], session["files_key"]
         sid = ids.new("session")
-        if prev["snapshot_key"] is None:                     # the session had no state yet: the fork starts from the seeds
+        if source is None:                                   # the session had no state yet: the fork starts from the seeds
             return {"id": sid, "snapshot_key": None, "files_key": None, "bytes": 0}
         stem = f"{prev['seq']:08d}-fork"
         snapshot = org_key(org_id, "sessions", sid, "snapshots", f"{stem}.tgz")
         listing = org_key(org_id, "sessions", sid, "snapshots", f"{stem}.json")
-        size = await self.objects.copy(prev["snapshot_key"], snapshot, org_id=org_id, kind="snapshot")
-        await self.objects.copy(prev["files_key"], listing, org_id=org_id, kind="snapshot")
+        size = await self.objects.copy(source, snapshot, org_id=org_id, kind="snapshot",
+                                       transform=_workspace_only if workspace_only else None)
+        await self.objects.copy(listing_src, listing, org_id=org_id, kind="snapshot")
         return {"id": sid, "snapshot_key": snapshot, "files_key": listing, "bytes": size}
 
     @staticmethod
