@@ -11,6 +11,8 @@ async function post(path, body) {
 }
 if (token) {
   document.getElementById("signin").hidden = true; document.getElementById("setup").hidden = false;
+  for (const name of ["email", "password"]) f.elements[name].disabled = true;      // hidden fields take no part in validation
+  for (const name of ["new", "again"]) f.elements[name].required = true;
   go.textContent = "Set password and sign in"; say("You were invited: choose a password to activate your account.", "warn");
   f.elements.new.focus();
 }
