@@ -1,5 +1,5 @@
-"""Organizations: the tenant (SPEC §9). Self-hosted has one, made by `harnessgateway init`; a SaaS extension makes one
-per customer with the same `create`. An organization holds its capacity, its egress entries and its data key."""
+"""Organizations: the tenant (SPEC §9). Self-hosted has one, made by `harnessgateway init`; an extension may make more
+with the same `create`. An organization holds its capacity, its egress entries and its data key."""
 from __future__ import annotations
 
 import asyncio

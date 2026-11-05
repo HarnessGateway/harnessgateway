@@ -7,7 +7,7 @@ How to work in this repository. It is written for coding agents and applies to p
 HarnessGateway runs coding-agent CLIs as an API. A caller sends an OpenAI Responses request; the platform runs it
 through a **harness package** (a CLI with its configuration) in a gVisor sandbox and streams Responses events back,
 keeping the session so the next request continues it. The request serves the task; the package defines the agent.
-Self-hosted is one organization; a SaaS adds tenants through the extension seam.
+Self-hosted is one organization; the extension seam is where more is built, outside this repository.
 
 A **harness package project** is a folder: `harness.json` (the manifest), `install` (the CLI, pinned, into `$HG_TOOLS`),
 `run` (one turn: the request in, Responses events out), optional `seeds/home` and `seeds/workspace`, a README and

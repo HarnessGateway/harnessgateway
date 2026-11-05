@@ -15,8 +15,7 @@ Playground, API keys, Sessions and Usage are that project's. Providers and Egres
 **admin** sees the organization: the switcher offers *All projects* (harnesses, sessions and keys of every project,
 each naming its project) or one project (to write, edit and install harnesses, which belong to one). A **platform
 admin** (a flag on the account, set by `init` for the first admin or by another platform admin) also gets the
-platform console. With the SaaS extension the same pages gain more rows and buttons (organizations, plans, billing);
-nothing moves between consoles.
+platform console.
 
 ## Sign-in
 

@@ -4,8 +4,9 @@ HarnessGateway runs coding-agent CLIs (harnesses) as an API. A caller sends a st
 platform runs it through a **harness package** in a gVisor sandbox and streams back standard Responses events. The
 session survives the sandbox, so the next request continues it.
 
-This document is the whole platform: what it does, how it is built, and how it is deployed, self-hosted (one
-organization) and as the base of a multi-tenant SaaS. It is the reference every change is checked against.
+This document is the whole platform: what it does, how it is built, and how it is deployed, self-hosted, as one
+organization. It is the reference every change is checked against. What is built on top of the core is specified
+elsewhere; here is only what the core provides for it, the extension seam (§13).
 
 ## 1. Principles
 
@@ -20,10 +21,9 @@ organization) and as the base of a multi-tenant SaaS. It is the reference every 
    sandbox holds placeholders; values are injected outside it, at the gateway or the sandbox's egress door.
 5. **Narrowing is safe; widening is escalation.** A request may select or narrow what the package offers. It may never
    add capability the organization did not grant (§3.3).
-6. **Single-tenant core, multi-tenant ready.** Every row and object belongs to an organization and every query is scoped
-   to one. Identity is the core's: accounts, two roles, projects, sign-ins and audit are the same code self-hosted, hybrid
-   and hosted. Self-hosted runs one organization; a SaaS adds organizations and billing through the extension seam (§13)
-   without forking the core.
+6. **One organization, built to be extended.** Every row and object belongs to an organization and every query is
+   scoped to one. Identity is the core's: accounts, two roles, projects, sign-ins and audit. Self-hosted runs one
+   organization; the extension seam (§13) is where more is built, without forking the core.
 7. **Stateless roles, one stateful store.** API, gateway and node processes keep no state that matters across restarts;
    Postgres and an object store hold everything. Any role scales by running more of it.
 8. **KISS, DRY, OOP, SRP, negative space.** Each module has one job. What is not allowed is refused at the boundary,
@@ -439,8 +439,8 @@ or URL cannot have it injected; it is refused rather than given the value.
 
 - The **organization** is the tenant. Every tenant table carries `org_id`, and row-level security confines a tenant
   transaction to the organization it declared (`hg.org`); platform work (scheduling, sweeping, the operator) runs on a
-  separate scope (`hg.scope = platform`). Object keys are `orgs/<org_id>/…`. Self-hosted runs one organization; a SaaS
-  runs many through the extension seam (§13), on the same identity code.
+  separate scope (`hg.scope = platform`). Object keys are `orgs/<org_id>/…`. Self-hosted runs one organization; an
+  extension (§13) may create more, on the same identity code.
 - A **project** is the unit a team builds in: the harnesses installed into it (its catalog), the developers who belong
   to it, the keys its applications hold, and the sessions those keys and people make. A harness name is unique within
   its project, and `model` in a request resolves inside the principal's project, so a harness in another project does
@@ -488,7 +488,7 @@ who may do what lives in one domain module, and a refusal names the role that ma
 
 - An **account** is a person: an email (the login), a name, a password hash (scrypt), a status (`invited`, `active`,
   `disabled`), a platform-admin flag, and a **membership** in the organization with a role. An account in several
-  organizations (a SaaS) holds one membership per organization; self-hosted holds one.
+  organizations holds one membership per organization; self-hosted holds one.
 - An admin creates an account (or `init` creates the first admin). It arrives **invited**: the creation returns a
   one-time invitation token (`hgi_…`, shown once, valid seven days), and the person activates the account by setting a
   password with it. An admin resets a password the same way. There is no default password anywhere. A password is at
@@ -505,8 +505,8 @@ who may do what lives in one domain module, and a refusal names the role that ma
 
 ### 9.4 The platform scope
 
-- The **operator** is the platform's owner: the deployer of a self-hosted install, the company behind a SaaS. The
-  platform scope sees every organization, the nodes, the queue and the configuration.
+- The **operator** is the platform's owner: whoever deployed it. The platform scope sees every organization, the
+  nodes, the queue and the configuration.
 - People hold it as a flag on their account (`platform_admin`), never as a shared secret. `HG_OPERATOR_KEY` remains
   for automation (node tokens, draining, metrics scrapers) and for break-glass; its use is audited.
 - `/internal` routes for people accept a platform admin's sign-in or the operator key. Nodes use their own
@@ -520,15 +520,13 @@ configured and uninstalled. A row is when, who (the actor), what (a dotted actio
 a detail object that never holds a secret. Admins read their organization's log (`GET /v1/audit`); the platform scope
 reads all (`GET /internal/audit`).
 
-### 9.6 Multi-tenant and capacity
+### 9.6 Capacity
 
-- **Multi-tenant**: the extension seam (§13) creates organizations and their first admins from a sign-up flow, sets
-  each organization's capacity, gates turns and meters usage. It does not authenticate people in a way of its own:
-  accounts, roles, sign-ins and audit are the core's, the same everywhere.
-- **Capacity** (per org): `vcpus`, `memory_mb` (the processes), `pids`, `tmp_mb` (`/tmp`, a tmpfs charged on top of
-  `memory_mb`) per box; `max_sandboxes`, `max_running_turns`;
-  `idle_ttl_s`; `turn_timeout_s`; `retention_days`; `node_pool`; `observability` (§11). Self-hosted takes defaults from
-  configuration.
+Per organization: `vcpus`, `memory_mb` (the processes), `pids`, `tmp_mb` (`/tmp`, a tmpfs charged on top of
+`memory_mb`) per box; `max_sandboxes`, `max_running_turns`; `idle_ttl_s`; `turn_timeout_s`; `retention_days`;
+`node_pool`; `observability` (§11). Self-hosted takes defaults from configuration; the platform scope sets an
+organization's own. An extension that creates organizations (§13) authenticates nobody in a way of its own: accounts,
+roles, sign-ins and audit are the core's.
 
 ## 10. Scale and deployment
 
@@ -642,17 +640,17 @@ meter, optionally grouped by `harness`, `session` or `day`, over `[start, end)`.
 
 ```python
 class Extension:
-    def router(self) -> fastapi.APIRouter | None            # extra routes (org admin, billing, users…)
-    async def authenticate(self, request) -> Principal | None  # before API keys; None passes to the next
-    async def admit(self, principal, turn: Admission) -> None  # raise Refused (quota, billing) before a turn queues
+    def router(self) -> fastapi.APIRouter | None            # extra routes under the same app
+    async def authenticate(self, request) -> Principal | None  # before keys and sign-ins; None passes to the next
+    async def admit(self, principal, turn: Admission) -> None  # raise Refused before a turn queues
     async def observe(self, record: TraceRecord) -> None       # every §11 record as written
     async def meter(self, records: list[UsageRecord]) -> None  # every §12 batch after it is stored
     async def turn_ended(self, summary: TurnSummary) -> None   # status, reason, usage, timings
 ```
 
 Hooks run in the order configured; `observe`, `meter` and `turn_ended` run after the core's own write and never fail a
-turn (their errors are logged). The core exposes its services (`Orgs`, `Keys`, `Capacity`, `Usage`, `Traces`) to
-extensions. A SaaS is: the core image + its extension package + its own console; nothing in the core forks.
+turn (their errors are logged). The core exposes its services (`Orgs`, `Projects`, `Accounts`, `Keys`, `Usage`,
+`Traces`, …) to extensions. What is built on the seam lives outside this repository and never forks the core.
 
 ## 14. API
 

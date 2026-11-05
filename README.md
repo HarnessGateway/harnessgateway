@@ -112,8 +112,8 @@ caller ──Responses──▶ API ──queue (Postgres)──▶ node ──�
   the terminal event becomes the final `Response`. The session's
   workspace is saved, and the sandbox stays warm for the next turn.
 
-The whole design, including the contract, packages, sandboxing, secrets, scale, metering and the extension seam for
-a multi-tenant deployment, is in [`SPEC.md`](SPEC.md).
+The whole design, including the contract, packages, sandboxing, secrets, scale, metering and the extension seam, is
+in [`SPEC.md`](SPEC.md).
 
 ## Documentation
 

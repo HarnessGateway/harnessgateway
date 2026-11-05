@@ -63,8 +63,7 @@ const CAP = [["vcpus", "vCPUs per sandbox", "number", "0.5"], ["memory_mb", "Mem
   ["turn_timeout_s", "Turn timeout (s, 0: none)", "number", "1"], ["retention_days", "Retention (days, 0: keep)", "number", "1"], ["node_pool", "Node pool", "text", ""]];
 const orgs = { title: "Organizations", async render(el, params, me) {
   const rows = (await api("GET", "/internal/orgs")).data;
-  const saas = (me.platform.extensions || []).length > 0;
-  el.innerHTML = top("Organizations", saas ? "Every tenant: what it may use, what it is using, and a way in." : "Self-hosted runs one organization. Its capacity is what each of its sandboxes gets; the SaaS extension adds organizations here.") +
+  el.innerHTML = top("Organizations", "Every organization on this platform: what it may use and what it is using. Its capacity is what each of its sandboxes gets. Self-hosted runs one.") +
     `<div class="card">${table([{ h: "Organization", cell: o => `<b>${esc(o.name)}</b><br><span class="mono">${esc(o.id)}</span>` },
       { h: "Capacity", cell: o => `${o.capacity.vcpus} vCPU · ${o.capacity.memory_mb} MB · ${o.capacity.max_sandboxes || "∞"} sandboxes · ${o.capacity.max_running_turns || "∞"} turns${o.capacity.node_pool ? ` · pool ${esc(o.capacity.node_pool)}` : ""}` },
       { h: "Sessions", cell: o => o.sessions }, { h: "Running", cell: o => o.running }, { h: "Warm", cell: o => o.boxes }, { h: "Observability", cell: o => pill(o.capacity.observability, "b") },

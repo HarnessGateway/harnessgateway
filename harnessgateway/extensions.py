@@ -1,5 +1,5 @@
-"""The extension seam (SPEC §13): how a SaaS adds organizations, users, plans, billing and its own observability
-pipeline on top of the core without forking it.
+"""The extension seam (SPEC §13): how more is built on the core (organizations beyond the first, credentials of a
+deployment's own, admission rules, a pipeline for usage and observability records) without forking it.
 
 `HG_EXTENSIONS` names classes as `module:Class`; each is instantiated once and implements any subset of the hooks
 below. Every default does nothing, which is exactly the self-hosted behaviour. `observe`, `meter` and `turn_ended`
