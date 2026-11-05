@@ -36,7 +36,7 @@ class Traces:
     async def get(self, p: Principal, response_id: str) -> dict[str, Any]:
         p.require("traces", "read")
         clause, args = own(p)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             turn = await tx.one(f"SELECT t.id, t.session_id FROM turns t JOIN sessions s ON s.id = t.session_id "
                                 f"WHERE t.id = %s{clause}", ids.check(response_id, "turn"), *args)
             if not turn:
@@ -58,7 +58,7 @@ class Traces:
         (GET /v1/traces/{response_id} has them)."""
         p.require("traces", "read")
         clause, args = own(p)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             if not await tx.one(f"SELECT 1 FROM sessions s WHERE s.id = %s AND s.status = 'active'{clause}",
                                 ids.check(sid, "session"), *args):
                 raise NotFound(f"no container {sid}")

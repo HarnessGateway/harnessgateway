@@ -26,7 +26,7 @@ async def platform_info(request: Request) -> Any:
 async def organization(request: Request, p: Principal = Depends(principal)) -> Any:
     """The organization and who the caller is in it."""
     org = await platform(request).orgs.get(p.org_id)
-    return {**org, "principal": {"actor": p.actor, "role": p.role, "project": p.project, "run_only": p.run_only,
+    return {**org, "principal": {"actor": p.actor, "role": p.role, "run_only": p.run_only,
                                  "platform_admin": p.platform_admin, "name": p.name}}
 
 
@@ -39,13 +39,12 @@ async def list_keys(request: Request, p: Principal = Depends(principal)) -> Any:
 
 @router.post("/keys")
 async def create_key(request: Request, p: Principal = Depends(principal)) -> Any:
-    """{label, role, project, run_only, expires_in_days}: role defaults to developer, project to the caller's."""
+    """{label, role, run_only, expires_in_days}: the label names the application; role defaults to developer."""
     p.require("keys", "create")
     body = await read_json(request)
-    only(body, "label", "role", "project", "run_only", "expires_in_days")
-    return await platform(request).keys.create(p, body.get("label", ""), body.get("role", "developer"),
-                                               body.get("project", p.project), bool(body.get("run_only")),
-                                               body.get("expires_in_days"))
+    only(body, "label", "role", "run_only", "expires_in_days")
+    return await platform(request).keys.create(p, body.get("label"), body.get("role", "developer"),
+                                               bool(body.get("run_only")), body.get("expires_in_days"))
 
 
 @router.delete("/keys/{key_id}")
@@ -104,7 +103,7 @@ async def put_egress(request: Request, p: Principal = Depends(principal)) -> Any
     return {"object": "egress", "egress": out}
 
 
-# ── harnesses: the project's ──────────────────────────────────────────────────────────────────────────────────────
+# ── harnesses ────────────────────────────────────────────────────────────────────────────────────────────────────
 @router.get("/harnesses")
 async def list_harnesses(request: Request, p: Principal = Depends(principal)) -> Any:
     return {"object": "list", "data": await platform(request).harnesses.list(p)}

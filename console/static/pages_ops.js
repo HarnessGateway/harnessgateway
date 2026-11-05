@@ -1,6 +1,6 @@
 // The platform console (SPEC §9.4): the platform as infrastructure, for platform admins.
 import { api, esc, when } from "./api.js";
-import { $, card, confirm, copy, fail, field, input, kv, modal, pill, pre, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { $, card, confirm, copy, fail, field, input, kv, modal, pill, pre, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
 import { auditPage, usagePage } from "./pages_user.js";
 
 export function nav() {
@@ -68,10 +68,21 @@ const orgs = { title: "Organizations", async render(el, params, me) {
       { h: "Capacity", cell: o => `${o.capacity.vcpus} vCPU · ${o.capacity.memory_mb} MB · ${o.capacity.max_sandboxes || "∞"} sandboxes · ${o.capacity.max_running_turns || "∞"} turns${o.capacity.node_pool ? ` · pool ${esc(o.capacity.node_pool)}` : ""}` },
       { h: "Sessions", cell: o => o.sessions }, { h: "Running", cell: o => o.running }, { h: "Warm", cell: o => o.boxes }, { h: "Observability", cell: o => pill(o.capacity.observability, "b") },
       { h: "Status", cell: o => statusPill(o.status) },
-      { h: "", cls: "acts", cell: o => `<a class="btn2" href="/">Open as admin</a><button class="btn2" data-edit="${o.id}">Edit</button>` +
+      { h: "", cls: "acts", cell: o => `<button class="btn2" data-invite="${o.id}" data-name="${esc(o.name)}">Invite admin</button><button class="btn2" data-edit="${o.id}">Edit</button>` +
         (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>` +
     `<div class="card" style="margin-top:14px"><h2>Metrics</h2><p class="muted small">Prometheus scrapes <span class="mono">GET ${esc(me.api)}/internal/metrics</span> with the operator key (<span class="mono">HG_OPERATOR_KEY</span>) as the bearer.</p></div>`;
   el.addEventListener("click", async e => {
+    const inv = e.target.closest("[data-invite]");
+    if (inv) {
+      modal({ title: `Invite an admin of ${inv.dataset.name}`, submit: "Invite", body:
+        field("Email", input("email", "", 'type="email" required')) + field("Name", input("name", "")),
+        onSubmit: async d => {
+          const a = await api("POST", `/internal/orgs/${inv.dataset.invite}/accounts`, { email: d.email, name: d.name });
+          then(() => reveal(`Invitation for ${a.email}`, "Invitation link", a.invitation, (a.sent ? `Sent to ${a.email}. ` : "") +
+            "The link is shown once, works once and expires in seven days; the person chooses their password with it."));
+        } });
+      return;
+    }
     const ed = e.target.closest("[data-edit]");
     if (ed) { editOrg(rows.find(o => o.id === ed.dataset.edit), () => rerender()); return; }
     const st = e.target.closest("[data-status]");

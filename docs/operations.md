@@ -20,9 +20,10 @@ The installer:
 2. pulls `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`, or builds them from the checkout;
 3. writes `/opt/harnessgateway/.env` with fresh secrets (never overwritten on a re-run);
 4. asks for the first admin's email (`HG_ADMIN_EMAIL`), starts the compose project (`postgres`, `harnessgateway`,
-   `node`, `console`) and runs `harnessgateway init`, which creates the organization, its default project with the
-   built-in harness package builder and the admin account, and prints **once** the invitation link that activates the
-   account (the console's `/setup` page) and an admin API key for automation. See [`console.md`](console.md).
+   `node`, `console`) and runs `harnessgateway init`, which creates the organization with the built-in harness package
+   builder and the admin account, and prints **once** the invitation link that activates the account (the console's
+   `/setup` page; mailed too when `HG_SMTP_URL` is set) and an admin API key for automation. See
+   [`console.md`](console.md).
 
 The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:8800` (`HG_BIND`, `HG_HTTP_PORT`,
 `HG_CONSOLE_PORT`). Put a TLS-terminating proxy in front of them before exposing them beyond the host.
@@ -114,6 +115,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_TEMPLATE_DIR` | console | the image's `shell` package | the template every new harness starts from |
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
 | `HG_ADMIN_EMAIL` | `init`, `install.sh` | — | the first admin's login; `init --admin-email` names it too |
+| `HG_CONSOLE_URL` | api | `http://localhost:8800` | where people open the console: invitation links are built on it |
+| `HG_SMTP_URL`, `HG_MAIL_FROM` | api | — | `smtp://[user:pass@]host[:port]` (STARTTLS when offered) or `smtps://…`, and the sender: invitations are mailed; unset, they are shown once |
 | `HG_CONSOLE_PORT` | compose `console` | `8800` | the console's port (it holds no key: people sign in with their account) |
 | `HG_DEFAULT_<FIELD>` | api | see below | an organization's capacity unless an extension sets its own |
 
@@ -149,4 +152,5 @@ current commit: for a release that must be redone, never for a change (that is a
 | `hg_reason: invalid_output` | the package printed an event the OpenAI schema rejects; the error names the field |
 | the node exits at start | `HG_CA_FILE names no file` (mount it), `the API refused the join token` (the API needs the same `HG_NODE_JOIN_TOKEN`) |
 | a lost invitation link, a locked or forgotten password | an admin: `POST /v1/accounts/{id}/reset` (console: Access → Accounts → Reset password) prints a new link; with no admin left, `init` cannot help: reset through the database (`UPDATE accounts SET password_hash = NULL, status = 'invited'`) and invite again |
-| `403 … an admin, or a developer of the project may …` | the key or account lacks the role the route needs (SPEC §9.2); a developer in several projects names one with `HG-Project` |
+| `403 … an admin or a developer may …` | the key or account lacks the role the route needs (SPEC §9.2) |
+| an invitation never arrives | `HG_SMTP_URL` unset (the link is in the API's response and the console's dialog instead), or `docker compose logs harnessgateway` shows `sending the invitation … failed` with the SMTP error |

@@ -2,9 +2,8 @@
 
     HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_... .venv/bin/pytest -q tests/integration
 
-HG_TEST_KEY is an admin key; the tests work in the `default` project (HG_TEST_PROJECT; conftest.py installs `shell`
-there and sets the organization's egress to `*.npmjs.org`, `!evil.npmjs.org`, `mcp.hg-test.dev`). They also install and
-remove a harness `hg-test-seeds`."""
+HG_TEST_KEY is an admin key (conftest.py installs `shell` and sets the organization's egress to `*.npmjs.org`,
+`!evil.npmjs.org`, `mcp.hg-test.dev`). The tests also install and remove a harness `hg-test-seeds`."""
 import io
 import json
 import os

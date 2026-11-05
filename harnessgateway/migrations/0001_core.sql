@@ -1,8 +1,7 @@
 -- HarnessGateway schema (SPEC §15). Every tenant row carries its organization, and row-level security confines a
 -- transaction to the organization it declared (`hg.org`) unless it declared the platform scope (`hg.scope`), which
--- scheduling, metering and authentication use. The project-scoped tables (harnesses, sessions, turns) also carry their
--- project, and a transaction that declared one (`hg.project`) sees that project's rows only. FORCE applies the policies
--- to the table owner too: the application role must be neither a superuser nor BYPASSRLS.
+-- scheduling, metering and authentication use. FORCE applies the policies to the table owner too: the application
+-- role must be neither a superuser nor BYPASSRLS.
 
 -- ── tenancy and identity (SPEC §9) ──────────────────────────────────────────────────────────────────────────────────
 CREATE TABLE orgs (
@@ -13,14 +12,6 @@ CREATE TABLE orgs (
     egress      jsonb NOT NULL DEFAULT '[]',
     data_key    text NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE projects (
-    id          text PRIMARY KEY,
-    org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    name        text NOT NULL,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (org_id, name)
 );
 
 -- A person: the email is the login; the password is an scrypt hash, absent until the invitation is accepted.
@@ -45,14 +36,6 @@ CREATE TABLE memberships (
     PRIMARY KEY (account_id, org_id)
 );
 
-CREATE TABLE project_members (
-    project_id  text NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
-    account_id  text NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
-    org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (project_id, account_id)
-);
-
 -- One-time tokens, kept as digests: an invited account's activation, a password reset.
 CREATE TABLE invitations (
     digest      text PRIMARY KEY,
@@ -72,22 +55,20 @@ CREATE TABLE sign_ins (
     revoked_at    timestamptz
 );
 
--- A key carries a role: an organization key is admin; a project key is developer, and with run_only it only runs.
+-- A key is what an application is built around: named after it, with a role, and run-only when it only runs.
 CREATE TABLE api_keys (
     id            text PRIMARY KEY,
     org_id        text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    project_id    text REFERENCES projects (id) ON DELETE CASCADE,
     account_id    text REFERENCES accounts (id) ON DELETE SET NULL,
     digest        text NOT NULL UNIQUE,
     role          text NOT NULL CHECK (role IN ('admin', 'developer')),
-    run_only      boolean NOT NULL DEFAULT false,
-    label         text NOT NULL DEFAULT '',
+    run_only      boolean NOT NULL DEFAULT false CHECK (NOT run_only OR role = 'developer'),
+    label         text NOT NULL CHECK (label <> ''),
     hint          text NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now(),
     expires_at    timestamptz,
     last_used_at  timestamptz,
-    revoked_at    timestamptz,
-    CHECK ((role = 'admin') = (project_id IS NULL))
+    revoked_at    timestamptz
 );
 
 -- Every change of standing: who did what to what, in which organization (none: the platform's own).
@@ -102,7 +83,7 @@ CREATE TABLE audit (
 );
 CREATE INDEX audit_org_at ON audit (org_id, at DESC);
 
--- ── the organization's providers and the projects' harnesses (SPEC §5, §7) ──────────────────────────────────────────
+-- ── providers and harnesses (SPEC §5, §7) ───────────────────────────────────────────────────────────────────────────
 CREATE TABLE providers (
     id          text PRIMARY KEY,
     org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
@@ -126,11 +107,10 @@ CREATE TABLE packages (
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- A harness is one package installed in a project under a name, with its settings and sealed secret values.
+-- A harness is one package installed under a name, with its settings and sealed secret values.
 CREATE TABLE harnesses (
     id                text PRIMARY KEY,
     org_id            text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    project_id        text NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     name              text NOT NULL,
     digest            text NOT NULL REFERENCES packages (digest),
     manifest          jsonb NOT NULL,
@@ -140,7 +120,7 @@ CREATE TABLE harnesses (
     default_model     text NOT NULL DEFAULT '',
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (project_id, name)
+    UNIQUE (org_id, name)
 );
 
 CREATE TABLE files (
@@ -179,13 +159,13 @@ CREATE TABLE nodes (
 );
 
 -- ── sessions and turns (SPEC §4, §6) ────────────────────────────────────────────────────────────────────────────────
--- A session pins the package it started on, in its harness's project; it records who created it (its first turn's
--- actor) and the application's end user, and points at its last saved state, the node holding its warm box, the turn
--- running in it and the turn whose state is still being saved. A fork names the response it continued from.
+-- A session pins the package it started on; it records who created it (its first turn's actor: the key an
+-- application holds, or a person) and the application's end user, and points at its last saved state, the node holding
+-- its warm box, the turn running in it and the turn whose state is still being saved. A fork names the response it
+-- continued from.
 CREATE TABLE sessions (
     id               text PRIMARY KEY,
     org_id           text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    project_id       text NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     created_by       text NOT NULL,
     end_user         text,
     harness          text NOT NULL,
@@ -208,14 +188,12 @@ CREATE TABLE sessions (
     last_active_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX sessions_org ON sessions (org_id, created_at DESC);
-CREATE INDEX sessions_project ON sessions (project_id, created_at DESC);
 CREATE INDEX sessions_node ON sessions (node_id) WHERE node_id IS NOT NULL;
 
 -- A turn is the response a caller reads and the job a node runs; it records its actor and the state saved after it.
 CREATE TABLE turns (
     id              text PRIMARY KEY,
     org_id          text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
-    project_id      text NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     session_id      text NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     seq             integer NOT NULL,
     status          text NOT NULL CHECK (status IN ('queued', 'in_progress', 'completed', 'incomplete', 'failed',
@@ -356,24 +334,14 @@ DO $$
 DECLARE t text;
 BEGIN
     -- the organization's tables: its rows, or every row on the platform scope
-    FOREACH t IN ARRAY ARRAY['api_keys', 'providers', 'files', 'turn_events', 'live_events', 'turn_bindings',
-                             'container_ops', 'usage', 'storage_accruals', 'traces', 'idempotency', 'projects',
-                             'project_members', 'memberships', 'audit'] LOOP
+    FOREACH t IN ARRAY ARRAY['api_keys', 'providers', 'harnesses', 'files', 'sessions', 'turns', 'turn_events',
+                             'live_events', 'turn_bindings', 'container_ops', 'usage', 'storage_accruals', 'traces',
+                             'idempotency', 'memberships', 'audit'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
         EXECUTE format($p$CREATE POLICY tenant ON %I USING (
             current_setting('hg.scope', true) = 'platform' OR org_id = current_setting('hg.org', true))
             WITH CHECK (current_setting('hg.scope', true) = 'platform' OR org_id = current_setting('hg.org', true))$p$, t);
-    END LOOP;
-    -- the project-scoped tables: the organization's rows, confined to one project when the transaction named one
-    FOREACH t IN ARRAY ARRAY['harnesses', 'sessions', 'turns'] LOOP
-        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
-        EXECUTE format($p$CREATE POLICY tenant ON %I USING (
-            current_setting('hg.scope', true) = 'platform' OR (org_id = current_setting('hg.org', true) AND
-            (coalesce(current_setting('hg.project', true), '') = '' OR project_id = current_setting('hg.project', true))))
-            WITH CHECK (current_setting('hg.scope', true) = 'platform' OR (org_id = current_setting('hg.org', true) AND
-            (coalesce(current_setting('hg.project', true), '') = '' OR project_id = current_setting('hg.project', true))))$p$, t);
     END LOOP;
     ALTER TABLE orgs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE orgs FORCE ROW LEVEL SECURITY;

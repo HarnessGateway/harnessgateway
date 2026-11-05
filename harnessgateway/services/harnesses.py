@@ -1,10 +1,8 @@
-"""Harnesses: packages installed in a project under a name, with its settings and secret values (SPEC §5, §9.1, §14.3).
+"""Harnesses: packages installed in an organization under a name, with its settings and secret values (SPEC §5, §14.3).
 
 A package is content-addressed and stored once, whoever installs it. A harness points at the package it was installed
 from; a session runs the package it started on, whatever the harness points at later. Packages arrive as uploads: an
-archive of the folder an author wrote, in the console's editor or anywhere else. Every read and write here runs as a
-principal: in its project, or, for an admin without one, across the organization, where a name shared by two projects
-must be qualified."""
+archive of the folder an author wrote, in the console's editor or anywhere else."""
 from __future__ import annotations
 
 import asyncio
@@ -41,7 +39,7 @@ def secret_context(name: str, secret: str) -> str:
 
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     m = Manifest.model_validate(row["manifest"])
-    return {"id": row["id"], "object": "harness", "name": row["name"], "project": row["project_id"], "version": m.version,
+    return {"id": row["id"], "object": "harness", "name": row["name"], "version": m.version,
             "description": m.description, "digest": row["digest"], "provider_apis": m.provider.apis if m.provider else [],
             "default_provider": row["default_provider"], "default_model": row["default_model"] or m.defaults.model,
             "persist": m.persist, "egress": m.run_entries(), "install_egress": m.install.egress,
@@ -54,27 +52,16 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def find(tx: Tx, name: str) -> dict[str, Any]:
-    """The harness `name` names in the transaction's scope: the project's, or, organization-wide, the one project that
-    has it. A name two projects share is refused until the request names its project."""
-    rows = await tx.all("SELECT h.*, p.name AS project_name FROM harnesses h JOIN projects p ON p.id = h.project_id "
-                        "WHERE h.name = %s ORDER BY p.created_at", name)
-    if not rows:
+    """The installed harness `name` names, in the transaction's organization."""
+    row = await tx.one("SELECT * FROM harnesses WHERE name = %s", name)
+    if not row:
         raise NotFound(f"no harness {name} installed", param="model", code="model_not_found")
-    if len(rows) > 1:
-        raise Invalid(f"{name} is installed in projects {', '.join(r['project_name'] for r in rows)}: name one with the "
-                      "HG-Project header", param="HG-Project")
-    return rows[0]
+    return row
 
 
 class Harnesses:
     def __init__(self, db: Database, objects: Objects, vault: Vault, audit: Audit):
         self.db, self.objects, self.vault, self.audit = db, objects, vault, audit
-
-    @staticmethod
-    def _project(p: Principal) -> str:
-        if not p.project:
-            raise Invalid("name the project with the HG-Project header", param="HG-Project")
-        return p.project
 
     # ── publishing a package ───────────────────────────────────────────────────────────────────────────────────────
     async def publish(self, folder: Path, owner: str | None) -> tuple[str, Manifest]:
@@ -93,49 +80,45 @@ class Harnesses:
 
     # ── installing ─────────────────────────────────────────────────────────────────────────────────────────────────
     async def install(self, p: Principal, archive: bytes) -> dict[str, Any]:
-        """Install or upgrade into the principal's project from a package archive."""
+        """Install or upgrade from a package archive."""
         p.require("harnesses", "install")
-        view = await self._install(p.org_id, self._project(p), archive)
-        await self.audit.write(p.org_id, p.actor, "harness.install", view["id"],
-                               {"name": view["name"], "project": view["project"], "digest": view["digest"]})
+        view = await self._install(p.org_id, archive)
+        await self.audit.write(p.org_id, p.actor, "harness.install", view["id"], {"name": view["name"], "digest": view["digest"]})
         return view
 
-    async def _install(self, org_id: str, project_id: str, archive: bytes) -> dict[str, Any]:
+    async def _install(self, org_id: str, archive: bytes) -> dict[str, Any]:
         """Settings and secret values the new version still declares are kept."""
         with tempfile.TemporaryDirectory(prefix="hg-upload-") as tmp:
             folder = Path(tmp) / "p"
             await asyncio.to_thread(pkg.unpack, archive, folder)
             digest, manifest = await self.publish(folder, org_id)
-        async with self.db.tenant(org_id, project_id) as tx:
-            if not await tx.one("SELECT 1 FROM projects WHERE id = %s", project_id):
-                raise NotFound(f"no project {project_id}", param="HG-Project")
+        async with self.db.tenant(org_id) as tx:
             current = await tx.one("SELECT settings, secrets FROM harnesses WHERE name = %s", manifest.name)
             settings = {k: v for k, v in ((current or {}).get("settings") or {}).items() if k in manifest.settings}
             secrets = {k: v for k, v in ((current or {}).get("secrets") or {}).items() if k in manifest.secrets}
-            await tx.run("INSERT INTO harnesses (id, org_id, project_id, name, digest, manifest, settings, secrets) VALUES "
-                         "(%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project_id, name) DO UPDATE SET "
-                         "digest = EXCLUDED.digest, manifest = EXCLUDED.manifest, settings = EXCLUDED.settings, "
-                         "secrets = EXCLUDED.secrets, updated_at = now()", ids.new("harness"), org_id, project_id,
-                         manifest.name, digest, manifest.model_dump(), settings, secrets)
+            await tx.run("INSERT INTO harnesses (id, org_id, name, digest, manifest, settings, secrets) VALUES "
+                         "(%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (org_id, name) DO UPDATE SET digest = EXCLUDED.digest, "
+                         "manifest = EXCLUDED.manifest, settings = EXCLUDED.settings, secrets = EXCLUDED.secrets, "
+                         "updated_at = now()", ids.new("harness"), org_id, manifest.name, digest, manifest.model_dump(),
+                         settings, secrets)
             row = await tx.get("SELECT * FROM harnesses WHERE name = %s", manifest.name)
-        log.info("installed %s into %s (%s)", manifest.name, project_id, digest[:12])
+        log.info("installed %s for %s (%s)", manifest.name, org_id, digest[:12])
         return _view(row)
 
-    async def install_folder(self, org_id: str, project_id: str, folder: Path) -> dict[str, Any]:
-        """Install or upgrade from a package folder on this host: the built-in harness package builder, into every new
-        project."""
+    async def install_folder(self, org_id: str, folder: Path) -> dict[str, Any]:
+        """Install or upgrade from a package folder on this host: the built-in harness package builder, at `init`."""
         def skip(d: str, names: list[str]) -> set[str]:          # the package's own tests, not its seeds' (the template's)
             return {n for n in names if n == "__pycache__" or (n == "tests" and Path(d) == folder)}
         with tempfile.TemporaryDirectory(prefix="hg-folder-") as tmp:
             copy = Path(tmp) / "p"
             shutil.copytree(folder, copy, ignore=skip)
             data = await asyncio.to_thread(pkg.pack, copy)
-        return await self._install(org_id, project_id, data)
+        return await self._install(org_id, data)
 
     # ── reading ────────────────────────────────────────────────────────────────────────────────────────────────────
     async def row(self, p: Principal, name: str) -> dict[str, Any]:
         p.require("harnesses", "read")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             return await find(tx, name)
 
     async def get(self, p: Principal, name: str) -> dict[str, Any]:
@@ -143,7 +126,7 @@ class Harnesses:
 
     async def list(self, p: Principal) -> list[dict[str, Any]]:
         p.require("harnesses", "read")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             return [_view(r) for r in await tx.all("SELECT * FROM harnesses ORDER BY name, created_at")]
 
     # ── reading a package ──────────────────────────────────────────────────────────────────────────────────────────
@@ -179,10 +162,10 @@ class Harnesses:
 
     async def uninstall(self, p: Principal, name: str) -> None:
         p.require("harnesses", "uninstall")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             row = await find(tx, name)
             await tx.run("DELETE FROM harnesses WHERE id = %s", row["id"])
-        await self.audit.write(p.org_id, p.actor, "harness.uninstall", row["id"], {"name": name, "project": row["project_id"]})
+        await self.audit.write(p.org_id, p.actor, "harness.uninstall", row["id"], {"name": name})
 
     # ── configuring ────────────────────────────────────────────────────────────────────────────────────────────────
     async def configure(self, p: Principal, name: str, *, settings: object = None, secrets: object = None,
@@ -213,7 +196,7 @@ class Harnesses:
                 current_secrets.pop(k, None)
             else:
                 current_secrets[k] = await self.vault.seal(p.org_id, secret_context(name, k), v)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             if default_provider:
                 ids.check_name(default_provider, "provider")
                 if not await tx.one("SELECT 1 FROM providers WHERE name = %s", default_provider):

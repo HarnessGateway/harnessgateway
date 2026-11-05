@@ -44,6 +44,9 @@ services:
       HG_NODE_JOIN_TOKEN: ${HG_NODE_JOIN_TOKEN:-}      # the default pool's shared token, registered at start
       HG_BLOB_URL: ${HG_BLOB_URL:-file:///var/lib/harnessgateway-objects}
       HG_API_URL: http://harnessgateway:8000
+      HG_CONSOLE_URL: ${HG_CONSOLE_URL:-http://localhost:8800}
+      HG_SMTP_URL: ${HG_SMTP_URL:-}
+      HG_MAIL_FROM: ${HG_MAIL_FROM:-}
       HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
       HG_EXTENSIONS: ${HG_EXTENSIONS:-}
       HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}

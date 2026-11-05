@@ -22,7 +22,7 @@ elsewhere; here is only what the core provides for it, the extension seam (§13)
 5. **Narrowing is safe; widening is escalation.** A request may select or narrow what the package offers. It may never
    add capability the organization did not grant (§3.3).
 6. **One organization, built to be extended.** Every row and object belongs to an organization and every query is
-   scoped to one. Identity is the core's: accounts, two roles, projects, sign-ins and audit. Self-hosted runs one
+   scoped to one. Identity is the core's: accounts, two roles, keys, sign-ins and audit. Self-hosted runs one
    organization; the extension seam (§13) is where more is built, without forking the core.
 7. **Stateless roles, one stateful store.** API, gateway and node processes keep no state that matters across restarts;
    Postgres and an object store hold everything. Any role scales by running more of it.
@@ -33,10 +33,10 @@ elsewhere; here is only what the core provides for it, the extension seam (§13)
 
 | Term | Meaning |
 |---|---|
-| Organization (org) | The tenant. Owns accounts, providers, egress, projects, files, usage. Self-hosted has one. |
-| Project | The unit a team builds in: its harnesses (the catalog), its developers, its keys, its sessions. An organization has one or more; `init` makes the default. |
-| Account | A person: an email, a password, a role in the organization, memberships in projects. |
-| Principal | Whoever a request runs as: an account's sign-in or an API key, resolved to organization, actor, role, project. |
+| Organization (org) | The tenant. Owns accounts, keys, providers, egress, harnesses, sessions, files, usage. Self-hosted has one. |
+| Account | A person: an email, a password, a role in the organization. |
+| API key | What an application is built around: named after the app, with a role; run-only when it only runs. |
+| Principal | Whoever a request runs as: an account's sign-in or an API key, resolved to organization, actor, role. |
 | Sign-in | An account's bearer token after a login; hashed, expiring, revocable. Not a sandbox session. |
 | Operator | The platform's owner: a platform admin's account, or the operator key for automation. |
 | Harness package | A directory (a manifest, two executables, seeds) that teaches the platform one CLI and one agent. |
@@ -435,52 +435,43 @@ or URL cannot have it injected; it is refused rather than given the value.
 
 ## 9. Tenancy, identity and access
 
-### 9.1 Organizations and projects
+### 9.1 Organizations
 
-- The **organization** is the tenant. Every tenant table carries `org_id`, and row-level security confines a tenant
-  transaction to the organization it declared (`hg.org`); platform work (scheduling, sweeping, the operator) runs on a
-  separate scope (`hg.scope = platform`). Object keys are `orgs/<org_id>/…`. Self-hosted runs one organization; an
-  extension (§13) may create more, on the same identity code.
-- A **project** is the unit a team builds in: the harnesses installed into it (its catalog), the developers who belong
-  to it, the keys its applications hold, and the sessions those keys and people make. A harness name is unique within
-  its project, and `model` in a request resolves inside the principal's project, so a harness in another project does
-  not exist for it. `init` creates the organization's default project with the harness package builder installed, and
-  every new project gets the builder on creation. Projects are flat.
-- Providers and egress belong to the organization, never to a project: both move the security boundary and hold or
-  expose secrets. Every project may use every provider.
-- Row-level security carries the project beside the organization on the project-scoped tables (harnesses, sessions,
-  turns): a transaction scoped to a project (`hg.project`) cannot read another project's rows even through a mistaken
-  query; an organization-wide transaction leaves `hg.project` empty.
+The **organization** is the tenant: a team that builds harness packages and the applications around them. Every
+tenant table carries `org_id`, and row-level security confines a tenant transaction to the organization it declared
+(`hg.org`); platform work (scheduling, sweeping, the operator) runs on a separate scope (`hg.scope = platform`).
+Object keys are `orgs/<org_id>/…`. Self-hosted runs one organization; an extension (§13) may create more, on the same
+identity code. A company that wants isolation between groups runs them as organizations; an account may belong to
+several.
 
 ### 9.2 Principals and roles
 
 A **principal** is a person (an account's sign-in) or a program (an API key). Both resolve to one shape: `org`, `actor`
-(`account:<id>` or `key:<id>`), `role`, `project` (one project, or none: organization-wide), `run_only` (keys) and
-`platform_admin` (accounts, and the operator key). Two roles:
+(`account:<id>` or `key:<id>`), `role`, `run_only` (keys) and `platform_admin` (accounts). Two roles:
 
-| Role | Attaches to | May |
-|---|---|---|
-| `admin` | the organization | everything in it: providers, egress, accounts, projects and members, keys, every project's harnesses, sessions, usage, traces, audit |
-| `developer` | one or more projects | in those projects: install, configure and uninstall harnesses, use the builder, the chat and the playground, create project keys, read the project's sessions, traces and usage; read the organization's providers (names, shapes, URLs) and egress |
+| Role | May |
+|---|---|
+| `admin` | everything in the organization: providers, egress, accounts, every key, harnesses, sessions, usage, traces, audit |
+| `developer` | install, configure and uninstall harnesses, use the builder, the chat and the playground, create and revoke its own keys, read the organization's sessions, traces and usage; read providers (names, shapes, URLs) and egress |
 
-A key carries a role too. An organization key is `admin`. A project key is `developer`; with `run_only` it may create
-responses, read, continue and cancel the sessions it made, upload files and read `/models`, and nothing else: this is
-what an application holds. A key may carry an expiry. A key without a project runs nothing.
+An **API key** is what an application is built around: it is named after the app (its label is required), carries a
+role, and with `run_only` it may create responses, read, continue and cancel the sessions it made, upload files and
+read `/models`, and nothing else: this is what an application holds. A session records the key (or person) that
+created it, so an app's sessions and usage are read by its key, with no further concept. A key may carry an expiry.
 
 Every check is one call, `Principal.require(resource, action)`, made by the service that owns the resource; the table of
 who may do what lives in one domain module, and a refusal names the role that may.
 
-| Resource | Actions | `admin` | `developer` (in its projects) | run-only key |
+| Resource | Actions | `admin` | `developer` | run-only key |
 |---|---|---|---|---|
 | organization | read | ✓ | ✓ | ✓ |
-| accounts | create, read, update, disable, reset | ✓ | read self | |
+| accounts | create, read, update, reset | ✓ | read self | |
 | providers | create, read, update, delete | ✓ | read | read |
 | egress | read, update | ✓ | read | |
-| projects | create, read, update, delete, members | ✓ | read own | |
 | harnesses | install, read, configure, uninstall | ✓ | ✓ | read |
-| keys | create, read, revoke | ✓ | its project's | |
+| keys | create, read, revoke | ✓ | its own | |
 | responses, sessions, files | create, read, cancel, delete | ✓ | ✓ | its own |
-| usage, traces | read | ✓ | its project's | its own |
+| usage, traces | read | ✓ | ✓ | its own |
 | audit | read | ✓ | | |
 | platform (`/internal`) | all | platform admins, the operator key | | |
 
@@ -489,33 +480,33 @@ who may do what lives in one domain module, and a refusal names the role that ma
 - An **account** is a person: an email (the login), a name, a password hash (scrypt), a status (`invited`, `active`,
   `disabled`), a platform-admin flag, and a **membership** in the organization with a role. An account in several
   organizations holds one membership per organization; self-hosted holds one.
-- An admin creates an account (or `init` creates the first admin). It arrives **invited**: the creation returns a
-  one-time invitation token (`hgi_…`, shown once, valid seven days), and the person activates the account by setting a
-  password with it. An admin resets a password the same way. There is no default password anywhere. A password is at
-  least 12 characters; ten failed sign-ins lock the account for fifteen minutes; every attempt is audited. Disabling an
-  account revokes its sign-ins and its keys.
+- An admin creates an account (or `init` creates the first admin). It arrives **invited**: a one-time invitation link
+  (the console's setup page with a token `hgi_…`, valid seven days) is mailed to the person when mail is configured
+  (`HG_SMTP_URL`, `HG_MAIL_FROM`, `HG_CONSOLE_URL`) and returned to the creator once either way; the person activates
+  the account by choosing a password with it. An admin resets a password the same way. There is no default password
+  anywhere. A password is at least 12 characters; ten failed sign-ins lock the account for fifteen minutes; every
+  attempt is audited. Disabling an account revokes its sign-ins and its keys.
 - A **sign-in** is an opaque token (`hgl_…`), stored as an HMAC under the pepper with its account, expiry (twelve
   hours), last use and client, revoked by logout, by disabling the account, or by a password change. The console keeps
   it in an HttpOnly cookie and presents it as a bearer; the API resolves it to a principal exactly as it does a key.
-- A person in several projects names the one a request addresses with the `HG-Project` header (the project's id or
-  name). A developer in exactly one project may omit it; an admin omits it to act organization-wide. A key's project is
-  the key's own.
 - Single sign-on (OIDC against the organization's identity provider, just-in-time accounts, group-to-role mapping) is
   the next identity feature (§20). Nothing above changes for it: an SSO login produces the same sign-in.
 
 ### 9.4 The platform scope
 
 - The **operator** is the platform's owner: whoever deployed it. The platform scope sees every organization, the
-  nodes, the queue and the configuration.
-- People hold it as a flag on their account (`platform_admin`), never as a shared secret. `HG_OPERATOR_KEY` remains
-  for automation (node tokens, draining, metrics scrapers) and for break-glass; its use is audited.
+  nodes, the queue and the configuration, and invites an organization's admin; it does not work inside an
+  organization unless the same account is also a member of it.
+- People hold it as a flag on their account (`platform_admin`), never as a shared secret. `init` gives it to the first
+  admin; a platform admin grants it to others. `HG_OPERATOR_KEY` remains for automation (node tokens, draining,
+  metrics scrapers) and for break-glass; its use is audited.
 - `/internal` routes for people accept a platform admin's sign-in or the operator key. Nodes use their own
   credential.
 
 ### 9.5 Audit
 
 Every change of standing is a row in `audit`: sign-ins, their failures and locks; accounts created, activated, reset,
-disabled; keys created and revoked; projects and memberships changed; providers and egress changed; harnesses installed,
+disabled; keys created and revoked; providers and egress changed; harnesses installed,
 configured and uninstalled. A row is when, who (the actor), what (a dotted action such as `key.create`), the target and
 a detail object that never holds a secret. Admins read their organization's log (`GET /v1/audit`); the platform scope
 reads all (`GET /internal/audit`).
@@ -541,7 +532,7 @@ One platform image, one CLI, `harnessgateway <command>`:
 | `serve --role api,gateway` | both in one process (small deployments) | replicas |
 | `node` | runs boxes on its host's Docker with gVisor | more hosts |
 | `migrate` | applies schema migrations (advisory-locked, idempotent; `serve` runs it too) | — |
-| `init` | creates the org, its default project with the built-in harness package builder, the first admin's invitation and an admin key (idempotent; prints nothing new when run again) | — |
+| `init` | creates the org with the built-in harness package builder, the first admin's invitation and an admin key (idempotent; prints nothing new when run again) | — |
 | `door` | the per-box door (started by the node) | — |
 | `node-token create` | prints a join token for a node pool (operator) | — |
 | `keygen` | prints fresh secrets for configuration | — |
@@ -649,13 +640,13 @@ class Extension:
 ```
 
 Hooks run in the order configured; `observe`, `meter` and `turn_ended` run after the core's own write and never fail a
-turn (their errors are logged). The core exposes its services (`Orgs`, `Projects`, `Accounts`, `Keys`, `Usage`,
+turn (their errors are logged). The core exposes its services (`Orgs`, `Accounts`, `Keys`, `Harnesses`, `Usage`,
 `Traces`, …) to extensions. What is built on the seam lives outside this repository and never forks the core.
 
 ## 14. API
 
-All under `/v1`, JSON, a bearer credential: an API key or a sign-in token (§9). A person in several projects adds
-`HG-Project: <id or name>`. OpenAI-shaped endpoints match OpenAI's request and response shapes.
+All under `/v1`, JSON, a bearer credential: an API key or a sign-in token (§9). OpenAI-shaped endpoints match OpenAI's
+request and response shapes.
 
 ### 14.1 OpenAI-shaped
 
@@ -667,37 +658,35 @@ All under `/v1`, JSON, a bearer credential: an API key or a sign-in token (§9).
 | `DELETE /responses/{id}` | refused while running |
 | `GET /responses/{id}/input_items` | |
 | `POST /files`, `GET /files`, `GET /files/{id}`, `GET /files/{id}/content`, `DELETE /files/{id}` | ≤512 MiB per file |
-| `GET /containers` (`?user=` filters), `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session; created by its first response, in its harness's project. `metadata` names its harness, project, model, turns, state, saved bytes, last response, `created_by` (the first turn's actor: `account:<id>`, `key:<id>`, or what an extension's principal names), `user` (the request's `user`, the application's own end user) and, for a fork, `forked_from` (the response it continued from) |
+| `GET /containers` (`?user=` filters), `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session, created by its first response. `metadata` names its harness, model, turns, state, saved bytes, last response, `created_by` (the first turn's actor: `account:<id>`, `key:<id>`, or what an extension's principal names), `user` (the request's `user`, the application's own end user) and, for a fork, `forked_from` (the response it continued from) |
 | `GET /containers/{id}/files`, `GET …/files/{fid}`, `GET …/files/{fid}/content` | the workspace as of the last snapshot |
 | `POST /containers/{id}/files` (multipart `file`, optional `path`), `DELETE …/files/{fid}` | staged; applied before the session's next turn |
 | `GET /containers/{id}/responses` | the session's responses in turn order, each as `GET /responses/{id}` returns it |
 | `GET /containers/{id}/traces` (admin) | every §11 record of the session's turns, each with its `response_id`, in turn order; log bodies left out |
-| `GET /models`, `GET /models/{id}` | every `harness/provider/model` the principal's project can send |
+| `GET /models`, `GET /models/{id}` | every `harness/provider/model` the organization can send |
 
-### 14.2 Identity and projects
+### 14.2 Identity
 
 | Endpoint | Notes |
 |---|---|
 | `POST /auth/login` | `{email, password}` → a sign-in token (once), its expiry, the account and its memberships; 401 on failure, 423 while locked |
 | `POST /auth/logout`, `GET /auth/me`, `POST /auth/password` (`{current, new}`) | the sign-in's own account |
 | `POST /auth/accept` | `{token, password}`: activates an invited account, or sets the password after a reset; no credential needed |
-| `GET/POST /accounts`, `GET/PATCH /accounts/{id}`, `POST /accounts/{id}/reset` (admin) | create: `{email, name, role, platform_admin?}` → the account and its invitation token, once; patch: `role`, `status` (`disabled`), `platform_admin` (platform admins only); reset → a new invitation token |
-| `GET/POST /projects`, `GET/PATCH/DELETE /projects/{id}` (admin; developers read theirs) | `{name}`; the builder is installed on creation; delete refuses a project with sessions |
-| `GET/PUT/DELETE /projects/{id}/members/{account}` (admin) | the developers of a project |
+| `GET/POST /accounts`, `GET/PATCH /accounts/{id}`, `POST /accounts/{id}/reset` (admin) | create: `{email, name, role, platform_admin?}` → the account, its invitation link (once) and whether it was mailed; patch: `role`, `status` (`disabled`), `platform_admin` (platform admins only); reset → a new invitation |
 | `GET /audit` (admin) | the organization's audit rows, newest first, `?after=` paging |
 
 ### 14.3 Management
 
 | Endpoint | Notes |
 |---|---|
-| `GET/POST/DELETE /keys` | create: `{label, role, project, run_only, expires_in_days}`; an admin creates any, a developer creates keys of its projects; returns the key once |
+| `GET/POST/DELETE /keys` | create: `{label, role, run_only, expires_in_days}` (the label names the app); an admin creates any, a developer creates developer keys and sees its own; returns the key once |
 | `GET/PUT/DELETE /providers/{name}` | `{api, base_url, key}`; the key is write-only, and may be left out when updating (the stored one is kept) |
 | `GET/PUT /egress` | the org's egress entries |
-| `GET /harnesses`, `GET /harnesses/{name}` | the principal's project's catalog (an admin without a project: every project's, each entry naming its `project`); manifest, digest, which settings and secrets are set (never values); `GET /harnesses/{name}/files` and `/files/{path}` read the package |
+| `GET /harnesses`, `GET /harnesses/{name}` | the installed harnesses: manifest, digest, which settings and secrets are set (never values); `GET /harnesses/{name}/files` and `/files/{path}` read the package |
 | `POST /harnesses` | install or upgrade from a multipart `package` archive (the package folder as a tar, gzipped or not) |
 | `PATCH /harnesses/{name}` | `settings`, `secrets` (write-only; null clears), `default_provider`, `default_model` |
 | `DELETE /harnesses/{name}` | existing sessions keep running on their pinned package |
-| `GET /usage` | §12; `group_by` adds `project` and `user` |
+| `GET /usage` | §12; `group_by` adds `created_by` (the app's key or the person) and `user` |
 | `GET /traces/{response_id}` | §11; a session's records together: `GET /containers/{id}/traces` (§14.1) |
 
 Upgrading a harness affects new sessions only.
@@ -705,7 +694,7 @@ Upgrading a harness affects new sessions only.
 ### 14.4 Internal (node credential; operator key or a platform admin's sign-in where noted)
 
 `POST /internal/nodes/join`, `/heartbeat`, `/claim`, `/turns/{id}/events` (stdout bytes), `/turns/{id}/finish`,
-`/turns/{id}/saved`, `/usage`, `/traces`; operator: `node-tokens`, `nodes/{id}/drain`, `health`, `nodes`, `orgs`, `usage`, `config`, `versions`, `audit`, `metrics` (§11), `sessions/{id}/evict`.
+`/turns/{id}/saved`, `/usage`, `/traces`; operator: `node-tokens`, `nodes/{id}/drain`, `health`, `nodes`, `orgs`, `orgs/{id}/accounts` (invite an organization's admin), `usage`, `config`, `versions`, `audit`, `metrics` (§11), `sessions/{id}/evict`.
 
 ## 15. Data model
 
@@ -716,16 +705,14 @@ Upgrading a harness affects new sessions only.
 | `memberships` | account, org, role |
 | `invitations` | digest, account, expiry (one-time: activation and password reset) |
 | `sign_ins` | id, account, digest, created, expiry, last used, client, revoked |
-| `projects` | id, org, name, created |
-| `project_members` | project, account (developers) |
-| `api_keys` | id, org, project, account (its creator), digest, role, run_only, label, created, expires, last used, revoked |
+| `api_keys` | id, org, account (its creator), digest, role, run_only, label (the app), created, expires, last used, revoked |
 | `audit` | id, org, at, actor, action, target, detail (JSON) |
 | `providers` | org, name, api, base_url, sealed key |
 | `packages` | digest, manifest, object key (shared across orgs; content-addressed) |
-| `harnesses` | org, project, name, package digest, manifest, settings, sealed secrets, default provider, default model |
+| `harnesses` | org, name, package digest, manifest, settings, sealed secrets, default provider, default model |
 | `files` | org, id, created_by, filename, bytes, object key |
-| `sessions` | org, project, id, harness name, package digest, manifest, provider, model, store, status, snapshot key, node, running turn, forked_from, created_by, user, timestamps |
-| `turns` | org, project, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the account, key or extension principal that created it), user (the request's), snapshot key (its checkpoint) |
+| `sessions` | org, id, harness name, package digest, manifest, provider, model, store, status, snapshot key, node, running turn, forked_from, created_by, user, timestamps |
+| `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the account, key or extension principal that created it), user (the request's), snapshot key (its checkpoint) |
 | `turn_events` / `live_events` | kept events / deltas (purged after the turn), by (turn, seq) |
 | `turn_bindings` | sealed caller secrets of a turn, deleted at its end |
 | `turn_tokens` | digest, turn, org, provider, node, expiry, revoked |
@@ -745,8 +732,7 @@ Upgrading a harness affects new sessions only.
 - People sign in as themselves: accounts with scrypt-hashed passwords, one-time invitations, no default password, lockout
   after repeated failures, expiring and revocable sign-ins; two roles checked in one place; the platform scope held by a
   flag on an account, the operator key kept for automation; every change of standing audited.
-- Row-level security on every tenant table, by organization and, where a table has one, by project; org-prefixed object
-  keys; signed, short-lived object links.
+- Row-level security on every tenant table, by organization; org-prefixed object keys; signed, short-lived object links.
 - Packages: content-addressed, verified by digest on every node, extracted with no links and no path escape.
 - Request validation at the boundary; output validation with the SDK's types; bounded sizes everywhere (§17).
 - No credential in any response, event, log, capture or error.

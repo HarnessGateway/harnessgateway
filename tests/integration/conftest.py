@@ -1,5 +1,5 @@
-"""The live stack every integration test runs against (HG_TEST_STACK=1): an admin key working in the `default`
-project (HG_TEST_PROJECT), with `shell` installed from `packages/shell` and the organization's egress set."""
+"""The live stack every integration test runs against (HG_TEST_STACK=1): an admin key, with `shell` installed from
+`packages/shell` and the organization's egress set."""
 import io
 import os
 import tarfile
@@ -23,8 +23,7 @@ def pack(folder: Path) -> bytes:
 @pytest.fixture(scope="session")
 def api():
     with httpx.Client(base_url=os.environ.get("HG_TEST_URL", "http://localhost:8000"), timeout=600,
-                      headers={"authorization": f"Bearer {os.environ['HG_TEST_KEY']}",
-                               "hg-project": os.environ.get("HG_TEST_PROJECT", "default")}) as c:
+                      headers={"authorization": f"Bearer {os.environ['HG_TEST_KEY']}"}) as c:
         r = c.put("/v1/egress", json={"egress": ["*.npmjs.org", "!evil.npmjs.org", "mcp.hg-test.dev"]})
         r.raise_for_status()
         r = c.post("/v1/harnesses", files={"package": ("shell.tgz", pack(SHELL))})

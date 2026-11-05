@@ -60,8 +60,8 @@ sudo ./deploy/install.sh
 ```
 
 The installer starts Postgres, the API with the provider gateway, a node, and the console, creates your organization
-with its default project (the built-in harness package builder installed) and your admin account, and prints the
-invitation link that activates it and an admin key for automation, once. Then:
+with the built-in harness package builder and your admin account, and prints the invitation link that activates it and
+an admin key for automation, once. Then:
 
 1. Open the invitation link, choose a password, and add a provider under **Setup → Providers**
    (an Anthropic, OpenAI or Gemini API endpoint and your key; the key is sealed and never shown again).
@@ -71,9 +71,9 @@ invitation link that activates it and an admin key for automation, once. Then:
 3. Open **Workbench → Chat**, pick the harness and the provider, and ask for something.
 4. Or call the API with any OpenAI SDK pointed at `http://localhost:8000/v1`, as above.
 
-Under **Access**, invite developers and put them in projects: each project has its own harnesses, keys and sessions,
-and an application holds a run-only key of its project. The platform console at `http://localhost:8800/ops` shows
-health, nodes, organizations, usage, configuration and the audit log to platform admins.
+Under **Access**, invite developers by email, and create an API key per app: a run-only key is what an app holds, and
+its sessions and usage are read by that key. The platform console at `http://localhost:8800/ops` shows health, nodes,
+organizations, usage, configuration and the audit log to platform admins.
 For many hosts, a managed Postgres, an S3 bucket and node pools, see [`docs/operations.md`](docs/operations.md).
 
 ## Harnesses

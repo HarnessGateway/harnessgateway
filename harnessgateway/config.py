@@ -48,6 +48,9 @@ class Settings:
     ca_file: str = ""
     allow_private_egress: bool = False
     builder_dir: Path = Path(__file__).resolve().parent.parent / "packages" / "harness-package-builder"
+    console_url: str = "http://localhost:8800"
+    smtp_url: str = ""
+    mail_from: str = ""
     extensions: tuple[str, ...] = ()
     log_level: str = "info"
     defaults: Capacity = field(default_factory=Capacity)
@@ -104,6 +107,8 @@ class Settings:
                 upstream_proxy=get("UPSTREAM_PROXY"), ca_file=get("CA_FILE"),
                 allow_private_egress=_bool(get("ALLOW_PRIVATE_EGRESS")),
                 builder_dir=Path(get("BUILDER_DIR", str(cls.builder_dir))),
+                console_url=get("CONSOLE_URL", cls.console_url).rstrip("/"), smtp_url=get("SMTP_URL"),
+                mail_from=get("MAIL_FROM"),
                 extensions=tuple(x.strip() for x in get("EXTENSIONS").split(",") if x.strip()),
                 log_level=get("LOG_LEVEL", "info").lower(),
                 defaults=defaults)
@@ -119,6 +124,8 @@ class Settings:
                 problems.append("HG_NODE_JOIN_TOKEN is required for a node's first start")
             if s.ca_file and not Path(s.ca_file).is_file():
                 problems.append(f"HG_CA_FILE names no file: {s.ca_file}")
+        if s.smtp_url and not s.mail_from:
+            problems.append("HG_MAIL_FROM (the sender address) is required with HG_SMTP_URL")
         if s.log_level not in ("debug", "info", "warning", "error"):
             problems.append("HG_LOG_LEVEL is debug, info, warning or error")
         if problems:
@@ -127,5 +134,5 @@ class Settings:
 
     def describe(self) -> dict[str, object]:
         """The settings without secrets, for a start-up log line."""
-        hidden = {"secret_key", "operator_key", "node_join_token", "database_url"}
+        hidden = {"secret_key", "operator_key", "node_join_token", "database_url", "smtp_url"}
         return {f.name: str(getattr(self, f.name)) for f in fields(self) if f.name not in hidden}

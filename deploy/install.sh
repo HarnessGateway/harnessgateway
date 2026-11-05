@@ -11,7 +11,9 @@
 # an admin key once.
 #
 # Settings (environment): HG_HOME (default /opt/harnessgateway), HG_ADMIN_EMAIL, HG_BIND (127.0.0.1), HG_HTTP_PORT
-# (8000), HG_NODE_DIR (/var/lib/harnessgateway), HG_DOCKER_POOL (10.200.0.0/16: room for one network per sandbox).
+# (8000), HG_CONSOLE_PORT (8800), HG_CONSOLE_URL (http://localhost:8800: where people open the console; invitation
+# links are built on it), HG_NODE_DIR (/var/lib/harnessgateway), HG_DOCKER_POOL (10.200.0.0/16: room for one network
+# per sandbox).
 set -euo pipefail
 
 # Everything runs from main(), called on the last line: bash reads the whole script before executing any of
@@ -110,6 +112,7 @@ if [ ! -f .env ]; then
       -e "s/^HG_DB_PASSWORD=$/HG_DB_PASSWORD=$(password)/" \
       -e "s|^HG_BIND=.*|HG_BIND=${HG_BIND:-127.0.0.1}|" -e "s|^HG_HTTP_PORT=.*|HG_HTTP_PORT=${HG_HTTP_PORT:-8000}|" -e "s|^HG_CONSOLE_PORT=.*|HG_CONSOLE_PORT=${HG_CONSOLE_PORT:-8800}|" \
       -e "s|^HG_ADMIN_EMAIL=.*|HG_ADMIN_EMAIL=${HG_ADMIN_EMAIL:-}|" \
+      -e "s|^HG_CONSOLE_URL=.*|HG_CONSOLE_URL=${HG_CONSOLE_URL:-http://localhost:${HG_CONSOLE_PORT:-8800}}|" \
       -e "s|^HG_NODE_DIR=.*|HG_NODE_DIR=${HG_NODE_DIR:-/var/lib/harnessgateway}|" .env.example > .env
   docker run --rm "$PLATFORM_IMAGE" keygen >> .env
   printf 'HG_PLATFORM_IMAGE=%s\nHG_SANDBOX_IMAGE=%s\n' "$PLATFORM_IMAGE" "$SANDBOX_IMAGE" >> .env
@@ -134,14 +137,14 @@ say "starting HarnessGateway"
 docker compose up -d --wait
 init=$(docker compose exec -T -e HG_ADMIN_EMAIL="$email" harnessgateway harnessgateway init </dev/null)
 key=$(printf '%s' "$init" | sed -n 's/.*"admin_key": "\(hg_[^"]*\)".*/\1/p')
-invitation=$(printf '%s' "$init" | sed -n 's/.*"invitation": "\(hgi_[^"]*\)".*/\1/p')
+invitation=$(printf '%s' "$init" | sed -n 's/.*"invitation": "\([^"]*\)".*/\1/p')
 port=$(grep -E '^HG_HTTP_PORT=' .env | cut -d= -f2-)
 cport=$(grep -E '^HG_CONSOLE_PORT=' .env | cut -d= -f2-)
 echo
 say "HarnessGateway is running: API http://${HG_BIND:-127.0.0.1}:${port:-8000}, console http://${HG_BIND:-127.0.0.1}:${cport:-8800}  (project: $HOME_DIR)"
 if [ -n "$invitation" ]; then
   echo "Activate your admin account ($email) by choosing a password at this link (shown once, valid 7 days):"
-  echo "  http://localhost:${cport:-8800}/setup?token=$invitation"
+  echo "  $invitation"
   echo "Your admin API key for automation (shown once; keep it):  $key"
 else
   echo "The organization already exists; sign in to the console with your account (an admin can reset a password)."

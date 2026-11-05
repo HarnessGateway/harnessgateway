@@ -22,8 +22,8 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | Path | What it holds |
 |---|---|
 | `harnessgateway/domain/` | pure rules, no I/O: the Responses contract, manifests, packages (digest, archive), egress entries, MCP resolution, capacity, meters, turn states |
-| `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, sandbox Runtime) and their implementations (file and S3 stores, local and KMS key wrapping, Docker with gVisor). Vendor SDKs live only in `adapters/` |
-| `harnessgateway/services/` | one class per responsibility: orgs, keys, vault, providers, harnesses, files, containers, turns (the caller's side), delivery (the node's side), scheduler, usage, traces, sweeper, operations. `platform.py` is the composition root |
+| `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, Mailer, sandbox Runtime) and their implementations (file and S3 stores, local and KMS key wrapping, Docker with gVisor). Vendor SDKs live only in `adapters/` |
+| `harnessgateway/services/` | one class per responsibility: orgs, accounts, keys, audit, vault, providers, harnesses, files, containers, turns (the caller's side), delivery (the node's side), scheduler, usage, traces, sweeper, operations. `platform.py` is the composition root |
 | `harnessgateway/api/` | FastAPI routers: OpenAI-shaped (`responses.py`, `storage.py`), management (`manage.py`), the nodes' and operator's routes (`internal.py`); `http.py` is authentication, body limits and the error envelope |
 | `harnessgateway/gateway/` | the provider relay: turn token + door token → the organization's key |
 | `harnessgateway/node/` | the node agent (`agent.py`), its API client, snapshots (`state.py`), stdout batching (`pump.py`), the node CA (`trust.py`), the egress door (`door.py`), `runtime/turn.sh` |
@@ -49,8 +49,8 @@ scripts/version-check
 ```
 
 Integration tests need a running stack: `HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_...
-.venv/bin/pytest -q tests/integration` (an admin key, working in the `default` project; the operator tests also need
-`HG_TEST_OPERATOR_KEY`). They install `shell`
+.venv/bin/pytest -q tests/integration` (an admin key; the operator tests also need `HG_TEST_OPERATOR_KEY`). They
+install `shell`
 from `packages/shell`, install and remove a seeded test package, and set the organization's egress.
 
 ## Running it locally

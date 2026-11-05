@@ -16,7 +16,7 @@ from harnessgateway.domain.access import Principal
 class Mine(Extension):
     migrations = "my_extension.migrations"               # NNNN_*.sql files, applied after the core's
 
-    def bind(self, platform):                            # the core's services: orgs, projects, accounts, keys, usage…
+    def bind(self, platform):                            # the core's services: orgs, accounts, keys, harnesses, usage…
         self.platform = platform
 
     def router(self) -> APIRouter:                       # extra routes under the same app
@@ -42,15 +42,14 @@ turn (their exceptions are logged).
 
 ## Tenancy
 
-Every table carries `org_id` with row-level security, and the project-scoped ones (harnesses, sessions, turns) carry
-`project_id`; the core's services take both from the `Principal` (SPEC §9.2: organization, actor, role, project,
-`run_only`, `platform_admin`). An extension creates an organization on the core's identity: the organization with
-`platform.orgs.create(name)`, its default project with `platform.projects.create(org_id, actor, "default")` (the
-builder is installed), its first admin with `platform.accounts.create(org_id, actor, email, name, "admin")` (an
-invitation to send), and its capacity with `platform.orgs.update(org_id, capacity=…)` (vCPUs, memory, sandbox
-ceilings, idle and retention, node pool, observability level). Accounts, roles, sign-ins, keys and audit stay the
-core's; `authenticate` is for a credential of the extension's own, which still resolves to a `Principal` of an
-organization and a project.
+Every table carries `org_id` with row-level security; the core's services take the organization from the
+`Principal` (SPEC §9.2: organization, actor, role, `run_only`, `platform_admin`). An extension creates an organization
+on the core's identity: the organization with `platform.orgs.create(name)`, the builder with
+`platform.harnesses.install_folder(org_id, platform.settings.builder_dir)`, its first admin with
+`platform.accounts.create(org_id, actor, email, name, "admin")` (the invitation is mailed when mail is configured, and
+returned), and its capacity with `platform.orgs.update(org_id, capacity=…)` (vCPUs, memory, sandbox ceilings, idle and
+retention, node pool, observability level). Accounts, roles, sign-ins, keys and audit stay the core's;
+`authenticate` is for a credential of the extension's own, which still resolves to a `Principal` of an organization.
 
 ## Metering
 

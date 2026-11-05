@@ -1,25 +1,33 @@
 """Accounts and sign-ins (SPEC §9.3): people, their passwords, their one-time invitations and their bearer tokens.
 
 An account is created invited and activated with a one-time token by setting a password; the same token resets one.
+The invitation is a link to the console's setup page, mailed to the person when mail is configured and returned to
+the caller either way, once.
 Passwords are scrypt hashes; ten failed sign-ins lock an account for fifteen minutes; a sign-in is an opaque token kept
 as an HMAC, expiring, revoked by logout, by a password change and by disabling the account. The identity tables are the
 platform's, so this service runs on the platform scope and confines itself to the organization it is asked about."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from .. import ids
 from ..db import Database, Tx
 from ..domain.access import ROLES
 from ..errors import Conflict, Invalid, Locked, NotFound, Unauthenticated
+from ..ports.mail import Mailer
 from .audit import Audit
 from .pages import ts
+
+log = logging.getLogger("harnessgateway.accounts")
 
 PASSWORD_MIN = 12
 LOCK_AFTER, LOCK_S = 10, 900
@@ -59,9 +67,30 @@ def check_new_password(password: object) -> str:
 
 
 class Accounts:
-    def __init__(self, db: Database, pepper: bytes, audit: Audit):
-        self.db, self.pepper, self.audit = db, pepper, audit
+    def __init__(self, db: Database, pepper: bytes, audit: Audit, console_url: str, mail: Mailer | None):
+        self.db, self.pepper, self.audit, self.console_url, self.mail = db, pepper, audit, console_url, mail
         self._touched: dict[str, float] = {}
+
+    async def _invitation(self, tx: Tx, account_id: str) -> str:
+        """A fresh one-time token for the account (any earlier one is void), as the setup link it is used at."""
+        token = ids.new_secret("invitation")
+        await tx.run("DELETE FROM invitations WHERE account_id = %s", account_id)
+        await tx.run("INSERT INTO invitations (digest, account_id, expires_at) VALUES (%s, %s, %s)",
+                     ids.digest(token, self.pepper), account_id, datetime.now(UTC) + timedelta(seconds=INVITATION_TTL_S))
+        return f"{self.console_url}/setup?token={quote(token)}"
+
+    async def _deliver(self, email: str, link: str, org_name: str) -> bool:
+        """The link by mail, when mail is configured. Never fails the request: the caller has the link too."""
+        if self.mail is None:
+            return False
+        body = (f"You have been invited to HarnessGateway ({org_name}).\n\nChoose your password at this link; it works "
+                f"once and expires in seven days:\n\n{link}\n")
+        try:
+            await asyncio.to_thread(self.mail.send, email, "Your HarnessGateway invitation", body)
+            return True
+        except Exception:
+            log.exception("sending the invitation for %s failed", email)
+            return False
 
     async def _audit(self, account_id: str, action: str, detail: dict[str, Any] | None = None) -> None:
         """An account's own event (a sign-in, a failure, a lock, an activation), in the log of every organization it
@@ -90,28 +119,23 @@ class Accounts:
                              ids.new("account"), email, str(name or "")[:200], platform_admin)
                 row = await tx.get("SELECT * FROM accounts WHERE email = %s", email)
             await tx.run("INSERT INTO memberships (account_id, org_id, role) VALUES (%s, %s, %s)", row["id"], org_id, role)
-            token = await self._invite(tx, row["id"]) if row["status"] == "invited" else None
+            link = await self._invitation(tx, row["id"]) if row["status"] == "invited" else None
+            org = await tx.get("SELECT name FROM orgs WHERE id = %s", org_id)
         await self.audit.write(org_id, actor, "account.create", row["id"], {"email": email, "role": role})
         out = _view(row, str(role))
-        if token:
-            out["invitation"] = token
+        if link:
+            out |= {"invitation": link, "sent": await self._deliver(email, link, org["name"])}
         return out
 
-    async def _invite(self, tx: Tx, account_id: str) -> str:
-        token = ids.new_secret("invitation")
-        await tx.run("DELETE FROM invitations WHERE account_id = %s", account_id)
-        await tx.run("INSERT INTO invitations (digest, account_id, expires_at) VALUES (%s, %s, %s)",
-                     ids.digest(token, self.pepper), account_id, datetime.now(UTC) + timedelta(seconds=INVITATION_TTL_S))
-        return token
-
     async def reset(self, org_id: str, actor: str, account_id: str) -> dict[str, Any]:
-        """A new one-time token: the person sets a new password with it; every sign-in of the account ends now."""
+        """A new invitation: the person sets a new password with it; every sign-in of the account ends now."""
         async with self.db.platform() as tx:
             row = await self._member(tx, org_id, account_id)
-            token = await self._invite(tx, row["id"])
+            link = await self._invitation(tx, row["id"])
             await tx.run("UPDATE sign_ins SET revoked_at = now() WHERE account_id = %s AND revoked_at IS NULL", row["id"])
+            org = await tx.get("SELECT name FROM orgs WHERE id = %s", org_id)
         await self.audit.write(org_id, actor, "account.reset", row["id"])
-        return {**_view(row), "invitation": token}
+        return {**_view(row), "invitation": link, "sent": await self._deliver(row["email"], link, org["name"])}
 
     async def accept(self, token: object, password: object, client: str) -> dict[str, Any]:
         """Activate an invited account, or finish a reset: the token once, the new password; signed in on success."""

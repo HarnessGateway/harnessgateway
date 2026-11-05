@@ -1,9 +1,8 @@
 """Who may do what (SPEC §9.2): the two roles, the run-only key, and the one table every service checks against.
 
 A `Principal` is whoever a request runs as, resolved from a sign-in or an API key: its organization, its actor
-(`account:<id>` or `key:<id>`), its role, the project it addresses (none: organization-wide, which only an admin may
-be), whether it is a key that only runs, and whether it holds the platform scope. `require(resource, action)` is the
-check; a refusal names the role that may."""
+(`account:<id>` or `key:<id>`), its role, whether it is a key that only runs, whether it holds the platform scope,
+and the account behind it. `require(resource, action)` is the check; a refusal names the role that may."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,17 +13,14 @@ ADMIN, DEVELOPER = "admin", "developer"
 ROLES = (ADMIN, DEVELOPER)
 RUN_ONLY = "run_only"                         # a developer key that only runs: what an application holds
 
-# resource -> action -> the grants that allow it. `admin` is implied everywhere; `developer` acts in its projects;
-# `run_only` is the narrowest grant and is checked instead of `developer` for a key that only runs.
+# resource -> action -> the grants that allow it. `admin` is implied everywhere; `run_only` is the narrowest grant and
+# is checked instead of `developer` for a key that only runs.
 TABLE: dict[str, dict[str, frozenset[str]]] = {
     "organization": {"read": frozenset({DEVELOPER, RUN_ONLY})},
-    "accounts": {"create": frozenset(), "read": frozenset(), "update": frozenset(), "disable": frozenset(),
-                 "reset": frozenset()},
+    "accounts": {"create": frozenset(), "read": frozenset(), "update": frozenset(), "reset": frozenset()},
     "providers": {"create": frozenset(), "read": frozenset({DEVELOPER, RUN_ONLY}), "update": frozenset(),
                   "delete": frozenset()},
     "egress": {"read": frozenset({DEVELOPER}), "update": frozenset()},
-    "projects": {"create": frozenset(), "read": frozenset({DEVELOPER}), "update": frozenset(), "delete": frozenset(),
-                 "members": frozenset()},
     "harnesses": {"install": frozenset({DEVELOPER}), "read": frozenset({DEVELOPER, RUN_ONLY}),
                   "configure": frozenset({DEVELOPER}), "uninstall": frozenset({DEVELOPER})},
     "keys": {"create": frozenset({DEVELOPER}), "read": frozenset({DEVELOPER}), "revoke": frozenset({DEVELOPER})},
@@ -36,7 +32,7 @@ TABLE: dict[str, dict[str, frozenset[str]]] = {
     "traces": {"read": frozenset({DEVELOPER, RUN_ONLY})},
     "audit": {"read": frozenset()},
 }
-WHO = {ADMIN: "an admin", DEVELOPER: "an admin, or a developer of the project", RUN_ONLY: "any key or account of the project"}
+WHO = {ADMIN: "an admin", DEVELOPER: "an admin or a developer", RUN_ONLY: "any key or account"}
 
 
 @dataclass(frozen=True)
@@ -44,10 +40,9 @@ class Principal:
     org_id: str
     actor: str                        # account:<id> | key:<id> | what an extension names
     role: str                         # admin | developer
-    project: str | None = None        # the project this request addresses; None: organization-wide (admins)
     run_only: bool = False            # a key that only runs
     platform_admin: bool = False      # the platform scope (SPEC §9.4)
-    account_id: str | None = None
+    account_id: str | None = None     # the person: the sign-in's account, or the account that created the key
     name: str = ""                    # the account's name or the key's label, for display
 
     @property

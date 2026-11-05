@@ -7,6 +7,7 @@ from typing import Any
 
 from ..adapters.blob_fs import FileBlobs
 from ..adapters.keys_local import LocalKeys
+from ..adapters.mail_smtp import SmtpMailer
 from ..config import Settings
 from ..crypto import DataKeys, Signer, derive
 from ..db import Database
@@ -14,6 +15,7 @@ from ..domain.access import ADMIN
 from ..extensions import Extensions
 from ..ports.blob import BlobStore
 from ..ports.keys import KeyWrapper
+from ..ports.mail import Mailer
 from .accounts import Accounts
 from .audit import Audit
 from .containers import Containers
@@ -24,7 +26,6 @@ from .keys import Keys
 from .objects import Objects
 from .operations import Operations
 from .orgs import Orgs
-from .projects import DEFAULT, Projects
 from .providers import Providers
 from .scheduler import Scheduler
 from .sweeper import Sweeper
@@ -44,6 +45,10 @@ def _wrapper(settings: Settings) -> KeyWrapper:
         from ..adapters.keys_kms import KmsKeys
         return KmsKeys(settings.kms_key)
     return LocalKeys(derive(settings.secret_key, "harnessgateway/master"))
+
+
+def _mailer(settings: Settings) -> Mailer | None:
+    return SmtpMailer(settings.smtp_url, settings.mail_from) if settings.smtp_url else None
 
 
 def _store(settings: Settings, signer: Signer) -> BlobStore:
@@ -67,11 +72,10 @@ class Platform:
         self.vault = Vault(self.db, self.data_keys)
         self.audit = Audit(self.db)
         self.orgs = Orgs(self.db, self.data_keys, s.defaults)
-        self.accounts = Accounts(self.db, self.pepper, self.audit)
+        self.accounts = Accounts(self.db, self.pepper, self.audit, s.console_url, _mailer(s))
         self.keys = Keys(self.db, self.pepper, self.audit)
         self.providers = Providers(self.db, self.vault, allow_private=s.allow_private_egress)
         self.harnesses = Harnesses(self.db, self.objects, self.vault, self.audit)
-        self.projects = Projects(self.db, self.harnesses, self.audit, s.builder_dir)
         self.files = Files(self.db, self.objects)
         self.containers = Containers(self.db, self.objects)
         self.bus = EventBus(self.db)
@@ -95,15 +99,19 @@ class Platform:
         return await self.db.migrate((CORE_MIGRATIONS, *self.extensions.migrations))
 
     async def init(self, name: str, admin_email: str) -> dict[str, Any]:
-        """Self-hosted's one organization (SPEC §10.4): its default project with the harness package builder installed,
-        its first admin (a platform admin too) with the invitation that activates the account, and an admin key for
+        """Self-hosted's one organization (SPEC §10.4): the harness package builder installed, its first admin (the
+        deployer: a platform admin too) with the invitation that activates the account, and an admin key for
         automation. Both secrets are in the result once. Run again, it changes nothing and returns neither."""
         org = await self.orgs.first()
         if org:
             return {"organization": org, "note": "already initialized: no new invitation or key"}
         org = await self.orgs.create(name)
         org_id = str(org["id"])
-        project = await self.projects.create(org_id, INIT, DEFAULT)
+        builder = self.settings.builder_dir
+        if (builder / "harness.json").is_file():
+            await self.harnesses.install_folder(org_id, builder)
+        else:
+            log.warning("no harness package builder at %s (HG_BUILDER_DIR): none installed", builder)
         admin = await self.accounts.create(org_id, INIT, admin_email, "", ADMIN, platform_admin=True)
         key = await self.keys.create_admin(org_id, "init")
-        return {"organization": org, "project": project, "admin": admin, "admin_key": key["key"]}
+        return {"organization": org, "admin": admin, "admin_key": key["key"]}

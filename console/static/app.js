@@ -1,13 +1,12 @@
-// The console shell: the sidebar (modules and items, collapsible), the header with the project switcher, the account
-// menu, and a hash router that renders one page module into #content. Which app this is (the organization's or the
-// platform's) comes from <body data-app>. `me` is /api/me: the account, its role, its organization, its projects and
-// the project this console addresses ("" for an admin looking at the whole organization).
+// The console shell: the sidebar (modules and items, collapsible), the header, the account menu, and a hash router
+// that renders one page module into #content. Which app this is (the organization's or the platform's) comes from
+// <body data-app>. `me` is /api/me: the account, its role and its organization.
 import { api, esc } from "./api.js";
-import { $, I, fail, field, ic, modal, select, toast } from "./ui.js";
+import { $, I, fail, field, ic, modal, toast } from "./ui.js";
 
 const APP = document.body.dataset.app;             // "user" | "ops"
 const SIDE = `hg-console-side-${APP}`;
-const me = { account: {}, role: "", organization: {}, projects: [], project: "", project_name: "", platform: {}, api: "" };
+const me = { account: {}, role: "", organization: {}, platform: {}, api: "" };
 let pages = {}, nav = [];
 
 async function boot() {
@@ -24,22 +23,11 @@ async function boot() {
   $("#sideopen").hidden = !document.body.classList.contains("noside");
   $("#foot").innerHTML = `<a href="https://github.com/harnessgateway/harnessgateway/tree/main/docs" target="_blank" rel="noopener">Docs ↗</a>` +
     `<span style="margin-left:auto">v${esc(me.platform.version || "?")}${(me.platform.extensions || []).length ? " · " + esc(me.platform.extensions.join(", ")) : ""}</span>`;
-  if (APP === "user") projectSwitcher();
   $("#who").innerHTML = `<span>${esc(me.name)}</span><span class="av">${esc(me.name.slice(0, 1).toUpperCase())}</span>`;
   $("#who").addEventListener("click", accountMenu);
   renderNav();
   window.addEventListener("hashchange", route);
   route();
-}
-
-// Which project this console addresses: an admin may look at the whole organization; a developer picks among its own.
-function projectSwitcher() {
-  const options = (me.role === "admin" ? [["", "All projects"]] : []).concat(me.projects.map(p => [p.id, p.name]));
-  if (options.length < 2) { $("#proj").innerHTML = options.length ? `<span class="pill b">${esc(options[0][1])}</span>` : ""; return; }
-  $("#proj").innerHTML = select("project", options, me.project, 'title="The project this console addresses"');
-  $("#proj select").addEventListener("change", async e => {
-    try { await api("POST", "/project", { project: e.target.value }); location.reload(); } catch (err) { fail(err); }
-  });
 }
 
 function toggleSide() {

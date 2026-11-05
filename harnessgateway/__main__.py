@@ -110,7 +110,7 @@ async def admin(args: argparse.Namespace) -> None:
             doc = {"organization": out["organization"]["id"], "name": out["organization"]["name"]}
             if "admin" in out:
                 doc |= {"admin_email": out["admin"]["email"], "invitation": out["admin"]["invitation"],
-                        "admin_key": out["admin_key"]}
+                        "invitation_sent": out["admin"]["sent"], "admin_key": out["admin_key"]}
             else:
                 doc["note"] = out["note"]
             print(json.dumps(doc, indent=2))

@@ -104,8 +104,7 @@ async def delete_container_file(request: Request, sid: str, fid: str, p: Princip
 
 
 async def _models(request: Request, p: Principal) -> list[dict[str, Any]]:
-    """Every `model` the principal's project can send: each harness, on each provider whose API it speaks. An admin
-    without a project sees every project's, a name once."""
+    """Every `model` the organization can send: each harness, on each provider whose API it speaks."""
     plat = platform(request)
     providers = await plat.providers.list(p.org_id)
     out: dict[str, dict[str, Any]] = {}

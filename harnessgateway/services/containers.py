@@ -49,7 +49,7 @@ class Containers:
     def _view(row: dict[str, Any]) -> dict[str, Any]:
         return {"id": row["id"], "object": "container", "name": row["harness"], "created_at": ts(row["created_at"]),
                 "status": "running", "last_active_at": ts(row["last_active_at"]),
-                "metadata": {"harness": row["harness"], "project": row["project_id"], "model": row["model"],
+                "metadata": {"harness": row["harness"], "model": row["model"],
                              "turns": str(row["turns"]), "state": _state(row), "store": "true" if row["store"] else "false",
                              "bytes": str(row["snapshot_bytes"]), "last_response_id": row.get("last_response_id") or "",
                              "created_by": row["created_by"], "user": row["end_user"] or "",
@@ -57,15 +57,15 @@ class Containers:
 
     async def list(self, p: Principal, limit: int, after: str | None, order: str, user: str | None = None
                    ) -> dict[str, Any]:
-        """The principal's project's sessions (an admin without a project: the organization's; a run-only key: its
-        own), newest first unless `order=asc`; `user` keeps the sessions an application made for that end user."""
+        """The organization's sessions (a run-only key: its own), newest first unless `order=asc`; `user` keeps the
+        sessions an application made for that end user."""
         p.require("responses", "read")
         limit = check_limit(limit)
         if order not in ("asc", "desc"):
             raise Invalid("order is asc or desc", param="order")
         cmp, direction = (">", "ASC") if order == "asc" else ("<", "DESC")
         clause, args = own(p)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             rows = await tx.all(f"SELECT s.*, {LAST} FROM sessions s WHERE s.status = 'active'{clause} AND (%s::text IS NULL "
                                 f"OR s.end_user = %s) AND (%s::text IS NULL OR s.created_at {cmp} (SELECT created_at FROM "
                                 f"sessions WHERE id = %s)) ORDER BY s.created_at {direction} LIMIT %s",
@@ -75,7 +75,7 @@ class Containers:
     async def row(self, p: Principal, sid: str, lock: bool = False) -> dict[str, Any]:
         p.require("responses", "read")
         clause, args = own(p)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             row = await tx.one(f"SELECT s.*, {LAST} FROM sessions s WHERE s.id = %s AND s.status = 'active'{clause}"
                                f"{' FOR UPDATE OF s' if lock else ''}", ids.check(sid, "session"), *args)
         if not row:
@@ -88,7 +88,7 @@ class Containers:
     async def delete(self, p: Principal, sid: str) -> dict[str, Any]:
         p.require("responses", "delete")
         clause, args = own(p)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             row = await tx.one(f"SELECT running_turn_id FROM sessions s WHERE s.id = %s AND s.status = 'active'{clause} "
                                "FOR UPDATE", ids.check(sid, "session"), *args)
             if not row:
@@ -105,7 +105,7 @@ class Containers:
         an ended turn, the partial one for a turn still queued or running."""
         limit = check_limit(limit)
         await self.row(p, sid)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             rows = await tx.all("SELECT * FROM turns WHERE session_id = %s AND (%s::text IS NULL OR seq > "
                                 "(SELECT seq FROM turns WHERE id = %s)) ORDER BY seq LIMIT %s", sid, after, after, limit + 1)
         data = []
@@ -133,7 +133,7 @@ class Containers:
         if row["files_key"]:
             for f in json.loads(await self.objects.get(row["files_key"])):
                 files[f["path"]] = self._entry(sid, f["path"], int(f["bytes"]), int(f.get("mtime", 0)), "assistant")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             ops = await tx.all("SELECT op, path, bytes, created_at FROM container_ops WHERE session_id = %s "
                                "AND applied_at IS NULL ORDER BY created_at", sid)
         for op in ops:
@@ -160,7 +160,7 @@ class Containers:
     async def file_content(self, p: Principal, sid: str, fid: str) -> tuple[dict[str, Any], bytes]:
         f = await self.get_file(p, sid, fid)
         rel = f["path"][len(WORKSPACE) + 1:]
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             op = await tx.one("SELECT object_key FROM container_ops WHERE session_id = %s AND path = %s AND op = 'put' "
                               "AND applied_at IS NULL ORDER BY created_at DESC LIMIT 1", sid, rel)
         if op:
@@ -183,7 +183,7 @@ class Containers:
         op_id = ids.new("op")
         key = org_key(p.org_id, "sessions", sid, "ops", op_id)
         size = await self.objects.put_file(key, src, org_id=p.org_id, kind="container_file")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             await tx.run("INSERT INTO container_ops (id, org_id, session_id, op, path, object_key, bytes) "
                          "VALUES (%s, %s, %s, 'put', %s, %s, %s)", op_id, p.org_id, sid, rel, key, size)
         return self._entry(sid, rel, size, int(time.time()), "user")
@@ -191,7 +191,7 @@ class Containers:
     async def delete_file(self, p: Principal, sid: str, fid: str) -> dict[str, Any]:
         p.require("files", "delete")
         f = await self.get_file(p, sid, fid)
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             await tx.run("INSERT INTO container_ops (id, org_id, session_id, op, path) VALUES (%s, %s, %s, 'delete', %s)",
                          ids.new("op"), p.org_id, sid, f["path"][len(WORKSPACE) + 1:])
         return {"id": fid, "object": "container.file.deleted", "deleted": True}

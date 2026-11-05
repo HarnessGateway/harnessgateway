@@ -62,30 +62,28 @@ async def signed_in(request: Request) -> dict[str, Any]:
 
 
 async def principal(request: Request) -> Principal:
-    """An extension's principal, an API key's, or a sign-in's in the organization it belongs to, addressing the project
-    `HG-Project` names (SPEC §9.3)."""
+    """An extension's principal, an API key's, or a sign-in's in the organization it belongs to (SPEC §9.3)."""
     plat = platform(request)
     p = await plat.extensions.authenticate(request)
     if p is not None:
         return p
-    secret, header = bearer(request), request.headers.get("hg-project")
+    secret = bearer(request)
     p = await plat.keys.authenticate(secret)
     if p is not None:
-        return await plat.projects.for_key(p, header)
+        return p
     found = await plat.accounts.authenticate(secret)
     if found is None:
         raise Unauthenticated(UNKNOWN)
     account, memberships = found["account"], found["memberships"]
     if not memberships:
-        raise Forbidden("the account belongs to no organization")
+        raise Forbidden("the account belongs to no organization; the platform console is at /internal")
     org_id, role = memberships[0]["org_id"], memberships[0]["role"]
-    project = await plat.projects.resolve(org_id, role, account["id"], header)
-    return Principal(org_id, f"account:{account['id']}", role, project, platform_admin=account["platform_admin"],
+    return Principal(org_id, f"account:{account['id']}", role, platform_admin=account["platform_admin"],
                      account_id=account["id"], name=account["name"] or account["email"])
 
 
 async def anyone(request: Request) -> None:
-    """Any live credential, no project resolved: for what every caller may learn."""
+    """Any live credential: for what every caller may learn."""
     plat = platform(request)
     if await plat.extensions.authenticate(request) is not None:
         return

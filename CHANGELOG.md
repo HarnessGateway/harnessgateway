@@ -17,11 +17,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
   password exists anywhere. Ten failed sign-ins lock an account for fifteen minutes. A sign-in is an opaque, hashed,
   expiring, revocable bearer token the API resolves to a principal exactly as it does a key. `init` creates the first
   admin and prints its invitation once.
-- Projects: the unit a team builds in. Harnesses are installed into a project and named uniquely within it; a request's
-  `model` resolves inside the principal's project; developers belong to projects; keys belong to a project (or, for
-  admins, to the organization) and carry a role and a `run_only` flag, which is what an application holds. `init`
-  creates the default project with the builder; every new project gets the builder on creation. Row-level security
-  carries the project beside the organization on harnesses, sessions and turns.
+- Invitations by email: with `HG_SMTP_URL` and `HG_MAIL_FROM` set, an invited account and a password reset receive their
+  one-time link (built on `HG_CONSOLE_URL`) by mail; the link is returned to the admin once either way.
+- API keys are the unit an application is built around: a required label names the app, a role (`admin` or
+  `developer`), a `run_only` flag for what an application holds, an optional expiry. A session records the key that
+  created it, so an app's sessions and usage are read by its key (`GET /v1/usage?group_by=created_by`).
 - `Principal.require(resource, action)`: every permission check in one domain table, called by the service that owns
   the resource; a refusal names the role that may.
 - The request's `user` is recorded on turns and sessions: `GET /v1/containers?user=` lists an application's end user's
@@ -29,8 +29,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
   holding their accounts.
 - The platform scope is held by people through a `platform_admin` flag on their account; the operator key remains for
   automation and break-glass. `/internal` routes for people accept either.
-- Audit in the core: every change of standing (sign-ins and their failures, accounts, keys, projects, memberships,
-  providers, egress, harnesses) is a row an admin reads at `GET /v1/audit` and the platform scope at
+- Audit in the core: every change of standing (sign-ins and their failures, accounts, keys, providers, egress,
+  harnesses) is a row an admin reads at `GET /v1/audit` and the platform scope at
   `GET /internal/audit`.
 - `GET /internal/metrics`: the platform's state in Prometheus text exposition (queue, running turns, nodes and slots,
   warm sandboxes, turns by status and reason over 24 hours, usage totals, gateway calls by status).
@@ -38,12 +38,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 ### Changed
 
 - The console holds no key: people sign in with their platform account, and every call the console relays carries
-  that sign-in. The console's own user file, `init` command and `HG_CONSOLE_KEY` are gone. Admins see the organization
-  (Setup, Projects, Access, Observability); developers see their projects (Harnesses, Chat, Playground, Sessions,
-  Keys) behind a project switcher; platform admins see Operations.
-- API keys have a role in place of a scope (`admin` for an organization key, `developer` for a project key), a
-  project, an optional expiry and a `run_only` flag.
-- `GET /v1/harnesses` and `GET /v1/models` list the principal's project's catalog.
+  that sign-in. The console's own user file, `init` command and `HG_CONSOLE_KEY` are gone. Developers see Harnesses,
+  Chat, Playground, their keys, Sessions and Usage; admins also Providers, Egress, Accounts and the Audit log; platform
+  admins the platform console, where the deployer invites an organization's admin (`POST /internal/orgs/{id}/accounts`).
+- API keys have a role in place of a scope (`admin` for an organization key, `developer` otherwise).
 - `harnessgateway init --admin-email EMAIL` (or `HG_ADMIN_EMAIL`; `install.sh` asks) creates the first admin and prints
   its invitation link and an admin key, once.
 - The schema is one migration again, the model as it stands: a 2.4.0 install starts from an empty database.

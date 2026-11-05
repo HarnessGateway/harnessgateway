@@ -221,7 +221,7 @@ class Turns:
         rid = ids.new("turn")
         request_key = org_key(p.org_id, "turns", rid, "request.json")
         try:
-            async with self.db.tenant(p.org_id, p.project) as tx:
+            async with self.db.tenant(p.org_id) as tx:
                 turn = await self._queue(tx, p, rid, body, routing, request_key, user)
                 if idempotency_key:
                     await tx.run("INSERT INTO idempotency (org_id, key, request_digest, turn_id) VALUES (%s, %s, %s, %s)",
@@ -232,7 +232,7 @@ class Turns:
         return turn
 
     async def _replay(self, p: Principal, digest: str, key: str) -> dict[str, Any] | None:
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             row = await tx.one("SELECT request_digest, turn_id FROM idempotency WHERE key = %s", key)
         if not row:
             return None
@@ -251,9 +251,6 @@ class Turns:
             session = await tx.one("SELECT * FROM sessions WHERE id = %s FOR UPDATE", prev["session_id"]) if prev else None
             if not prev or not session or (p.owns_only and session["created_by"] != p.actor):
                 raise NotFound(f"no response {routing.previous_response_id}", param="previous_response_id")
-            if session["project_id"] != harness["project_id"]:
-                raise Invalid(f"{routing.previous_response_id} belongs to another project than harness {path.harness}",
-                              param="previous_response_id")
             if session["status"] != "active" or not session["store"]:
                 raise Invalid(f"{routing.previous_response_id} belongs to a session that was not stored or has ended",
                               param="previous_response_id")
@@ -283,25 +280,24 @@ class Turns:
         if fork is not None and session is not None:   # a new session from the checkpoint, pinned like its parent
             parent, session = session, {"id": fork["id"], "turns": 0}   # (or, on a switch, to the new harness)
             pinned = harness if switch else parent
-            await tx.run("INSERT INTO sessions (id, org_id, project_id, created_by, end_user, harness, digest, manifest, "
-                         "provider_id, model, store, snapshot_key, files_key, snapshot_bytes, forked_from) VALUES (%s, %s, %s, "
-                         "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, harness["project_id"],
-                         p.actor, user, path.harness, pinned["digest"], pinned["manifest"], provider_id, model,
-                         routing.store, fork["snapshot_key"], fork["files_key"], fork["bytes"], routing.previous_response_id)
+            await tx.run("INSERT INTO sessions (id, org_id, created_by, end_user, harness, digest, manifest, provider_id, "
+                         "model, store, snapshot_key, files_key, snapshot_bytes, forked_from) VALUES (%s, %s, %s, %s, %s, %s, "
+                         "%s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, p.actor, user, path.harness,
+                         pinned["digest"], pinned["manifest"], provider_id, model, routing.store, fork["snapshot_key"],
+                         fork["files_key"], fork["bytes"], routing.previous_response_id)
         elif session is None:
             session = {"id": ids.new("session"), "turns": 0}
-            await tx.run("INSERT INTO sessions (id, org_id, project_id, created_by, end_user, harness, digest, manifest, "
-                         "provider_id, model, store) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", session["id"],
-                         p.org_id, harness["project_id"], p.actor, user, path.harness, harness["digest"], harness["manifest"],
-                         provider_id, model, routing.store)
+            await tx.run("INSERT INTO sessions (id, org_id, created_by, end_user, harness, digest, manifest, provider_id, "
+                         "model, store) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, p.actor,
+                         user, path.harness, harness["digest"], harness["manifest"], provider_id, model, routing.store)
         seq = session["turns"] + 1
         await tx.run("UPDATE sessions SET turns = %s, provider_id = %s, model = %s, last_active_at = now() WHERE id = %s",
                      seq, provider_id, model, session["id"])
-        await tx.run("INSERT INTO turns (id, org_id, project_id, session_id, seq, status, model, provider_id, provider_model, "
-                     "stream, background, request_key, mcp, previous_id, actor, end_user) VALUES (%s, %s, %s, %s, %s, 'queued', "
-                     "%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)", rid, p.org_id, harness["project_id"], session["id"],
-                     seq, body["model"], provider_id, model, routing.stream, routing.background, request_key,
-                     dumps(resolved.servers), routing.previous_response_id, p.actor, user)
+        await tx.run("INSERT INTO turns (id, org_id, session_id, seq, status, model, provider_id, provider_model, stream, "
+                     "background, request_key, mcp, previous_id, actor, end_user) VALUES (%s, %s, %s, %s, 'queued', %s, %s, "
+                     "%s, %s, %s, %s, %s::jsonb, %s, %s, %s)", rid, p.org_id, session["id"], seq, body["model"], provider_id,
+                     model, routing.stream, routing.background, request_key, dumps(resolved.servers),
+                     routing.previous_response_id, p.actor, user)
         if resolved.bindings:
             sealed = await self.vault.seal(p.org_id, f"turn/{rid}/bindings", dumps(
                 [{"placeholder": b.placeholder, "value": b.value, "hosts": list(b.hosts)} for b in resolved.bindings]))
@@ -380,7 +376,7 @@ class Turns:
 
     async def row(self, p: Principal, rid: str) -> dict[str, Any]:
         p.require("responses", "read")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             return await self._row(tx, p, rid)
 
     async def response(self, p: Principal, rid: str) -> dict[str, Any]:
@@ -402,7 +398,7 @@ class Turns:
         while True:
             waiter = self.bus.waiter(rid)
             try:
-                async with self.db.tenant(p.org_id, p.project) as tx:
+                async with self.db.tenant(p.org_id) as tx:
                     rows = await tx.all("SELECT seq, data FROM turn_events WHERE turn_id = %s AND seq > %s UNION ALL "
                                         "SELECT seq, data FROM live_events WHERE turn_id = %s AND seq > %s ORDER BY seq",
                                         rid, after, rid, after)
@@ -430,7 +426,7 @@ class Turns:
         """A queued turn ends now; a running one is stopped by its node (SIGTERM, then the package's grace)."""
         p.require("responses", "cancel")
         ended = None
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             turn = await self._row(tx, p, rid, lock=True)
             if turn["status"] == Status.QUEUED:
                 ended = await conclude(tx, self.objects, turn, Status.CANCELLED, reason=Reason.CANCELLED)
@@ -445,7 +441,7 @@ class Turns:
 
     async def delete(self, p: Principal, rid: str) -> None:
         p.require("responses", "delete")
-        async with self.db.tenant(p.org_id, p.project) as tx:
+        async with self.db.tenant(p.org_id) as tx:
             turn = await self._row(tx, p, rid)
             if not Status(turn["status"]).final or await tx.one("SELECT 1 FROM sessions WHERE running_turn_id = %s", rid):
                 raise Conflict(f"{rid} is still running; cancel it first")

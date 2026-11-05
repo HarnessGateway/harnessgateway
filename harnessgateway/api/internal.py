@@ -177,6 +177,18 @@ async def configure_org(request: Request, org_id: str, actor: str = Depends(oper
     return await plat.operations.org(org_id)
 
 
+@router.post("/orgs/{org_id}/accounts")
+async def invite_admin(request: Request, org_id: str, actor: str = Depends(operator)) -> Any:
+    """{email, name}: an admin for the organization, invited (the link once; mailed when mail is set). How the
+    deployer hands an organization to its people."""
+    plat, body = platform(request), await read_json(request)
+    unknown = sorted(set(body) - {"email", "name"})
+    if unknown:
+        raise Invalid(f"an invitation takes email and name, not {', '.join(unknown)}")
+    await plat.operations.org(org_id)
+    return await plat.accounts.create(org_id, actor, body.get("email"), body.get("name"), "admin")
+
+
 @router.get("/usage", dependencies=[Depends(operator)])
 async def usage_all(request: Request, start: int | None = None, end: int | None = None, group_by: str | None = None) -> Any:
     now = datetime.now(UTC)

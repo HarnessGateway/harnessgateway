@@ -1,14 +1,14 @@
-"""The HarnessGateway console: the organization's console (projects, harnesses, the chat, sessions, accounts) at `/`
-and the platform console (health, nodes, organizations, usage, configuration, audit) at `/ops`, both static pages on
-the platform's public API. This server holds no key: a person signs in with the platform's own accounts (SPEC §9.3),
-the sign-in token lives in an HttpOnly cookie, and every call is relayed with it as the bearer and the chosen project
-as `HG-Project`. The platform decides what each person may do.
+"""The HarnessGateway console: the organization's console (harnesses, the chat, keys, sessions, accounts) at `/` and
+the platform console (health, nodes, organizations, usage, configuration, audit) at `/ops`, both static pages on the
+platform's public API. This server holds no key: a person signs in with the platform's own accounts (SPEC §9.3), the
+sign-in token lives in an HttpOnly cookie, and every call is relayed with it as the bearer. The platform decides what
+each person may do.
 
     python3 console/server.py [--api http://localhost:8000] [--host 127.0.0.1] [--port 8800] [--state DIR]
 
-The state directory (HG_CONSOLE_DIR, default ./console-state) holds drafts: packages being written here, per project.
-An invitation link (`/setup?token=hgi_…`, printed by `harnessgateway init` and by inviting an account) activates an
-account by setting its password."""
+The state directory (HG_CONSOLE_DIR, default ./console-state) holds drafts: packages being written here. An invitation
+link (`/setup?token=hgi_…`, mailed or printed by `harnessgateway init` and by inviting an account) activates an account
+by setting its password."""
 from __future__ import annotations
 
 import argparse
@@ -34,13 +34,12 @@ import server as chat  # noqa: E402  (the chat UI, mounted under /chat/)
 
 STATIC = Path(__file__).resolve().parent / "static"
 DRAFT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,62}")
-PROJECT_ID = re.compile(r"prj_[0-9a-f]{8,64}")
 DRAFT_FILE_MAX = 4 * 1024 * 1024
 # every new harness starts as a copy of the template: the shell package, the smallest complete package on the contract
 TEMPLATE_DIR = Path(os.environ.get("HG_TEMPLATE_DIR") or Path(__file__).resolve().parents[1] / "packages" / "shell")
 EXECUTABLES = ("install", "run")                            # the package's two executables
 BUILDER = "harness-package-builder"                        # the built-in whose sessions' workspaces hold packages to import
-SIGN_IN, PROJECT = "hgs", "hgp"                             # the cookies: the sign-in token, the chosen project
+SIGN_IN = "hgs"                                             # the cookie: the sign-in token
 SESSION_S = 12 * 3600
 PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
             "frame-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
@@ -48,21 +47,18 @@ BODY_MAX = 64 * 1024 * 1024
 
 
 class Bound:
-    """The shared platform client, bound to one request's credential: the sign-in as bearer and, for `/v1`, the
-    project. `who` keys the chat's caches per person."""
+    """The shared platform client, bound to one request's credential: the sign-in as bearer. `who` keys the chat's
+    caches per person."""
 
-    def __init__(self, client: httpx.Client, token: str, project: str):
-        self.client, self.token, self.project = client, token, project
+    def __init__(self, client: httpx.Client, token: str):
+        self.client, self.token = client, token
         self.who = hashlib.sha256(token.encode()).hexdigest()[:16]
 
-    def headers(self, url: str, extra: dict[str, str] | None) -> dict[str, str]:
-        h = {"Authorization": f"Bearer {self.token}", **(extra or {})}
-        if self.project and not url.startswith("/internal/"):
-            h["HG-Project"] = self.project
-        return h
+    def headers(self, extra: dict[str, str] | None) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}", **(extra or {})}
 
     def request(self, method: str, url: str, **kw: Any) -> httpx.Response:
-        return self.client.request(method, url, headers=self.headers(url, kw.pop("headers", None)), **kw)
+        return self.client.request(method, url, headers=self.headers(kw.pop("headers", None)), **kw)
 
     def get(self, url: str, **kw: Any) -> httpx.Response:
         return self.request("GET", url, **kw)
@@ -71,28 +67,21 @@ class Bound:
         return self.request("POST", url, **kw)
 
     def stream(self, method: str, url: str, **kw: Any) -> Any:
-        return self.client.stream(method, url, headers=self.headers(url, kw.pop("headers", None)), **kw)
+        return self.client.stream(method, url, headers=self.headers(kw.pop("headers", None)), **kw)
 
 
 # ── drafts: the state directory ───────────────────────────────────────────────────────────────────────────────────
 class State:
-    """drafts/<project>/<name>/: a package being written here; `meta.json` says where it came from."""
+    """drafts/<name>/: a package being written here; `meta.json` says where it came from."""
 
     def __init__(self, folder: Path):
-        self.folder = folder
-        folder.mkdir(parents=True, exist_ok=True)
+        self.drafts = folder / "drafts"
+        self.drafts.mkdir(parents=True, exist_ok=True)
 
-    def drafts(self, project: str) -> Path:
-        if not PROJECT_ID.fullmatch(project):
-            raise ValueError("pick a project first: drafts belong to one")
-        p = self.folder / "drafts" / project
-        p.mkdir(parents=True, exist_ok=True)
-        return p
-
-    def draft(self, project: str, name: str) -> Path:
+    def draft(self, name: str) -> Path:
         if not DRAFT_NAME.fullmatch(name):
             raise ValueError("a draft name is lower-case letters, digits, dot, dash or underscore")
-        return self.drafts(project) / name
+        return self.drafts / name
 
     @staticmethod
     def draft_file(root: Path, rel: str) -> Path:
@@ -101,9 +90,9 @@ class State:
             raise ValueError("a file path inside the draft")
         return root / norm
 
-    def draft_list(self, project: str) -> list[dict[str, Any]]:
+    def draft_list(self) -> list[dict[str, Any]]:
         out = []
-        for d in sorted(self.drafts(project).iterdir()):
+        for d in sorted(self.drafts.iterdir()):
             if not d.is_dir():
                 continue
             meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").is_file() else {}
@@ -119,7 +108,6 @@ class Handler(chat.Handler):
     state: State
     platform: httpx.Client                        # the API, no credential: each request binds its own
     console_static: dict[str, Path]
-    me: dict[str, Any] = {}                       # this request's /auth/me, once read
 
     # ── who ──────────────────────────────────────────────────────────────────────────────────────────────────────
     def cookie(self, name: str) -> str:
@@ -132,22 +120,7 @@ class Handler(chat.Handler):
     def bound(self) -> Bound | None:
         """This request's credential, or None without a sign-in cookie. The platform decides whether it is still good."""
         token = self.cookie(SIGN_IN)
-        return Bound(self.platform, token, self.cookie(PROJECT)) if token.startswith("hgl_") else None
-
-    def whoami(self, http: Bound) -> dict[str, Any]:
-        """/auth/me, with the project this request addresses: the cookie's when it is one of the person's projects,
-        else a developer's first project, or none (organization-wide) for an admin."""
-        r = http.get("/v1/auth/me")
-        r.raise_for_status()
-        me = r.json()
-        projects = me.get("projects") or []
-        chosen = next((p for p in projects if p["id"] == http.project), None)
-        if chosen is None and me.get("role") != "admin" and projects:
-            chosen = projects[0]
-        me["project"] = chosen["id"] if chosen else ""
-        me["project_name"] = chosen["name"] if chosen else ""
-        http.project = me["project"]
-        return me
+        return Bound(self.platform, token) if token.startswith("hgl_") else None
 
     def _same_origin(self) -> bool:
         origin = self.headers.get("Origin")
@@ -240,7 +213,6 @@ class Handler(chat.Handler):
             else:
                 self._reply(302, b"", "text/plain", {"Location": "/login"})
             return
-        self.whoami(http)                                # settles the project the chat's calls address
         self.http = http  # type: ignore[assignment]
         self.path = self.path[len("/chat"):] or "/"
         if method == "GET":
@@ -264,17 +236,11 @@ class Handler(chat.Handler):
         if path == "/api/logout" and method == "POST":
             with contextlib.suppress(httpx.HTTPError):
                 http.post("/v1/auth/logout")
-            self._json_h(200, {"ok": True}, [self._cookie(SIGN_IN, "", clear=True), self._cookie(PROJECT, "", clear=True)])
+            self._json_h(200, {"ok": True}, [self._cookie(SIGN_IN, "", clear=True)])
         elif path == "/api/me" and method == "GET":
-            me = self.whoami(http)
-            self._json_h(200, {**me, "api": str(self.platform.base_url)}, [self._cookie(PROJECT, me["project"])])
-        elif path == "/api/project" and method == "POST":
-            wanted = str(self._body().get("project", ""))
-            me = self.whoami(Bound(self.platform, http.token, wanted))
-            if wanted and me["project"] != wanted:
-                raise ValueError("not one of your projects")
-            self._json_h(200, {"project": me["project"], "project_name": me["project_name"]},
-                         [self._cookie(PROJECT, me["project"])])
+            r = http.get("/v1/auth/me")
+            r.raise_for_status()
+            self._json(200, {**r.json(), "api": str(self.platform.base_url)})
         elif path.startswith("/api/drafts"):
             self._drafts(method, path.removeprefix("/api/drafts").strip("/"), http)
         elif path.startswith("/api/v1/") or path.startswith("/api/internal/"):
@@ -294,25 +260,24 @@ class Handler(chat.Handler):
             return
         signed = r.json()
         token = signed.pop("token")
-        self._json_h(200, signed, [self._cookie(SIGN_IN, token), self._cookie(PROJECT, "", clear=True)])
+        self._json_h(200, signed, [self._cookie(SIGN_IN, token)])
 
-    # ── drafts: packages written in the console, per project ─────────────────────────────────────────────────────
+    # ── drafts: packages written in the console ──────────────────────────────────────────────────────────────────
     def _drafts(self, method: str, rest: str, http: Bound) -> None:
         """/api/drafts (GET list, POST create), /api/drafts/<name> (DELETE), /api/drafts/<name>/files (GET list),
-        /api/drafts/<name>/files/<path> (GET, PUT, DELETE), /api/drafts/<name>/install (POST: installs it into the
-        project and, when that succeeds, removes the draft)."""
-        me = self.whoami(http)
-        project, st = me["project"], self.state
+        /api/drafts/<name>/files/<path> (GET, PUT, DELETE), /api/drafts/<name>/install (POST: installs it and, when that
+        succeeds, removes the draft)."""
+        st = self.state
         if not rest:
             if method == "GET":
-                self._json(200, {"data": st.draft_list(project) if project else []})
+                self._json(200, {"data": st.draft_list()})
             elif method == "POST":
-                self._draft_create(self._body(), http, project)
+                self._draft_create(self._body(), http)
             else:
                 self._text(405, "method not allowed")
             return
         name, _, tail = rest.partition("/")
-        root = st.draft(project, name)
+        root = st.draft(name)
         if not root.is_dir():
             self._json(404, {"error": f"no draft {name}"})
             return
@@ -378,13 +343,13 @@ class Handler(chat.Handler):
         except UnicodeDecodeError:
             return False
 
-    def _draft_create(self, doc: dict[str, Any], http: Bound, project: str) -> None:
+    def _draft_create(self, doc: dict[str, Any], http: Bound) -> None:
         """{"name"} starts a new harness as a copy of the template under that name; {"name", "edit": true} opens the
         installed harness of that name as a draft (installing the draft upgrades it in place); {"name", "session": id,
         "folder": f} copies /workspace/<folder>/ of a harness-package-builder session, where the builder wrote a package."""
         st = self.state
         name = str(doc.get("name", "")).strip()
-        root = st.draft(project, name)
+        root = st.draft(name)
         if root.exists():
             raise ValueError(f"draft {name} exists")
         root.mkdir(parents=True)
@@ -458,8 +423,6 @@ class Handler(chat.Handler):
     def _proxy(self, method: str, path: str, query: str, http: Bound) -> None:
         """A platform call as the signed-in person; bodies pass through as they are (JSON, multipart, or a streamed
         SSE reply). The platform refuses what the person may not do."""
-        if not path.startswith("/internal/"):
-            self.whoami(http)                            # settles the project header
         size = int(self.headers.get("Content-Length") or 0)
         if size > BODY_MAX:
             raise ValueError("the body is too large")
