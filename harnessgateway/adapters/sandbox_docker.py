@@ -116,11 +116,12 @@ class DockerBox:
         box_mounts = [m for mount in s.mounts for m in ("--mount", f"type=bind,source={mount.host},target={mount.target}"
                                                                     + (",readonly" if mount.readonly else ""))]
         box_mounts += ["--mount", f"type=bind,source={self.trust.trust_dir},target={TRUST_DIR},readonly"]
+        memory = s.memory_mb + s.tmp_mb                    # /tmp is a tmpfs, charged to the box: it comes on top
         (await docker("run", "-d", "--name", self.container, *self._labels(), "--runtime", cfg.runtime,
                       "--network", self.network, "--hostname", "sandbox", "--add-host", f"{DOOR}:{door_ip}",
                       "--dns", "127.0.0.1", "--read-only", "--tmpfs", f"/tmp:rw,exec,size={s.tmp_mb}m,mode=1777",
                       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", f"{UID}:{UID}",
-                      "--cpus", str(s.vcpus), "--memory", f"{s.memory_mb}m", "--memory-swap", f"{s.memory_mb}m",
+                      "--cpus", str(s.vcpus), "--memory", f"{memory}m", "--memory-swap", f"{memory}m",
                       "--pids-limit", str(s.pids), "--restart", "no", *env_args(env), *box_mounts,
                       cfg.sandbox_image, "sleep", "infinity", env=env)).check("sandbox run")
 
@@ -129,6 +130,10 @@ class DockerBox:
 
     async def alive(self) -> bool:
         result = await docker("inspect", "-f", "{{.State.Running}}", self.container, timeout=15)
+        return result.code == 0 and result.out.strip() == b"true"
+
+    async def oom_killed(self) -> bool:
+        result = await docker("inspect", "-f", "{{.State.OOMKilled}}", self.container, timeout=15)
         return result.code == 0 and result.out.strip() == b"true"
 
     async def sh(self, script: str, *args: str, timeout: float = 300) -> bytes:

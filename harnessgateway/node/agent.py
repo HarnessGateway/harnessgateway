@@ -609,9 +609,15 @@ class Node:
             await pump.concluded.wait()
             await asyncio.sleep(grace)
 
+        async def drain() -> None:                    # when the pump stopped reading, stdout must still reach EOF
+            while await proc.read():
+                pass
+
         reading: asyncio.Future[Any] = asyncio.ensure_future(asyncio.gather(pump.run(proc), read_stderr()))
         stopper, lingering = asyncio.create_task(running.stop.wait()), asyncio.create_task(linger())
+        draining: asyncio.Task[None] | None = None
         outcome, broken = "exited", None
+        code: int | None = None
         try:
             done, _ = await asyncio.wait({reading, stopper, lingering}, timeout=job["timeout_s"],
                                          return_when=asyncio.FIRST_COMPLETED)
@@ -620,12 +626,18 @@ class Node:
             if reading not in done or broken:
                 outcome = "timed_out" if not done else "stopped"
                 await self._stop(warm, proc, grace)
+                if broken:
+                    draining = asyncio.create_task(drain())
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(asyncio.shield(reading), EXIT_WAIT_S)
-            code = await asyncio.wait_for(proc.wait(), EXIT_WAIT_S)
+            try:
+                code = await asyncio.wait_for(proc.wait(), EXIT_WAIT_S)
+            except TimeoutError:
+                log.warning("turn %s: the process did not exit within %ss of its output ending", rid, EXIT_WAIT_S)
         finally:
-            for t in (stopper, lingering, reading):
-                t.cancel()
+            for t in (stopper, lingering, reading, draining):
+                if t:
+                    t.cancel()
             proc.kill()
         report: dict[str, Any] = {"outcome": outcome, "exit_code": code, "stderr_tail": err_tail.decode("utf-8", "replace"),
                                   "stdout_bytes": pump.total, "stderr_bytes": err_bytes}
@@ -634,6 +646,9 @@ class Node:
             report.update(failure(Reason.INVALID_OUTPUT, str(broken)))
         elif broken is not None:
             report.update(failure(Reason.SANDBOX_FAILED, f"delivering the output failed: {broken}"))
+        elif code not in (0, None) and await warm.box.oom_killed():
+            report.update(failure(Reason.SANDBOX_FAILED, f"the sandbox ran out of memory: {warm.memory_mb} MB for its "
+                                                         f"processes and {warm.box.spec.tmp_mb} MB of /tmp"))
         if logs and out_log and err_log:
             uploaded = True
             for name, path in (("stdout", out_log), ("stderr", err_log)):
