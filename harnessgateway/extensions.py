@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Request
 
 if TYPE_CHECKING:
+    from .domain.access import Principal
     from .services.platform import Platform
-    from .services.principal import Principal
 
 log = logging.getLogger("harnessgateway.extensions")
 

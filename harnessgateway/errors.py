@@ -38,6 +38,11 @@ class TooLarge(ApiError):
     status, type = 413, "invalid_request_error"
 
 
+class Locked(ApiError):
+    """An account locked after repeated failed sign-ins (SPEC §9.3)."""
+    status, type = 423, "authentication_error"
+
+
 class Refused(ApiError):
     """An extension's refusal of a turn (a quota, a plan): 429 by default, or the status it names."""
     status, type = 429, "rate_limit_error"

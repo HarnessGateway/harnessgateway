@@ -9,12 +9,15 @@ from typing import Any
 
 from .. import ids
 from ..db import Database
+from ..domain.access import Principal
 from ..domain.meters import Kind, Meter
 from ..errors import Invalid
 from ..extensions import Extensions, UsageRecord
 
 GIB = 1024 ** 3
-GROUPS = ("harness", "session", "day")
+GROUPS = {"harness": "harness", "session": "session_id", "day": "to_char(end_at, 'YYYY-MM-DD')",
+          "project": "(SELECT s.project_id FROM sessions s WHERE s.id = usage.session_id)",
+          "user": "(SELECT s.end_user FROM sessions s WHERE s.id = usage.session_id)"}
 
 
 def _record(r: dict[str, Any]) -> UsageRecord:
@@ -69,16 +72,23 @@ class Usage:
                              "ON CONFLICT (org_id) DO UPDATE SET accrued_until = EXCLUDED.accrued_until", org["id"], now)
         return await self.record(rows)
 
-    async def summary(self, org_id: str, start: datetime, end: datetime, group_by: str | None) -> dict[str, Any]:
+    async def summary(self, p: Principal, start: datetime, end: datetime, group_by: str | None) -> dict[str, Any]:
+        """The organization's usage for an admin without a project; otherwise the usage of the project's sessions (a
+        run-only key: of its own sessions). Storage accrues to the organization, so only the former shows it."""
+        p.require("usage", "read")
         if end <= start:
             raise Invalid("end is after start")
         if group_by is not None and group_by not in GROUPS:
             raise Invalid(f"group_by is one of {', '.join(GROUPS)}", param="group_by")
-        column = {"harness": "harness", "session": "session_id", "day": "to_char(end_at, 'YYYY-MM-DD')"}.get(group_by or "")
-        group = f"{column}" if column else "NULL"
-        async with self.db.tenant(org_id) as tx:
-            rows = await tx.all(f"SELECT {group} AS grp, meter, sum(quantity) AS quantity FROM usage WHERE end_at >= %s "
-                                f"AND end_at < %s GROUP BY 1, 2 ORDER BY 1, 2", start, end)
+        column = GROUPS.get(group_by or "")
+        scope, args = "", []
+        if p.project or p.owns_only:
+            scope = " AND EXISTS (SELECT 1 FROM sessions s WHERE s.id = usage.session_id" + \
+                (" AND s.created_by = %s)" if p.owns_only else ")")
+            args = [p.actor] if p.owns_only else []
+        async with self.db.tenant(p.org_id, p.project) as tx:
+            rows = await tx.all(f"SELECT {column or 'NULL'} AS grp, meter, sum(quantity) AS quantity FROM usage WHERE "
+                                f"end_at >= %s AND end_at < %s{scope} GROUP BY 1, 2 ORDER BY 1, 2", start, end, *args)
         out: dict[str, dict[str, float]] = {}
         for r in rows:
             out.setdefault(str(r["grp"]) if column else "total", {})[r["meter"]] = float(r["quantity"])

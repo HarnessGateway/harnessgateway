@@ -8,9 +8,11 @@ from typing import Any
 
 from .. import ids
 from ..db import Database
+from ..domain.access import Principal
 from ..errors import NotFound
 from ..extensions import Extensions, TraceRecord
 from .objects import Objects, org_key
+from .turns import own
 
 KINDS = ("harness", "gateway", "door")
 LOG_MAX = 4 * 1024 * 1024
@@ -31,9 +33,12 @@ class Traces:
                          record.id, org_id, response_id, kind, key)
         await self.ext.observe(record)
 
-    async def get(self, org_id: str, response_id: str) -> dict[str, Any]:
-        async with self.db.tenant(org_id) as tx:
-            turn = await tx.one("SELECT id, session_id FROM turns WHERE id = %s", ids.check(response_id, "turn"))
+    async def get(self, p: Principal, response_id: str) -> dict[str, Any]:
+        p.require("traces", "read")
+        clause, args = own(p)
+        async with self.db.tenant(p.org_id, p.project) as tx:
+            turn = await tx.one(f"SELECT t.id, t.session_id FROM turns t JOIN sessions s ON s.id = t.session_id "
+                                f"WHERE t.id = %s{clause}", ids.check(response_id, "turn"), *args)
             if not turn:
                 raise NotFound(f"no response {response_id}")
             rows = await tx.all("SELECT object_key FROM traces WHERE response_id = %s ORDER BY at, id", response_id)
@@ -48,11 +53,14 @@ class Traces:
                         r["data"][name] = None
         return {"object": "trace", "response_id": response_id, "session_id": turn["session_id"], "records": records}
 
-    async def list_session(self, org_id: str, sid: str) -> dict[str, Any]:
+    async def list_session(self, p: Principal, sid: str) -> dict[str, Any]:
         """Every record of the session's turns, in turn order, each naming its response; the log bodies are left out
         (GET /v1/traces/{response_id} has them)."""
-        async with self.db.tenant(org_id) as tx:
-            if not await tx.one("SELECT 1 FROM sessions WHERE id = %s AND status = 'active'", ids.check(sid, "session")):
+        p.require("traces", "read")
+        clause, args = own(p)
+        async with self.db.tenant(p.org_id, p.project) as tx:
+            if not await tx.one(f"SELECT 1 FROM sessions s WHERE s.id = %s AND s.status = 'active'{clause}",
+                                ids.check(sid, "session"), *args):
                 raise NotFound(f"no container {sid}")
             rows = await tx.all("SELECT tr.object_key, tr.response_id FROM traces tr JOIN turns t ON t.id = tr.response_id "
                                 "WHERE t.session_id = %s ORDER BY t.seq, tr.at, tr.id", sid)

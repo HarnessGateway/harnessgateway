@@ -1,7 +1,7 @@
 // One session: its responses as a conversation trace (live while a turn runs), what the platform measured about each
 // turn, and the workspace beside it (the chat's file panel, embedded). Everything here is read from the public API:
 // the session's responses, each one's input items and event stream, and the session's trace records.
-import { api, bytes, clientOf, esc, short, stream, when } from "./api.js";
+import { actorOf, api, bytes, esc, short, stream, when } from "./api.js";
 import { $, confirm, fail, field, input, modal, pre, statusPill, toast } from "./ui.js";
 import { markdown } from "/chat/static/markdown.js";
 
@@ -166,9 +166,9 @@ function renderTurn(turn, i, sid, records) {
 // ── the page ──────────────────────────────────────────────────────────────────────────────────────────────────────
 export const session = { title: "Session", async render(el, params, me) {
   const sid = params[0];
-  const admin = me.role !== "member";
   let container = await api("GET", `/v1/containers/${encodeURIComponent(sid)}`);
-  const client = clientOf(admin ? (await api("GET", "/v1/keys")).data || [] : []);
+  const quiet = p => p.then(d => d.data || []).catch(() => []);
+  const client = actorOf(await quiet(api("GET", "/v1/keys")), me.role === "admin" ? await quiet(api("GET", "/v1/accounts")) : []);
   const turns = [];                                   // {response, items, input, streaming}
   let records = [], frame = 0;
   const m = () => container.metadata || {};
@@ -183,7 +183,8 @@ export const session = { title: "Session", async render(el, params, me) {
     $("#shead", el).innerHTML =
       `<div class="kv"><span class="k">Harness</span><span class="v">${esc(md.harness || container.name)}</span></div>` +
       `<div class="kv"><span class="k">Model</span><span class="v">${esc(md.model || "—")}</span></div>` +
-      `<div class="kv"><span class="k">Client</span><span class="v">${esc(client(md.created_by))}</span></div>` +
+      `<div class="kv"><span class="k">Created by</span><span class="v">${esc(client(md.created_by))}</span></div>` +
+      (md.user ? `<div class="kv"><span class="k">User</span><span class="v">${esc(md.user)}</span></div>` : "") +
       `<div class="kv"><span class="k">State</span><span class="v">${statusPill(md.state || "idle")}</span></div>` +
       `<div class="kv"><span class="k">Turns</span><span class="v">${esc(md.turns || turns.length)}</span></div>` +
       `<div class="kv"><span class="k">Workspace</span><span class="v">${bytes(md.bytes)}</span></div>` +
@@ -192,8 +193,8 @@ export const session = { title: "Session", async render(el, params, me) {
       (md.forked_from ? `<div class="kv"><span class="k">Forked from</span><span class="v mono">${esc(md.forked_from)}</span></div>` : "") +
       `<div class="acts" style="margin-left:auto">` +
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : "") +
-      (admin && md.harness === "harness-package-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +
-      (admin ? `<button class="btn2 danger" id="del">Delete</button>` : "") + `</div>`;
+      (md.harness === "harness-package-builder" ? `<button class="btn2" id="mk" title="Copy a package the builder wrote in this workspace into a draft">New harness from workspace</button>` : "") +
+      `<button class="btn2 danger" id="del">Delete</button></div>`;
   };
 
   const draw = () => {
@@ -208,7 +209,6 @@ export const session = { title: "Session", async render(el, params, me) {
   };
 
   const loadTraces = async () => {
-    if (!admin) return;
     try { records = (await api("GET", `/v1/containers/${encodeURIComponent(sid)}/traces`)).data; draw(); } catch { /* shown without */ }
   };
 

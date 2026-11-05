@@ -76,8 +76,11 @@ export function meter(name, q) {
   return bytes(q);
 }
 export const METERS = { vcpu_seconds: "CPU", memory_gib_seconds: "Memory", egress_bytes: "Egress", ingress_bytes: "Ingress", storage_gib_hours: "Storage" };
-/** The key that created a session, by its label; what an extension's principal names, as it is. */
-export function clientOf(keys) {
-  const byId = Object.fromEntries(keys.map(k => [k.id, k.label || k.hint]));
-  return actor => !actor ? "—" : actor.startsWith("key:") ? `key · ${byId[actor.slice(4)] || actor.slice(4)}` : actor;
+/** Who created a session or wrote an audit row: a key by its label, an account by its name or email, the rest (an
+ * extension's principal, `platform:init`) as it is. */
+export function actorOf(keys = [], accounts = []) {
+  const byKey = Object.fromEntries(keys.map(k => [k.id, k.label || k.hint]));
+  const byAccount = Object.fromEntries(accounts.map(a => [a.id, a.name || a.email]));
+  return actor => !actor ? "—" : actor.startsWith("key:") ? `key · ${byKey[actor.slice(4)] || actor.slice(4)}`
+    : actor.startsWith("account:") ? byAccount[actor.slice(8)] || actor.slice(8) : actor;
 }

@@ -49,7 +49,8 @@ scripts/version-check
 ```
 
 Integration tests need a running stack: `HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_...
-.venv/bin/pytest -q tests/integration` (the operator tests also need `HG_TEST_OPERATOR_KEY`). They install `shell`
+.venv/bin/pytest -q tests/integration` (an admin key, working in the `default` project; the operator tests also need
+`HG_TEST_OPERATOR_KEY`). They install `shell`
 from `packages/shell`, install and remove a seeded test package, and set the organization's egress.
 
 ## Running it locally

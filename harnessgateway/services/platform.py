@@ -3,15 +3,19 @@ and bound. Nothing else in the core constructs a service."""
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from ..adapters.blob_fs import FileBlobs
 from ..adapters.keys_local import LocalKeys
 from ..config import Settings
 from ..crypto import DataKeys, Signer, derive
 from ..db import Database
+from ..domain.access import ADMIN
 from ..extensions import Extensions
 from ..ports.blob import BlobStore
 from ..ports.keys import KeyWrapper
+from .accounts import Accounts
+from .audit import Audit
 from .containers import Containers
 from .delivery import Delivery
 from .files import Files
@@ -20,6 +24,7 @@ from .keys import Keys
 from .objects import Objects
 from .operations import Operations
 from .orgs import Orgs
+from .projects import DEFAULT, Projects
 from .providers import Providers
 from .scheduler import Scheduler
 from .sweeper import Sweeper
@@ -30,6 +35,7 @@ from .vault import Vault
 
 CORE_MIGRATIONS = "harnessgateway.migrations"
 BLOB_ROUTE = "/internal/blobs/"
+INIT = "platform:init"                 # the actor `init` writes to the audit log as
 log = logging.getLogger("harnessgateway.platform")
 
 
@@ -59,10 +65,13 @@ class Platform:
         self.store = _store(settings, self.signer)
         self.objects = Objects(self.db, self.store)
         self.vault = Vault(self.db, self.data_keys)
+        self.audit = Audit(self.db)
         self.orgs = Orgs(self.db, self.data_keys, s.defaults)
-        self.keys = Keys(self.db, self.pepper)
+        self.accounts = Accounts(self.db, self.pepper, self.audit)
+        self.keys = Keys(self.db, self.pepper, self.audit)
         self.providers = Providers(self.db, self.vault, allow_private=s.allow_private_egress)
-        self.harnesses = Harnesses(self.db, self.objects, self.vault)
+        self.harnesses = Harnesses(self.db, self.objects, self.vault, self.audit)
+        self.projects = Projects(self.db, self.harnesses, self.audit, s.builder_dir)
         self.files = Files(self.db, self.objects)
         self.containers = Containers(self.db, self.objects)
         self.bus = EventBus(self.db)
@@ -85,21 +94,16 @@ class Platform:
     async def migrate(self) -> list[str]:
         return await self.db.migrate((CORE_MIGRATIONS, *self.extensions.migrations))
 
-    async def init(self, name: str = "default") -> tuple[dict[str, object], str | None]:
-        """Self-hosted's one organization, with the built-in harness package builder installed, and a first admin key (printed
-        once). Run again, it changes nothing and returns no key. Every other harness is added afterwards: written in
-        the console from the template, or by the builder."""
+    async def init(self, name: str, admin_email: str) -> dict[str, Any]:
+        """Self-hosted's one organization (SPEC §10.4): its default project with the harness package builder installed,
+        its first admin (a platform admin too) with the invitation that activates the account, and an admin key for
+        automation. Both secrets are in the result once. Run again, it changes nothing and returns neither."""
         org = await self.orgs.first()
         if org:
-            return org, None
+            return {"organization": org, "note": "already initialized: no new invitation or key"}
         org = await self.orgs.create(name)
-        builder = self.settings.builder_dir
-        if (builder / "harness.json").is_file():
-            try:
-                await self.harnesses.install_folder(str(org["id"]), builder)
-            except Exception:
-                log.exception("installing the harness package builder from %s failed", builder)
-        else:
-            log.warning("no harness package builder package at %s (HG_BUILDER_DIR): none installed", builder)
-        key = await self.keys.create(str(org["id"]), "admin", "init")
-        return org, str(key["key"])
+        org_id = str(org["id"])
+        project = await self.projects.create(org_id, INIT, DEFAULT)
+        admin = await self.accounts.create(org_id, INIT, admin_email, "", ADMIN, platform_admin=True)
+        key = await self.keys.create_admin(org_id, "init")
+        return {"organization": org, "project": project, "admin": admin, "admin_key": key["key"]}

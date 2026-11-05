@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from ..domain import contract
+from ..domain.access import Principal
 from ..services.pages import check_limit, page
-from ..services.principal import Principal
 from .http import platform, principal, read_json
 
 router = APIRouter(prefix="/v1")

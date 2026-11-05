@@ -1,5 +1,6 @@
-"""The nodes' routes (SPEC §14.3). A node joins once with a join token, then authenticates with its own credential.
-Object transfers use the signed links its job carried: a link is the only authorization they need."""
+"""The nodes' routes and the platform scope's (SPEC §14.4). A node joins once with a join token, then authenticates
+with its own credential. Object transfers use the signed links its job carried: a link is the only authorization they
+need. The platform scope is the operator key or a platform admin's sign-in; what it changes is audited."""
 from __future__ import annotations
 
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from ..errors import Forbidden, Invalid
 from ..services.principal import NodeIdentity
@@ -108,22 +109,36 @@ async def blob_put(request: Request, token: str) -> Any:
     return {"key": key}
 
 
-@router.post("/node-tokens", dependencies=[Depends(operator)])
-async def node_token(request: Request) -> Any:
-    body = await read_json(request)
+@router.post("/node-tokens")
+async def node_token(request: Request, actor: str = Depends(operator)) -> Any:
+    plat, body = platform(request), await read_json(request)
     ttl = body.get("ttl_days")
-    token = await platform(request).scheduler.create_token(str(body.get("pool", "")), str(body.get("label", "")),
-                                                           _int(body, "uses", 1), ttl if isinstance(ttl, int) else None)
+    pool = str(body.get("pool", ""))
+    token = await plat.scheduler.create_token(pool, str(body.get("label", "")), _int(body, "uses", 1),
+                                              ttl if isinstance(ttl, int) else None)
+    await plat.audit.write(None, actor, "node_token.create", pool, {"uses": _int(body, "uses", 1)})
     return {"object": "node_token", "token": token}
 
 
-@router.post("/nodes/{node_id}/drain", dependencies=[Depends(operator)])
-async def drain(request: Request, node_id: str) -> Any:
-    await platform(request).scheduler.drain(node_id)
+@router.post("/nodes/{node_id}/drain")
+async def drain(request: Request, node_id: str, actor: str = Depends(operator)) -> Any:
+    plat = platform(request)
+    await plat.scheduler.drain(node_id)
+    await plat.audit.write(None, actor, "node.drain", node_id)
     return {"id": node_id, "object": "node", "status": "draining"}
 
 
-# ── the operator's view (SPEC §14.3): health, nodes, organizations, usage across them, configuration ──────────────
+# ── the platform scope's view (SPEC §9.4): health, metrics, nodes, organizations, usage, configuration, audit ─────
+@router.get("/metrics", dependencies=[Depends(operator)])
+async def metrics(request: Request) -> Any:
+    return PlainTextResponse(await platform(request).operations.metrics(), media_type="text/plain; version=0.0.4")
+
+
+@router.get("/audit", dependencies=[Depends(operator)])
+async def audit_all(request: Request, limit: int = 50, after: str | None = None) -> Any:
+    return await platform(request).audit.list(None, limit, after)
+
+
 @router.get("/health", dependencies=[Depends(operator)])
 async def health(request: Request) -> Any:
     return await platform(request).operations.health()
@@ -144,8 +159,8 @@ async def org(request: Request, org_id: str) -> Any:
     return await platform(request).operations.org(org_id)
 
 
-@router.patch("/orgs/{org_id}", dependencies=[Depends(operator)])
-async def configure_org(request: Request, org_id: str) -> Any:
+@router.patch("/orgs/{org_id}")
+async def configure_org(request: Request, org_id: str, actor: str = Depends(operator)) -> Any:
     """{"capacity": {...}, "status": "active|suspended", "egress": [...]}: each given part replaces the stored one."""
     plat, body = platform(request), await read_json(request)
     unknown = sorted(set(body) - {"capacity", "status", "egress"})
@@ -158,6 +173,7 @@ async def configure_org(request: Request, org_id: str) -> Any:
         await plat.orgs.update(org_id, capacity=capacity, status=body.get("status"))
     if "egress" in body:
         await plat.orgs.set_egress(org_id, body["egress"])
+    await plat.audit.write(org_id, actor, "org.configure", org_id, {k: v for k, v in body.items() if k != "egress"})
     return await plat.operations.org(org_id)
 
 
@@ -179,6 +195,9 @@ async def versions(request: Request) -> Any:
     return await platform(request).operations.versions()
 
 
-@router.post("/sessions/{sid}/evict", dependencies=[Depends(operator)])
-async def evict(request: Request, sid: str) -> Any:
-    return await platform(request).operations.evict(sid)
+@router.post("/sessions/{sid}/evict")
+async def evict(request: Request, sid: str, actor: str = Depends(operator)) -> Any:
+    plat = platform(request)
+    out = await plat.operations.evict(sid)
+    await plat.audit.write(None, actor, "session.evict", sid)
+    return out

@@ -117,30 +117,35 @@ def byte_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 class Workspace:
     """A session's files as the platform keeps them (its last save). The listing is cached for a few seconds, so that a
-    page and the files it links to resolve quickly; contents are cached by version, up to CACHE_BYTES in all."""
+    page and the files it links to resolve quickly; contents are cached by version, up to CACHE_BYTES in all. Every
+    read goes through the caller's client, and the caches are kept per credential (`http.who`, when the client names
+    one), so one person's reads never answer another's."""
 
-    def __init__(self, http: httpx.Client):
-        self.http = http
-        self._listings: dict[str, tuple[float, dict[str, dict]]] = {}
+    def __init__(self) -> None:
+        self._listings: dict[tuple, tuple[float, dict[str, dict]]] = {}
         self._contents: OrderedDict[tuple, bytes] = OrderedDict()
         self._held = 0
         self._lock = threading.Lock()
 
-    def state(self, sid: str) -> str:
+    @staticmethod
+    def _who(http) -> str:
+        return str(getattr(http, "who", ""))
+
+    def state(self, http, sid: str) -> str:
         """running, saving (the listing is not yet what the last turn left) or idle."""
-        r = self.http.get(f"/v1/containers/{sid}")
+        r = http.get(f"/v1/containers/{sid}")
         r.raise_for_status()
         return (r.json().get("metadata") or {}).get("state") or "idle"
 
-    def files(self, sid: str, fresh: bool = False) -> dict[str, dict]:
+    def files(self, http, sid: str, fresh: bool = False) -> dict[str, dict]:
         with self._lock:
-            hit = self._listings.get(sid)
+            hit = self._listings.get((self._who(http), sid))
         if hit and not fresh and time.monotonic() - hit[0] < 5:
             return hit[1]
         out: dict[str, dict] = {}
         after = None
         for _ in range(200):                             # 200 pages of 100: the platform lists at most 20,000
-            r = self.http.get(f"/v1/containers/{sid}/files", params={"limit": 100, **({"after": after} if after else {})})
+            r = http.get(f"/v1/containers/{sid}/files", params={"limit": 100, **({"after": after} if after else {})})
             r.raise_for_status()
             doc = r.json()
             for f in doc["data"]:
@@ -150,19 +155,19 @@ class Workspace:
                 break
             after = doc.get("last_id")
         with self._lock:
-            self._listings[sid] = (time.monotonic(), out)
+            self._listings[(self._who(http), sid)] = (time.monotonic(), out)
         return out
 
-    def find(self, sid: str, rel: str) -> dict | None:
-        return self.files(sid).get(rel) or self.files(sid, fresh=True).get(rel)
+    def find(self, http, sid: str, rel: str) -> dict | None:
+        return self.files(http, sid).get(rel) or self.files(http, sid, fresh=True).get(rel)
 
-    def content(self, sid: str, f: dict) -> bytes:
-        key = (sid, f["id"], f["bytes"], f["at"])
+    def content(self, http, sid: str, f: dict) -> bytes:
+        key = (self._who(http), sid, f["id"], f["bytes"], f["at"])
         with self._lock:
             if key in self._contents:
                 self._contents.move_to_end(key)
                 return self._contents[key]
-        r = self.http.get(f"/v1/containers/{sid}/files/{f['id']}/content", timeout=httpx.Timeout(30, read=600))
+        r = http.get(f"/v1/containers/{sid}/files/{f['id']}/content", timeout=httpx.Timeout(30, read=600))
         r.raise_for_status()
         data = r.content
         if len(data) <= CACHE_BYTES // 4:
@@ -324,9 +329,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not SESSION.fullmatch(sid):
                     self._json(400, {"error": "a session id (cntr_...)"})
                 elif url.path == "/api/session":
-                    self._json(200, {"state": self.workspace.state(sid)})
+                    self._json(200, {"state": self.workspace.state(self.http, sid)})
                 else:
-                    files = self.workspace.files(sid, fresh=True)
+                    files = self.workspace.files(self.http, sid, fresh=True)
                     self._json(200, {"files": sorted(files.values(), key=lambda f: f["path"])})
             elif url.path.startswith("/ws/"):
                 self._workspace_file(url.path.removeprefix("/ws/"), "download" in query)
@@ -346,11 +351,11 @@ class Handler(BaseHTTPRequestHandler):
         if not SESSION.fullmatch(sid) or not rel:
             self._text(404, "not found")
             return
-        found = self.workspace.find(sid, rel)
+        found = self.workspace.find(self.http, sid, rel)
         if not found:
             self._text(404, f"{rel} is not in the workspace (yet): files appear once a turn's state is saved")
             return
-        self._file(rel, self.workspace.content(sid, found), download)
+        self._file(rel, self.workspace.content(self.http, sid, found), download)
 
     # ── POST ─────────────────────────────────────────────────────────────────────────────────────────────────────
     def do_POST(self) -> None:
@@ -497,7 +502,7 @@ def main() -> None:
         sys.exit("set HG_KEY (or pass --key) to your organization's hg_... key")
     api = args.api.rstrip("/")
     Handler.http = httpx.Client(base_url=api, headers={"Authorization": f"Bearer {args.key}"}, timeout=120)
-    Handler.workspace = Workspace(Handler.http)
+    Handler.workspace = Workspace()
     Handler.default_model = args.model
     Handler.static = {p.name: p for p in STATIC.iterdir() if p.is_file()}
     server = Server((args.host, args.port), Handler)

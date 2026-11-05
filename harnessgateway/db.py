@@ -84,16 +84,20 @@ class Database:
         await self._pool.close()
 
     @asynccontextmanager
-    async def tenant(self, org_id: str) -> AsyncIterator[Tx]:
+    async def tenant(self, org_id: str, project_id: str | None = None) -> AsyncIterator[Tx]:
+        """One organization's rows; with `project_id`, only that project's rows of the project-scoped tables (SPEC §9.1)."""
         assert org_id.startswith("org_"), "a tenant transaction names an organization"
+        assert project_id is None or project_id.startswith("prj_"), "a project scope names a project"
         async with self._pool.connection() as cx, cx.transaction():
-            await cx.execute("SELECT set_config('hg.org', %s, true), set_config('hg.scope', 'tenant', true)", (org_id,))
+            await cx.execute("SELECT set_config('hg.org', %s, true), set_config('hg.scope', 'tenant', true), "
+                             "set_config('hg.project', %s, true)", (org_id, project_id or ""))
             yield Tx(cx)
 
     @asynccontextmanager
     async def platform(self) -> AsyncIterator[Tx]:
         async with self._pool.connection() as cx, cx.transaction():
-            await cx.execute("SELECT set_config('hg.scope', 'platform', true), set_config('hg.org', '', true)")
+            await cx.execute("SELECT set_config('hg.scope', 'platform', true), set_config('hg.org', '', true), "
+                             "set_config('hg.project', '', true)")
             yield Tx(cx)
 
     @asynccontextmanager

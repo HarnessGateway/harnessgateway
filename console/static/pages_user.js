@@ -1,21 +1,31 @@
-// The organization's console: the workbench (everyone) and the organization's settings (admins).
-import { METERS, api, bytes, clientOf, date, esc, meter, short, stream, when } from "./api.js";
+// The organization's console: what a developer does in its projects (harnesses, the chat and the playground, keys,
+// sessions, usage) and what an admin does for the organization (providers, egress, accounts, projects, the audit log).
+// Every call goes to the platform as the signed-in person, in the project the header picks; the platform refuses
+// what the person may not do, so the pages only hide what would be refused.
+import { METERS, actorOf, api, bytes, date, esc, meter, short, stream, when } from "./api.js";
 import { $, $$, card, confirm, fail, field, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
 import { session } from "./session.js";
 
 export function nav(me) {
-  const work = { mod: "Workbench", items: [{ id: "chat", label: "Chat", icon: "chat" }, { id: "playground", label: "Playground", icon: "code" }] };
-  const mods = me.role === "member" ? [work] : [
-    { mod: "Setup", items: [{ id: "providers", label: "Providers", icon: "globe" }, { id: "harnesses", label: "Harnesses", icon: "box" },
+  const admin = me.role === "admin";
+  const mods = [
+    { mod: "Setup", items: [{ id: "harnesses", label: "Harnesses", icon: "box" }, { id: "providers", label: "Providers", icon: "globe" },
                            { id: "egress", label: "Egress", icon: "shield" }] },
-    work,
-    { mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" }, { id: "members", label: "Members", icon: "users" }] },
-    { mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" }] }];
+    { mod: "Workbench", items: [{ id: "chat", label: "Chat", icon: "chat" }, { id: "playground", label: "Playground", icon: "code" }] },
+    { mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" },
+                            ...(admin ? [{ id: "projects", label: "Projects", icon: "grid" }, { id: "accounts", label: "Accounts", icon: "users" }] : [])] },
+    { mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" },
+                                   ...(admin ? [{ id: "audit", label: "Audit log", icon: "log" }] : [])] }];
   for (const m of mods) for (const it of m.items) it.mod = m.mod;
   return mods;
 }
 
 const list = async path => (await api("GET", path)).data || [];
+const quiet = path => list(path).catch(() => []);
+const projectName = (me, id) => (me.projects.find(p => p.id === id) || {}).name || id || "—";
+const setupLink = token => `${location.origin}/setup?token=${encodeURIComponent(token)}`;
+const invitation = (title, token) => reveal(title, "Invitation link", setupLink(token),
+  "Give this link to the person: it is shown once, works once, and expires in seven days. They choose their password with it.");
 const top = (title, lead, acts = "") => `<div class="top"><div><h1>${esc(title)}</h1><p class="lead">${esc(lead)}</p></div><div class="acts">${acts}</div></div>`;
 
 // ── Chat ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -27,7 +37,8 @@ const chat = { title: "Chat", full: true, render(el, params) {
 // ── Sessions ──────────────────────────────────────────────────────────────────────────────────────────────────────
 const sessions = { title: "Sessions", async render(el, params, me) {
   if (params[0]) return session.render(el, params, me);
-  const client = clientOf(me.role === "member" ? [] : await list("/v1/keys"));
+  const client = actorOf(await quiet("/v1/keys"), me.role === "admin" ? await quiet("/v1/accounts") : []);
+  const wide = me.role === "admin" && !me.project;
   let rows = [], after = null;
   for (let i = 0; i < 20; i++) {                          // up to 2,000, newest first
     const page = await api("GET", `/v1/containers?limit=100${after ? `&after=${after}` : ""}`);
@@ -38,14 +49,14 @@ const sessions = { title: "Sessions", async render(el, params, me) {
     $("#sess", el).innerHTML = table([
       { h: "Session", cell: r => `<a href="#/sessions/${encodeURIComponent(r.id)}"><b>${esc(r.name)}</b></a><br><span class="mono">${esc(r.id)}</span>` },
       { h: "Harness · model", cell: r => `${esc(r.metadata.harness)}${r.metadata.model ? ` <span class="muted">${esc(r.metadata.model)}</span>` : ""}` },
-      { h: "Client", cell: r => esc(client(r.metadata.created_by)) },
+      ...(wide ? [{ h: "Project", cell: r => esc(projectName(me, r.metadata.project)) }] : []),
+      { h: "Created by", cell: r => esc(client(r.metadata.created_by)) + (r.metadata.user ? `<br><span class="muted small">user ${esc(r.metadata.user)}</span>` : "") },
       { h: "Turns", cell: r => esc(r.metadata.turns) }, { h: "State", cell: r => statusPill(r.metadata.state) },
       { h: "Saved", cell: r => bytes(r.metadata.bytes) }, { h: "Last turn", cell: r => when(r.last_active_at) },
-      { h: "", cls: "acts", cell: r => `<a class="btn2" href="#/sessions/${encodeURIComponent(r.id)}">Open</a>` +
-          (me.role !== "member" ? `<button class="btn2 danger" data-del="${r.id}">Delete</button>` : "") }], shown, "No sessions yet.");
+      { h: "", cls: "acts", cell: r => `<a class="btn2" href="#/sessions/${encodeURIComponent(r.id)}">Open</a><button class="btn2 danger" data-del="${r.id}">Delete</button>` }], shown, "No sessions yet.");
   };
   const counts = s => rows.filter(r => s === "all" || r.metadata.state === s).length;
-  el.innerHTML = top("Sessions", "Every sandbox session of this organization, whichever application started it. Open one for its transcript, traces and workspace.") +
+  el.innerHTML = top("Sessions", `Every sandbox session of ${wide ? "this organization" : "this project"}, whichever application started it. Open one for its transcript, traces and workspace.`) +
     `<div class="tabs">${["all", "running", "saving", "idle"].map(s => `<button data-tab="${s}"${s === "all" ? ' class="on"' : ""}>${s[0].toUpperCase() + s.slice(1)} · ${counts(s)}</button>`).join("")}</div>` +
     `<div class="card" id="sess"></div>`;
   draw();
@@ -126,20 +137,22 @@ const playground = { title: "Playground", async render(el) {
 // ── Harnesses ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const harnesses = { title: "Harnesses", async render(el, params, me) {
   if (params[0]) return harness.render(el, params, me);
+  const wide = me.role === "admin" && !me.project;
   const [doc, drafts] = await Promise.all([api("GET", "/v1/harnesses"), api("GET", "/drafts")]);
   const rows = doc.data;
-  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-package-builder" ? pill("built-in", "q") : ""}</div>` +
+  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-package-builder" ? pill("built-in", "q") : ""}${wide ? pill(projectName(me, r.project), "b") : ""}</div>` +
     `<div class="hv">${esc(r.version)}</div><div class="hd">${esc(r.description || "")}</div>` +
     `<div class="hf">${r.provider_apis.length ? r.provider_apis.map(a => pill(a, "b")).join(" ") : pill("no model", "q")}<span class="muted small" style="margin-left:auto">${esc([r.default_provider, r.default_model].filter(Boolean).join(" / "))}</span></div>` +
     `<div class="ha"><span class="btn2">Open</span></div></a>`;
   const dcard = d => `<a class="hcard draft" href="#/drafts/${encodeURIComponent(d.name)}"><div class="hh"><b>${esc(d.name)}</b>${pill("draft", "warn")}</div>` +
     `<div class="hv">${esc(d.based_on ? `from ${d.based_on}` : "")}</div><div class="hd muted">${d.files} file${d.files === 1 ? "" : "s"} · edited ${when(d.updated_at)}</div>` +
     `<div class="ha"><span class="btn2">Edit</span><button class="btn2 danger" data-discard="${esc(d.name)}">Discard</button></div></a>`;
-  el.innerHTML = top("Harnesses", "The agents this organization can run. Every harness is a package: start one from the template and edit its files, or ask the built-in harness package builder in the chat to write one, then install it and try it in the chat or over the API.",
-    `<button class="btn" id="new">New harness</button>`) +
+  el.innerHTML = top("Harnesses", `The agents ${wide ? "this organization's projects" : "this project"} can run. Every harness is a package: start one from the template and edit its files, or ask the built-in harness package builder in the chat to write one, then install it and try it in the chat or over the API.`,
+    wide ? "" : `<button class="btn" id="new">New harness</button>`) +
+    (wide ? `<div class="note">Pick a project in the header to write, edit or install harnesses: a harness belongs to one.</div>` : "") +
     (drafts.data.length ? `<h2>Drafts</h2><div class="cards">${drafts.data.map(dcard).join("")}</div>` : "") +
     `<h2>Installed</h2>` + (rows.length ? `<div class="cards">${rows.map(hcard).join("")}</div>` : `<div class="empty">No harness yet. <b>New harness</b> starts one from the template.</div>`);
-  $("#new", el).addEventListener("click", () => newDraft().catch(fail));
+  $("#new", el)?.addEventListener("click", () => newDraft().catch(fail));
   el.addEventListener("click", async e => {
     const d = e.target.closest("[data-discard]");
     if (d) {
@@ -180,8 +193,9 @@ const harness = { title: "Harness", async render(el, params, me) {
   const fitting = providers.filter(p => h.provider_apis.includes(p.api));
   const settings = Object.entries(h.settings), secrets = Object.entries(h.secrets), mcp = Object.entries(h.mcp || {});
   const tab = params[1] || "files";
-  el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, h.description || "",
-    `<button class="btn2" id="edit">Edit</button><button class="btn2 danger" id="rm">Uninstall</button>`) +
+  const wide = me.role === "admin" && !me.project;
+  el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, (wide ? `Project ${projectName(me, h.project)} · ` : "") + (h.description || ""),
+    (wide ? "" : `<button class="btn2" id="edit">Edit</button>`) + `<button class="btn2 danger" id="rm">Uninstall</button>`) +
     `<div class="tabs">${[["files", "Files"], ["manifest", "Manifest"], ["config", "Settings & secrets"], ["defaults", "Defaults"]].map(([t, l]) => `<a href="#/harnesses/${encodeURIComponent(name)}/${t}"${t === tab ? ' class="on"' : ""}>${l}</a>`).join("")}</div>` +
     `<div id="tab"></div>`;
   const body = $("#tab", el);
@@ -229,7 +243,7 @@ const harness = { title: "Harness", async render(el, params, me) {
       `${field("Model", input("default_model", h.default_model || ""), "the model name the CLI is given when a request names none")}<button class="btn">Save defaults</button></form>`) : `<div class="note">This harness calls no model, so it has no provider or model defaults.</div>`;
     $("#defaults", el)?.addEventListener("submit", async e => { e.preventDefault(); try { await api("PATCH", `/v1/harnesses/${name}`, Object.fromEntries(new FormData(e.target))); toast("Saved", "ok"); } catch (err) { fail(err); } });
   }
-  $("#edit", el).addEventListener("click", () => editInstalled(name));
+  $("#edit", el)?.addEventListener("click", () => editInstalled(name));
   $("#rm", el).addEventListener("click", async () => {
     if (await confirm("Uninstall", `Uninstall ${name}? Existing sessions keep running on their pinned package.`, "Uninstall")) {
       try { await api("DELETE", `/v1/harnesses/${name}`); location.hash = "#/harnesses"; } catch (err) { fail(err); }
@@ -295,12 +309,12 @@ const drafts = { title: "Draft", async render(el, params, me) {
 
 // ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const providers = { title: "Providers", async render(el, params, me) {
-  const rows = await list("/v1/providers");
-  el.innerHTML = top("Providers", "Model endpoints and their keys. A key is sealed here and swapped in at the gateway; a sandbox never sees it.",
-    `<button class="btn" id="add">Add provider</button>`) +
+  const rows = await list("/v1/providers"), admin = me.role === "admin";
+  el.innerHTML = top("Providers", "The organization's model endpoints and their keys, shared by every project. A key is sealed here and swapped in at the gateway; a sandbox never sees it." + (admin ? "" : " An admin adds them."),
+    admin ? `<button class="btn" id="add">Add provider</button>` : "") +
     `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` }, { h: "API shape", cell: p => pill(p.api, "b") },
       { h: "Base URL", cell: p => `<span class="mono">${esc(p.base_url)}</span>` }, { h: "Updated", cell: p => when(p.updated_at) },
-      { h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${p.name}" data-api="${p.api}" data-url="${esc(p.base_url)}">Edit</button><button class="btn2 danger" data-del="${p.name}">Delete</button>` }],
+      ...(admin ? [{ h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${p.name}" data-api="${p.api}" data-url="${esc(p.base_url)}">Edit</button><button class="btn2 danger" data-del="${p.name}">Delete</button>` }] : [])],
       rows, "No provider yet. Harnesses that call a model need one.")}</div>`;
   const dialog = (name = "", apiShape = "anthropic", url = "") => modal({ title: name ? `Provider ${name}` : "Add provider", submit: "Save", body:
     field("Name", input("name", name, `${name ? "readonly" : ""} pattern="[a-z0-9][a-z0-9._\\-]*" required placeholder="anthropic"`)) +
@@ -308,7 +322,7 @@ const providers = { title: "Providers", async render(el, params, me) {
     field("Base URL", input("base_url", url || { anthropic: "https://api.anthropic.com", openai: "https://api.openai.com", google: "https://generativelanguage.googleapis.com" }[apiShape], 'required')) +
     field("API key", input("key", "", `type="password" autocomplete="off"${name ? ' placeholder="leave empty to keep the stored key"' : " required"}`), "write-only; never shown again"),
     onSubmit: async d => { await api("PUT", `/v1/providers/${d.name}`, { api: d.api, base_url: d.base_url, ...(d.key ? { key: d.key } : {}) }); toast("Saved", "ok"); rerender(); } });
-  $("#add", el).addEventListener("click", () => dialog());
+  $("#add", el)?.addEventListener("click", () => dialog());
   el.addEventListener("click", async e => {
     const ed = e.target.closest("[data-edit]"); if (ed) { dialog(ed.dataset.edit, ed.dataset.api, ed.dataset.url); return; }
     const d = e.target.closest("[data-del]");
@@ -321,31 +335,43 @@ const providers = { title: "Providers", async render(el, params, me) {
 // ── Egress ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const egress = { title: "Egress", async render(el, params, me) {
   let entries = (await api("GET", "/v1/egress")).egress;
-  const harnessesRows = await list("/v1/harnesses");
+  const harnessesRows = await list("/v1/harnesses"), admin = me.role === "admin";
   const draw = () => { $("#entries", el).innerHTML = table([
     { h: "Entry", cell: e => `<span class="mono">${esc(e)}</span>` }, { h: "", cell: e => e.startsWith("!") ? pill("deny", "bad") : pill("allow", "ok") },
-    { h: "", cls: "acts", cell: e => `<button class="btn2 danger" data-rm="${esc(e)}">Remove</button>` }], entries, "Nothing allowed: sandboxes reach only their provider through the gateway."); };
-  el.innerHTML = top("Egress", "What every sandbox of this organization may reach, besides its provider. A harness adds its own entries; a deny entry wins.") +
-    `<div class="grid two"><div class="card"><div class="ch"><h2>Organization entries</h2></div><form class="row" id="add" style="margin-bottom:12px">${input("entry", "", 'placeholder="api.github.com · *.npmjs.org · !evil.example.com · host:8443" required')}<button class="btn">Add</button></form><div id="entries"></div></div>` +
+    ...(admin ? [{ h: "", cls: "acts", cell: e => `<button class="btn2 danger" data-rm="${esc(e)}">Remove</button>` }] : [])], entries, "Nothing allowed: sandboxes reach only their provider through the gateway."); };
+  el.innerHTML = top("Egress", "What every sandbox of this organization may reach, besides its provider. A harness adds its own entries; a deny entry wins." + (admin ? "" : " An admin changes the organization's entries.")) +
+    `<div class="grid two"><div class="card"><div class="ch"><h2>Organization entries</h2></div>${admin ? `<form class="row" id="add" style="margin-bottom:12px">${input("entry", "", 'placeholder="api.github.com · *.npmjs.org · !evil.example.com · host:8443" required')}<button class="btn">Add</button></form>` : ""}<div id="entries"></div></div>` +
     `<div><div class="card"><h2>Syntax</h2><div class="kv"><div><span class="mono">host</span></div><div>that host, port 443</div><div><span class="mono">*.domain</span></div><div>any subdomain, never the domain itself</div><div><span class="mono">host:8443</span></div><div>another port</div><div><span class="mono">!host</span></div><div>deny, even if a harness allows it</div><div><span class="mono">*</span></div><div>everything (deny entries still apply)</div></div></div>` +
     card("Added by harnesses", table([{ h: "Harness", cell: h => esc(h.name) }, { h: "Run egress", cell: h => h.egress.map(e => `<span class="mono">${esc(e)}</span>`).join(", ") || "—" }], harnessesRows.filter(h => h.egress.length), "No harness adds entries.")) + `</div></div>`;
   draw();
   const save = async next => { try { entries = (await api("PUT", "/v1/egress", { egress: next })).egress; draw(); toast("Saved", "ok"); } catch (err) { fail(err); } };
-  $("#add", el).addEventListener("submit", e => { e.preventDefault(); const v = e.target.entry.value.trim(); if (v) { save([...entries, v]); e.target.reset(); } });
+  $("#add", el)?.addEventListener("submit", e => { e.preventDefault(); const v = e.target.entry.value.trim(); if (v) { save([...entries, v]); e.target.reset(); } });
   el.addEventListener("click", e => { const b = e.target.closest("[data-rm]"); if (b) save(entries.filter(x => x !== b.dataset.rm)); });
 } };
 
 // ── API keys ──────────────────────────────────────────────────────────────────────────────────────────────────────
 const keys = { title: "API keys", async render(el, params, me) {
-  const rows = await list("/v1/keys");
-  el.innerHTML = top("API keys", "Keys your applications use with any OpenAI SDK. `run` keys send requests; `admin` keys also manage the organization.",
+  const rows = await list("/v1/keys"), admin = me.role === "admin", wide = admin && !me.project;
+  const kind = k => k.role === "admin" ? pill("admin · organization", "run") : k.run_only ? pill("run-only", "b") : pill("developer", "b");
+  el.innerHTML = top("API keys", "Keys your applications use with any OpenAI SDK. A run-only key sends requests and reads the sessions it made: what an application holds. A developer key does everything a developer does in its project; an admin key, everything in the organization.",
     `<button class="btn" id="add">Create key</button>`) +
     `<div class="card">${table([{ h: "Key", cell: k => `<span class="mono">${esc(k.hint)}</span>` }, { h: "Label", cell: k => esc(k.label || "—") },
-      { h: "Scope", cell: k => pill(k.scope, k.scope === "admin" ? "run" : "b") }, { h: "Created", cell: k => when(k.created_at) }, { h: "Last used", cell: k => when(k.last_used_at) },
+      { h: "Kind", cell: kind }, ...(wide ? [{ h: "Project", cell: k => esc(k.project ? projectName(me, k.project) : "—") }] : []),
+      { h: "Expires", cell: k => k.expires_at ? date(k.expires_at) : "never" }, { h: "Created", cell: k => when(k.created_at) }, { h: "Last used", cell: k => when(k.last_used_at) },
       { h: "", cls: "acts", cell: k => `<button class="btn2 danger" data-del="${k.id}">Revoke</button>` }], rows, "No keys.")}</div>`;
+  const kinds = [["run_only", "run-only — responses, its own sessions and files, models"], ["developer", "developer — everything in the project"],
+                 ...(admin ? [["admin", "admin — everything in the organization"]] : [])];
+  const projects = me.projects.map(p => [p.id, p.name]);
   $("#add", el).addEventListener("click", () => modal({ title: "Create an API key", submit: "Create", body:
-    field("Label", input("label", "", 'placeholder="my-app"')) + field("Scope", select("scope", [["run", "run — responses, sessions, files"], ["admin", "admin — everything"]])),
-    onSubmit: async d => { const k = await api("POST", "/v1/keys", d); then(() => reveal("Your new key", "API key", k.key, "Copy it now: it is shown once.").then(rerender)); } }));
+    field("Label", input("label", "", 'placeholder="my-app"')) + field("Kind", select("kind", kinds)) +
+    (admin ? field("Project", select("project", projects, me.project || (projects[0] || [""])[0]), "for a run-only or developer key") : "") +
+    field("Expires in (days)", input("expires_in_days", "", 'type="number" min="1" max="3650" placeholder="never"')),
+    onSubmit: async d => {
+      const body = { label: d.label, role: d.kind === "admin" ? "admin" : "developer", run_only: d.kind === "run_only",
+                     project: d.kind === "admin" ? null : (d.project || me.project), ...(d.expires_in_days ? { expires_in_days: +d.expires_in_days } : {}) };
+      const k = await api("POST", "/v1/keys", body);
+      then(() => reveal("Your new key", "API key", k.key, "Copy it now: it is shown once.").then(rerender));
+    } }));
   el.addEventListener("click", async e => {
     const d = e.target.closest("[data-del]");
     if (d && await confirm("Revoke key", "Revoke this key? Applications using it stop working at once.", "Revoke")) {
@@ -372,27 +398,98 @@ export function usagePage(path, groups, lead) {
     await show();
   } };
 }
-const usage = usagePage("/v1/usage", [["", "total"], ["day", "day"], ["harness", "harness"], ["session", "session"]],
-  "What this organization's sandboxes used: allocated CPU and memory over time, bytes through the door, storage held.");
+const usage = usagePage("/v1/usage", [["", "total"], ["day", "day"], ["project", "project"], ["harness", "harness"], ["session", "session"], ["user", "end user"]],
+  "What the sandboxes used: allocated CPU and memory over time, bytes through the door, storage held (the organization's, so an admin sees it for the whole organization).");
 
-// ── Members (console users) ───────────────────────────────────────────────────────────────────────────────────────
-export function usersPage(title, lead, roles) {
-  return { title, async render(el, params, me) {
-    const rows = (await api("GET", "/users")).data;
-    el.innerHTML = top(title, lead, `<button class="btn" id="add">Add user</button>`) +
-      `<div class="card">${table([{ h: "User", cell: u => `<b>${esc(u.name)}</b>${u.name === me.name ? ' <span class="muted">(you)</span>' : ""}` }, { h: "Role", cell: u => pill(u.role, "b") },
-        { h: "Password", cell: u => u.must_change ? pill("initial, must change", "warn") : pill("set", "ok") }, { h: "Created", cell: u => when(u.created_at) },
-        { h: "", cls: "acts", cell: u => u.name === me.name ? "" : `<button class="btn2 danger" data-del="${esc(u.name)}">Delete</button>` }], rows)}</div>`;
-    $("#add", el).addEventListener("click", () => modal({ title: "Add user", submit: "Create", body:
-      field("Username", input("username", "", 'required pattern="[A-Za-z0-9._\\-]+"')) + field("Role", select("role", roles)),
-      onSubmit: async d => { const u = await api("POST", "/users", d); then(() => reveal(`User ${u.name}`, "Initial password", u.password, "Give it to them: it is shown once and must be changed at first sign-in.").then(rerender)); } }));
-    el.addEventListener("click", async e => {
-      const d = e.target.closest("[data-del]");
-      if (d && await confirm("Delete user", `Delete ${d.dataset.del}?`)) { try { await api("DELETE", "/users", { username: d.dataset.del }); rerender(); } catch (err) { fail(err); } }
-    });
+// ── Accounts (admins) ─────────────────────────────────────────────────────────────────────────────────────────────
+const accounts = { title: "Accounts", async render(el, params, me) {
+  const rows = await list("/v1/accounts");
+  const status = a => a.status === "active" ? pill("active", "ok") : a.status === "invited" ? pill("invited", "warn") : pill("disabled", "bad");
+  el.innerHTML = top("Accounts", "Who signs in to this organization. An admin manages everything in it; a developer works in the projects it belongs to. A new account is invited: give the person the link, and they choose their password.",
+    `<button class="btn" id="add">Invite</button>`) +
+    `<div class="card">${table([{ h: "Account", cell: a => `<b>${esc(a.name || a.email)}</b>${a.id === me.account.id ? ' <span class="muted">(you)</span>' : ""}<br><span class="muted small">${esc(a.email)}</span>` },
+      { h: "Role", cell: a => pill(a.role, a.role === "admin" ? "run" : "b") + (a.platform_admin ? " " + pill("platform admin", "q") : "") }, { h: "Status", cell: status },
+      { h: "Last sign-in", cell: a => when(a.signed_in_at) }, { h: "Created", cell: a => when(a.created_at) },
+      { h: "", cls: "acts", cell: a => a.id === me.account.id ? "" :
+        `<button class="btn2" data-role="${a.id}" data-to="${a.role === "admin" ? "developer" : "admin"}">Make ${a.role === "admin" ? "developer" : "admin"}</button>` +
+        `<button class="btn2" data-reset="${a.id}">Reset password</button>` +
+        (a.status === "disabled" ? `<button class="btn2" data-status="active" data-id="${a.id}">Enable</button>` : `<button class="btn2 danger" data-status="disabled" data-id="${a.id}">Disable</button>`) }], rows)}</div>`;
+  $("#add", el).addEventListener("click", () => modal({ title: "Invite an account", submit: "Invite", body:
+    field("Email", input("email", "", 'type="email" required placeholder="dev@example.com"'), "their login") + field("Name", input("name", "")) +
+    field("Role", select("role", [["developer", "developer — works in the projects you add them to"], ["admin", "admin — everything in the organization"]])) +
+    (me.account.platform_admin ? field("Platform scope", select("platform_admin", [["", "no"], ["1", "yes — the platform console too"]]), "sees every organization, the nodes and the configuration") : ""),
+    onSubmit: async d => {
+      const a = await api("POST", "/v1/accounts", { email: d.email, name: d.name, role: d.role, platform_admin: !!d.platform_admin });
+      then(() => invitation(`Invitation for ${a.email}`, a.invitation).then(rerender));
+    } }));
+  el.addEventListener("click", async e => {
+    const r = e.target.closest("[data-role]");
+    if (r) { try { await api("PATCH", `/v1/accounts/${r.dataset.role}`, { role: r.dataset.to }); rerender(); } catch (err) { fail(err); } return; }
+    const rs = e.target.closest("[data-reset]");
+    if (rs && await confirm("Reset password", "Every sign-in of this account ends, and a new invitation link lets them choose a password.", "Reset")) {
+      try { const a = await api("POST", `/v1/accounts/${rs.dataset.reset}/reset`); then(() => invitation(`Reset for ${a.email}`, a.invitation)); } catch (err) { fail(err); }
+      return;
+    }
+    const st = e.target.closest("[data-status]");
+    if (st && (st.dataset.status === "active" || await confirm("Disable account", "Their sign-ins and keys stop working at once.", "Disable"))) {
+      try { await api("PATCH", `/v1/accounts/${st.dataset.id}`, { status: st.dataset.status }); rerender(); } catch (err) { fail(err); }
+    }
+  });
+} };
+
+// ── Projects (admins) ─────────────────────────────────────────────────────────────────────────────────────────────
+const projects = { title: "Projects", async render(el, params, me) {
+  if (params[0]) return project.render(el, params, me);
+  const rows = await list("/v1/projects");
+  el.innerHTML = top("Projects", "The unit a team builds in: its harnesses, the developers who belong to it, the keys its applications hold, and their sessions. Every new project starts with the harness package builder installed.",
+    `<button class="btn" id="add">New project</button>`) +
+    `<div class="card">${table([{ h: "Project", cell: p => `<a href="#/projects/${encodeURIComponent(p.id)}"><b>${esc(p.name)}</b></a><br><span class="mono">${esc(p.id)}</span>` },
+      { h: "Developers", cell: p => p.members }, { h: "Harnesses", cell: p => p.harnesses }, { h: "Created", cell: p => when(p.created_at) },
+      { h: "", cls: "acts", cell: p => `<a class="btn2" href="#/projects/${encodeURIComponent(p.id)}">Open</a>` }], rows)}</div>`;
+  $("#add", el).addEventListener("click", () => modal({ title: "New project", submit: "Create", body:
+    field("Name", input("name", "", 'required pattern="[a-z0-9][a-z0-9._\\-]*" placeholder="market-desk"'), "lowercase letters, digits, dots, dashes and underscores"),
+    onSubmit: async d => { const p = await api("POST", "/v1/projects", { name: d.name }); location.href = `/#/projects/${encodeURIComponent(p.id)}`; location.reload(); } }));
+} };
+
+const project = { title: "Project", async render(el, params, me) {
+  const id = params[0];
+  const [p, members, all] = await Promise.all([api("GET", `/v1/projects/${encodeURIComponent(id)}`), list(`/v1/projects/${encodeURIComponent(id)}/members`), list("/v1/accounts")]);
+  const candidates = all.filter(a => a.role !== "admin" && a.status !== "disabled" && !members.some(m => m.id === a.id));
+  el.innerHTML = `<p><a href="#/projects">← Projects</a></p>` + top(p.name, `Project · ${p.harnesses} harness${p.harnesses === 1 ? "" : "es"} · ${p.members} developer${p.members === 1 ? "" : "s"}`,
+    `<button class="btn2" id="rename">Rename</button><button class="btn2 danger" id="del">Delete</button>`) +
+    `<div class="grid two"><div>${card("Developers", table([{ h: "Account", cell: m => `<b>${esc(m.name || m.email)}</b><br><span class="muted small">${esc(m.email)}</span>` }, { h: "Status", cell: m => statusPill(m.status) },
+      { h: "", cls: "acts", cell: m => `<button class="btn2 danger" data-rm="${m.id}">Remove</button>` }], members, "No developer yet. Admins work in every project."),
+      candidates.length ? `<button class="btn" id="addm">Add developer</button>` : "")}</div>` +
+    `<div>${card("Working in it", `<p class="muted small">Pick <b>${esc(p.name)}</b> in the header to see its harnesses, sessions and keys. Developers see it as soon as they belong to it; an application holds a run-only key of it.</p>`)}</div></div>`;
+  $("#addm", el)?.addEventListener("click", () => modal({ title: "Add a developer", submit: "Add", body:
+    field("Account", select("account", candidates.map(a => [a.id, `${a.name || a.email} <${a.email}>`]))),
+    onSubmit: async d => { await api("PUT", `/v1/projects/${encodeURIComponent(id)}/members/${d.account}`); rerender(); } }));
+  $("#rename", el).addEventListener("click", () => modal({ title: "Rename project", submit: "Rename", body: field("Name", input("name", p.name, 'required pattern="[a-z0-9][a-z0-9._\\-]*"')),
+    onSubmit: async d => { await api("PATCH", `/v1/projects/${encodeURIComponent(id)}`, { name: d.name }); rerender(); } }));
+  $("#del", el).addEventListener("click", async () => {
+    if (await confirm("Delete project", `Delete ${p.name}, its harnesses and keys? A project with sessions is refused: delete them first.`)) {
+      try { await api("DELETE", `/v1/projects/${encodeURIComponent(id)}`); location.hash = "#/projects"; } catch (err) { fail(err); }
+    }
+  });
+  el.addEventListener("click", async e => {
+    const rm = e.target.closest("[data-rm]");
+    if (rm && await confirm("Remove developer", "They lose access to this project's harnesses, sessions and keys.", "Remove")) {
+      try { await api("DELETE", `/v1/projects/${encodeURIComponent(id)}/members/${rm.dataset.rm}`); rerender(); } catch (err) { fail(err); }
+    }
+  });
+} };
+
+// ── Audit log ─────────────────────────────────────────────────────────────────────────────────────────────────────
+export function auditPage(path, lead) {
+  return { title: "Audit log", async render(el) {
+    const [rows, keys, accounts] = await Promise.all([list(`${path}?limit=100`), quiet("/v1/keys"), quiet("/v1/accounts")]);
+    const who = actorOf(keys, accounts);
+    el.innerHTML = top("Audit log", lead) +
+      `<div class="card">${table([{ h: "When", cell: r => date(r.at) }, { h: "Who", cell: r => esc(who(r.actor)) }, { h: "Action", cell: r => `<span class="mono">${esc(r.action)}</span>` },
+        { h: "Target", cell: r => `<span class="mono">${esc(r.target || "")}</span>` },
+        { h: "Detail", cell: r => `<span class="mono small">${esc(Object.entries(r.detail || {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" "))}</span>` }], rows, "Nothing yet.")}</div>`;
   } };
 }
-const members = usersPage("Members", "Who can sign in to this organization's console. Admins manage everything; members use the workbench.",
-  [["member", "member — the workbench"], ["admin", "admin — the workbench and the organization"]]);
+const audit = auditPage("/v1/audit", "Every change of standing in this organization, newest first: sign-ins and their failures, accounts, keys, projects, providers, egress, harnesses.");
 
-export const pages = { chat, sessions, playground, harnesses, drafts, providers, egress, keys, usage, members };
+export const pages = { chat, sessions, playground, harnesses, drafts, providers, egress, keys, usage, accounts, projects, audit };

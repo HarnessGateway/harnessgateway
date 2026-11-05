@@ -9,7 +9,7 @@ pipeline on top of the same core, without forking it, through `harnessgateway.ex
 from fastapi import APIRouter, Request
 from harnessgateway.extensions import Admission, Extension, TraceRecord, TurnSummary, UsageRecord
 from harnessgateway.errors import Refused
-from harnessgateway.services.principal import Principal
+from harnessgateway.domain.access import Principal
 
 
 class Saas(Extension):
@@ -24,7 +24,7 @@ class Saas(Extension):
         return r
 
     async def authenticate(self, request: Request) -> Principal | None:
-        ...                                              # a session cookie, a JWT; None → the next extension, then API keys
+        ...                                              # a JWT, a session of its own; None → the core's keys and sign-ins
 
     async def admit(self, principal: Principal, turn: Admission) -> None:
         if await self.over_quota(turn.org_id):
@@ -41,11 +41,15 @@ run in the order configured; `observe`, `meter` and `turn_ended` run after the c
 
 ## Tenancy
 
-Every table carries `org_id` with row-level security; the core's services take the organization from the
-`Principal`. An extension creates organizations with `platform.orgs.create(name)` and sets each one's capacity
-(`platform.orgs.update(org_id, capacity=…)`: vCPUs, memory, sandbox ceilings, idle and retention, node pool,
-observability level). API keys stay the core's (`platform.keys`); a SaaS may issue its own credentials through
-`authenticate` instead.
+Every table carries `org_id` with row-level security, and the project-scoped ones (harnesses, sessions, turns) carry
+`project_id`; the core's services take both from the `Principal` (SPEC §9.2: organization, actor, role, project,
+`run_only`, `platform_admin`). A SaaS signs customers up on the core's identity: it creates the organization with
+`platform.orgs.create(name)`, its default project with `platform.projects.create(org_id, actor, "default")` (the
+builder is installed), its first admin with `platform.accounts.create(org_id, actor, email, name, "admin")` (an
+invitation to send), and sets the organization's capacity (`platform.orgs.update(org_id, capacity=…)`: vCPUs, memory,
+sandbox ceilings, idle and retention, node pool, observability level). Accounts, roles, sign-ins, keys and audit stay
+the core's; `authenticate` is for a credential of the SaaS's own (a JWT from its identity provider), which still
+resolves to a `Principal` of an organization and a project.
 
 ## Metering and billing
 

@@ -2,21 +2,22 @@
 # HarnessGateway, self-hosted on one Linux host (SPEC §10.4). Run as root; safe to run again (it keeps .env, the data
 # and the admin key already issued).
 #
-#   curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v2.3.2/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v2.4.0/deploy/install.sh | sudo bash
 #   sudo ./deploy/install.sh                  # from a checkout: builds the images locally if they cannot be pulled
 #
 # It checks Docker, installs gVisor (runsc) by its official method if absent and registers it with Docker, writes
 # $HG_HOME/.env with fresh secrets, pulls (or builds) the images, starts the compose project and creates the
-# organization, printing its admin key once.
+# organization with its first admin (HG_ADMIN_EMAIL; asked for when unset), printing the admin's invitation link and
+# an admin key once.
 #
-# Settings (environment): HG_HOME (default /opt/harnessgateway), HG_BIND (127.0.0.1), HG_HTTP_PORT (8000),
-# HG_NODE_DIR (/var/lib/harnessgateway), HG_DOCKER_POOL (10.200.0.0/16: room for one network per sandbox).
+# Settings (environment): HG_HOME (default /opt/harnessgateway), HG_ADMIN_EMAIL, HG_BIND (127.0.0.1), HG_HTTP_PORT
+# (8000), HG_NODE_DIR (/var/lib/harnessgateway), HG_DOCKER_POOL (10.200.0.0/16: room for one network per sandbox).
 set -euo pipefail
 
 # Everything runs from main(), called on the last line: bash reads the whole script before executing any of
 # it, so a run piped from curl is not cut short by a command that reads stdin.
 main() {
-VERSION=2.3.2
+VERSION=2.4.0
 RELEASE=${HG_RELEASE_URL:-https://raw.githubusercontent.com/harnessgateway/harnessgateway/v$VERSION/deploy}
 HOME_DIR=${HG_HOME:-/opt/harnessgateway}
 PLATFORM_IMAGE=${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:$VERSION}
@@ -108,44 +109,51 @@ if [ ! -f .env ]; then
       -e "s/^POSTGRES_ROOT_PASSWORD=$/POSTGRES_ROOT_PASSWORD=$(password)/" \
       -e "s/^HG_DB_PASSWORD=$/HG_DB_PASSWORD=$(password)/" \
       -e "s|^HG_BIND=.*|HG_BIND=${HG_BIND:-127.0.0.1}|" -e "s|^HG_HTTP_PORT=.*|HG_HTTP_PORT=${HG_HTTP_PORT:-8000}|" -e "s|^HG_CONSOLE_PORT=.*|HG_CONSOLE_PORT=${HG_CONSOLE_PORT:-8800}|" \
+      -e "s|^HG_ADMIN_EMAIL=.*|HG_ADMIN_EMAIL=${HG_ADMIN_EMAIL:-}|" \
       -e "s|^HG_NODE_DIR=.*|HG_NODE_DIR=${HG_NODE_DIR:-/var/lib/harnessgateway}|" .env.example > .env
   docker run --rm "$PLATFORM_IMAGE" keygen >> .env
   printf 'HG_PLATFORM_IMAGE=%s\nHG_SANDBOX_IMAGE=%s\n' "$PLATFORM_IMAGE" "$SANDBOX_IMAGE" >> .env
 fi
 mkdir -p "$(grep -E '^HG_NODE_DIR=' .env | cut -d= -f2-)"
 
+# The first admin's email: the login the invitation activates. Asked for once; kept in .env for a re-run.
+email=$(grep -E '^HG_ADMIN_EMAIL=' .env | cut -d= -f2-)
+if [ -z "$email" ] && docker compose ps --status running --services 2>/dev/null | grep -qx postgres && \
+   docker compose exec -T postgres psql -U postgres -d harnessgateway -tAc 'SELECT count(*) FROM orgs' 2>/dev/null | grep -qvx 0; then
+  :                                              # the organization exists already: init needs no email
+elif [ -z "$email" ]; then
+  if [ -t 0 ] || [ -r /dev/tty ]; then
+    printf 'Email of the first admin (the login that activates the console): '
+    read -r email < /dev/tty
+  fi
+  [ -n "$email" ] || fail "set HG_ADMIN_EMAIL (the first admin's email) and run again"
+  sed -i "s|^HG_ADMIN_EMAIL=.*|HG_ADMIN_EMAIL=$email|" .env
+fi
+
 say "starting HarnessGateway"
-docker compose up -d --wait postgres harnessgateway node
-key=$(docker compose exec -T harnessgateway harnessgateway init </dev/null | sed -n 's/.*"admin_key": "\(hg_[^"]*\)".*/\1/p')
-if [ -n "$key" ]; then
-  sed -i "s|^HG_CONSOLE_KEY=.*|HG_CONSOLE_KEY=$key|" .env
-fi
-users=""
-if grep -qE '^HG_CONSOLE_KEY=hg_' .env; then
-  users=$(docker compose run --rm -T console init </dev/null 2>/dev/null | sed -n 's/^ *"\(deployer\|admin\)": "\([^"]*\)".*/\1: \2/p')
-  docker compose up -d --wait console
-fi
+docker compose up -d --wait
+init=$(docker compose exec -T -e HG_ADMIN_EMAIL="$email" harnessgateway harnessgateway init </dev/null)
+key=$(printf '%s' "$init" | sed -n 's/.*"admin_key": "\(hg_[^"]*\)".*/\1/p')
+invitation=$(printf '%s' "$init" | sed -n 's/.*"invitation": "\(hgi_[^"]*\)".*/\1/p')
 port=$(grep -E '^HG_HTTP_PORT=' .env | cut -d= -f2-)
 cport=$(grep -E '^HG_CONSOLE_PORT=' .env | cut -d= -f2-)
 echo
 say "HarnessGateway is running: API http://${HG_BIND:-127.0.0.1}:${port:-8000}, console http://${HG_BIND:-127.0.0.1}:${cport:-8800}  (project: $HOME_DIR)"
-if [ -n "$key" ]; then
-  echo "Your admin key (shown once; keep it):  $key"
+if [ -n "$invitation" ]; then
+  echo "Activate your admin account ($email) by choosing a password at this link (shown once, valid 7 days):"
+  echo "  http://localhost:${cport:-8800}/setup?token=$invitation"
+  echo "Your admin API key for automation (shown once; keep it):  $key"
 else
-  echo "The organization already exists; use the admin key printed at its first install."
-fi
-if [ -n "$users" ]; then
-  echo "Console sign-ins (shown once; each must be changed at first sign-in):"
-  echo "$users" | sed 's/^/  /'
+  echo "The organization already exists; sign in to the console with your account (an admin can reset a password)."
 fi
 cat <<EOF
 
 Next:
+  # open the console: http://localhost:${cport:-8800} — add a provider under Setup → Providers, then a harness
   export OPENAI_BASE_URL=http://localhost:${port:-8000}/v1 OPENAI_API_KEY=<the admin key>
-  # a provider for the harnesses that need a model:
+  # or over the API, a provider for the harnesses that need a model:
   curl -X PUT \$OPENAI_BASE_URL/providers/anthropic -H "authorization: Bearer \$OPENAI_API_KEY" \\
        -H 'content-type: application/json' -d '{"api": "anthropic", "base_url": "https://api.anthropic.com", "key": "<your Anthropic key>"}'
-  # or open the console: http://localhost:${cport:-8800} (the "admin" user), http://localhost:${cport:-8800}/ops (the "deployer" user)
   # a first turn:
   curl \$OPENAI_BASE_URL/responses -H "authorization: Bearer \$OPENAI_API_KEY" -H 'content-type: application/json' \\
        -d '{"model": "claude-code", "input": "Write hello.py and run it"}'

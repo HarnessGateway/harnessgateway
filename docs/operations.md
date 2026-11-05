@@ -19,12 +19,12 @@ The installer:
    its own, and Docker's default pools hold only about 30);
 2. pulls `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`, or builds them from the checkout;
 3. writes `/opt/harnessgateway/.env` with fresh secrets (never overwritten on a re-run);
-4. starts the compose project (`postgres`, `harnessgateway`, `node`) and runs `harnessgateway init`, which creates the
-   organization with the built-in harness package builder and prints the **admin key once**;
-5. starts the `console` service with that key and prints the two console sign-ins once (`admin`, `deployer`; each
-   changed at first sign-in). See [`console.md`](console.md).
+4. asks for the first admin's email (`HG_ADMIN_EMAIL`), starts the compose project (`postgres`, `harnessgateway`,
+   `node`, `console`) and runs `harnessgateway init`, which creates the organization, its default project with the
+   built-in harness package builder and the admin account, and prints **once** the invitation link that activates the
+   account (the console's `/setup` page) and an admin API key for automation. See [`console.md`](console.md).
 
-The API listens on `127.0.0.1:8000` and the consoles on `127.0.0.1:8800` (`HG_BIND`, `HG_HTTP_PORT`,
+The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:8800` (`HG_BIND`, `HG_HTTP_PORT`,
 `HG_CONSOLE_PORT`). Put a TLS-terminating proxy in front of them before exposing them beyond the host.
 
 Day to day, from `/opt/harnessgateway`:
@@ -61,7 +61,7 @@ them:
      -e HG_API_URL=https://hg.internal -e HG_GATEWAY_URL=https://hg.internal/gateway \
      -e HG_NODE_JOIN_TOKEN=hgj_… -e HG_UPLINK_NETWORK=bridge -e HG_NODE_DIR=/var/lib/harnessgateway \
      -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \
-     ghcr.io/harnessgateway/harnessgateway:2.3.2 node
+     ghcr.io/harnessgateway/harnessgateway:2.4.0 node
    ```
 
    The node directory is mounted at the same path inside and out: sandboxes are sibling containers that bind-mount
@@ -103,8 +103,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_NODE_SLOTS` | node | `4` | turns run at once |
 | `HG_NODE_WARM_MAX` | node | `32` | idle sandboxes kept warm |
 | `HG_NODE_DIR` | node | `/var/lib/harnessgateway` | sessions, tools, the node's CA and credential |
-| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.3.2` | the image every sandbox runs |
-| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.3.2` | the image doors run |
+| `HG_SANDBOX_IMAGE` | node | `ghcr.io/harnessgateway/sandbox:2.4.0` | the image every sandbox runs |
+| `HG_PLATFORM_IMAGE` | node | `ghcr.io/harnessgateway/harnessgateway:2.4.0` | the image doors run |
 | `HG_UPLINK_NETWORK` | node | `hg-uplink` | the Docker network doors join to reach the gateway and the internet |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | node | — | see above |
 | `HG_ALLOW_PRIVATE_EGRESS` | all | `0` | let providers and sandbox egress reach private addresses |
@@ -113,7 +113,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_BUILDER_DIR` | api | the image's `harness-package-builder` package | the built-in harness package builder `init` installs |
 | `HG_TEMPLATE_DIR` | console | the image's `shell` package | the template every new harness starts from |
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
-| `HG_CONSOLE_KEY`, `HG_CONSOLE_PORT` | compose `console` | —, `8800` | the admin key the consoles use (written by `install.sh`); their port |
+| `HG_ADMIN_EMAIL` | `init`, `install.sh` | — | the first admin's login; `init --admin-email` names it too |
+| `HG_CONSOLE_PORT` | compose `console` | `8800` | the console's port (it holds no key: people sign in with their account) |
 | `HG_DEFAULT_<FIELD>` | api | see below | an organization's capacity unless an extension sets its own |
 
 Capacity fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: the box's processes), `pids` (1024),
@@ -124,7 +125,7 @@ Capacity fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: t
 
 ## Commands
 
-`harnessgateway serve --role api,gateway | api | gateway`, `node`, `migrate`, `init [--name NAME]`,
+`harnessgateway serve --role api,gateway | api | gateway`, `node`, `migrate`, `init --admin-email EMAIL [--name NAME]`,
 `node-token create [--pool P] [--uses N] [--ttl-days D]`, `keygen`, and `door` (started by the node, never by hand).
 
 ## Releasing
@@ -147,3 +148,5 @@ current commit: for a release that must be redone, never for a change (that is a
 | a host is refused inside the sandbox | the door answers `403` to `CONNECT` for hosts outside the org's and the harness's egress; the trace lists each connection and its verdict |
 | `hg_reason: invalid_output` | the package printed an event the OpenAI schema rejects; the error names the field |
 | the node exits at start | `HG_CA_FILE names no file` (mount it), `the API refused the join token` (the API needs the same `HG_NODE_JOIN_TOKEN`) |
+| a lost invitation link, a locked or forgotten password | an admin: `POST /v1/accounts/{id}/reset` (console: Access → Accounts → Reset password) prints a new link; with no admin left, `init` cannot help: reset through the database (`UPDATE accounts SET password_hash = NULL, status = 'invited'`) and invite again |
+| `403 … an admin, or a developer of the project may …` | the key or account lacks the role the route needs (SPEC §9.2); a developer in several projects names one with `HG-Project` |

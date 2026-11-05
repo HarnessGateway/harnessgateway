@@ -1,5 +1,6 @@
-"""What every router shares: who is asking (an extension's principal or an API key, the operator key, a node
-credential), bounded JSON bodies, uploads spooled to disk, the OpenAI error envelope, and the body-size guard."""
+"""What every router shares: who is asking (an extension's principal, an API key or a sign-in, the operator key or a
+platform admin, a node credential), bounded JSON bodies, uploads spooled to disk, the OpenAI error envelope, and the
+body-size guard."""
 from __future__ import annotations
 
 import contextlib
@@ -16,6 +17,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import UploadFile  # what request.form() yields (FastAPI's is a subclass)
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..domain.access import ADMIN, Principal
 from ..errors import ApiError, Forbidden, Invalid, TooLarge, Unauthenticated
 from ..limits import (
     CONTROL_BODY_MAX,
@@ -27,9 +29,11 @@ from ..limits import (
     REQUEST_BODY_MAX,
 )
 from ..services.platform import BLOB_ROUTE, Platform
-from ..services.principal import NodeIdentity, Principal
+from ..services.principal import NodeIdentity
 
 MULTIPART_OVERHEAD = 64 * KB
+OPERATOR = "operator"                  # the actor the operator key acts as
+UNKNOWN = "the credential is unknown, expired or revoked, or its organization is suspended"
 
 
 def platform(request: Request) -> Platform:
@@ -39,30 +43,77 @@ def platform(request: Request) -> Platform:
 def bearer(request: Request) -> str:
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer ") or not auth[7:].strip():
-        raise Unauthenticated("a credential is required: Authorization: Bearer <key>")
+        raise Unauthenticated("a credential is required: Authorization: Bearer <key or sign-in token>")
     return auth[7:].strip()
 
 
+def client(request: Request) -> str:
+    """Who signed in, for the sign-in row and the audit log: the address and the user agent."""
+    return f"{request.client.host if request.client else ''} {request.headers.get('user-agent', '')}".strip()[:200]
+
+
+async def signed_in(request: Request) -> dict[str, Any]:
+    """The sign-in behind the bearer: {token, account, memberships}. For the routes about one's own account."""
+    token = bearer(request)
+    found = await platform(request).accounts.authenticate(token)
+    if found is None:
+        raise Unauthenticated("a sign-in token is required here" if token.startswith("hg_") else UNKNOWN)
+    return {"token": token, **found}
+
+
 async def principal(request: Request) -> Principal:
+    """An extension's principal, an API key's, or a sign-in's in the organization it belongs to, addressing the project
+    `HG-Project` names (SPEC §9.3)."""
     plat = platform(request)
     p = await plat.extensions.authenticate(request)
-    if p is None:
-        p = await plat.keys.authenticate(bearer(request))
-    if p is None:
-        raise Unauthenticated("the API key is unknown or revoked, or its organization is suspended")
-    return p
+    if p is not None:
+        return p
+    secret, header = bearer(request), request.headers.get("hg-project")
+    p = await plat.keys.authenticate(secret)
+    if p is not None:
+        return await plat.projects.for_key(p, header)
+    found = await plat.accounts.authenticate(secret)
+    if found is None:
+        raise Unauthenticated(UNKNOWN)
+    account, memberships = found["account"], found["memberships"]
+    if not memberships:
+        raise Forbidden("the account belongs to no organization")
+    org_id, role = memberships[0]["org_id"], memberships[0]["role"]
+    project = await plat.projects.resolve(org_id, role, account["id"], header)
+    return Principal(org_id, f"account:{account['id']}", role, project, platform_admin=account["platform_admin"],
+                     account_id=account["id"], name=account["name"] or account["email"])
+
+
+async def anyone(request: Request) -> None:
+    """Any live credential, no project resolved: for what every caller may learn."""
+    plat = platform(request)
+    if await plat.extensions.authenticate(request) is not None:
+        return
+    secret = bearer(request)
+    if await plat.keys.authenticate(secret) is None and await plat.accounts.authenticate(secret) is None:
+        raise Unauthenticated(UNKNOWN)
 
 
 async def admin(request: Request) -> Principal:
     p = await principal(request)
-    p.require_admin()
+    if p.role != ADMIN:
+        raise Forbidden("an admin does this")
     return p
 
 
-async def operator(request: Request) -> None:
-    key = platform(request).settings.operator_key
-    if not key or not hmac.compare_digest(bearer(request).encode(), key.encode()):
-        raise Forbidden("the operator key does this")
+async def operator(request: Request) -> str:
+    """The platform scope (SPEC §9.4): the operator key, or a platform admin's sign-in. The actor, for the audit log."""
+    plat = platform(request)
+    secret = bearer(request)
+    key = plat.settings.operator_key
+    if key and hmac.compare_digest(secret.encode(), key.encode()):
+        return OPERATOR
+    found = await plat.accounts.authenticate(secret)
+    if found is None and await plat.keys.authenticate(secret) is None:
+        raise Unauthenticated(UNKNOWN)
+    if found is None or not found["account"]["platform_admin"]:
+        raise Forbidden("the platform's operator does this")
+    return f"account:{found['account']['id']}"
 
 
 async def node(request: Request) -> NodeIdentity:
@@ -77,6 +128,12 @@ async def read_json(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise Invalid("the request body is a JSON object")
     return body
+
+
+def only(body: dict[str, Any], *fields: str) -> None:
+    unknown = sorted(set(body) - set(fields))
+    if unknown:
+        raise Invalid(f"the fields are {', '.join(fields)}, not {', '.join(unknown)}", param=unknown[0])
 
 
 @contextlib.asynccontextmanager

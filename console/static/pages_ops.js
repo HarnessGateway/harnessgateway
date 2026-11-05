@@ -1,15 +1,14 @@
-// The deployer's console: the platform as infrastructure.
-import { api, date, esc, when } from "./api.js";
+// The platform console (SPEC §9.4): the platform as infrastructure, for platform admins.
+import { api, esc, when } from "./api.js";
 import { $, card, confirm, copy, fail, field, input, kv, modal, pill, pre, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
-import { usagePage, usersPage } from "./pages_user.js";
+import { auditPage, usagePage } from "./pages_user.js";
 
 export function nav() {
-  const mods = [{ mod: "Operations", items: [
+  const mods = [{ mod: "Platform", items: [
     { id: "health", label: "Health", icon: "grid" }, { id: "nodes", label: "Nodes & pools", icon: "nodes" },
     { id: "orgs", label: "Organizations", icon: "org" }, { id: "usage", label: "Platform usage", icon: "usage" },
     { id: "versions", label: "Versions", icon: "tag" }, { id: "config", label: "Configuration", icon: "cfg" },
-    { id: "audit", label: "Audit log", icon: "log" }] },
-    { mod: "Account", items: [{ id: "users", label: "Deployer users", icon: "user" }] }];
+    { id: "audit", label: "Audit log", icon: "log" }] }];
   for (const m of mods) for (const it of m.items) it.mod = m.mod;
   return mods;
 }
@@ -71,7 +70,8 @@ const orgs = { title: "Organizations", async render(el, params, me) {
       { h: "Sessions", cell: o => o.sessions }, { h: "Running", cell: o => o.running }, { h: "Warm", cell: o => o.boxes }, { h: "Observability", cell: o => pill(o.capacity.observability, "b") },
       { h: "Status", cell: o => statusPill(o.status) },
       { h: "", cls: "acts", cell: o => `<a class="btn2" href="/">Open as admin</a><button class="btn2" data-edit="${o.id}">Edit</button>` +
-        (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>`;
+        (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>` +
+    `<div class="card" style="margin-top:14px"><h2>Metrics</h2><p class="muted small">Prometheus scrapes <span class="mono">GET ${esc(me.api)}/internal/metrics</span> with the operator key (<span class="mono">HG_OPERATOR_KEY</span>) as the bearer.</p></div>`;
   el.addEventListener("click", async e => {
     const ed = e.target.closest("[data-edit]");
     if (ed) { editOrg(rows.find(o => o.id === ed.dataset.edit), () => rerender()); return; }
@@ -114,13 +114,6 @@ const config = { title: "Configuration", async render(el) {
 } };
 
 // ── Audit log ─────────────────────────────────────────────────────────────────────────────────────────────────────
-const audit = { title: "Audit log", async render(el) {
-  const rows = (await api("GET", "/audit")).data;
-  el.innerHTML = top("Audit log", "What the consoles did, newest first: sign-ins, user changes, every write to the platform.") +
-    `<div class="card">${table([{ h: "When", cell: r => date(r.at) }, { h: "User", cell: r => esc(r.user) }, { h: "Action", cell: r => `<span class="mono">${esc(r.action)}</span>` },
-      { h: "Detail", cell: r => `<span class="mono">${esc(Object.entries(r).filter(([k]) => !["at", "user", "action"].includes(k)).map(([k, v]) => `${k}=${v}`).join(" "))}</span>` }], rows, "Nothing yet.")}</div>`;
-} };
+const audit = auditPage("/internal/audit", "Every change of standing across the platform, newest first: the organizations' and the platform's own (node tokens, draining, capacity).");
 
-const users = usersPage("Deployer users", "Who can sign in to the deployer console.", [["deployer", "deployer"]]);
-
-export const pages = { health, nodes, orgs, usage, versions, config, audit, users };
+export const pages = { health, nodes, orgs, usage, versions, config, audit };
