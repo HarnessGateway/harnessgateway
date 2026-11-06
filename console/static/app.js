@@ -1,19 +1,21 @@
 // The console shell: the sidebar (modules and items, collapsible), the header, the account menu, and a hash router
-// that renders one page module into #content. Which app this is (user or ops) comes from <body data-app>.
+// that renders one page module into #content. Which app this is (the organization's or the platform's) comes from
+// <body data-app>. `me` is /api/me: the account, its role and its organization.
 import { api, esc } from "./api.js";
 import { $, I, fail, field, ic, modal, toast } from "./ui.js";
 
 const APP = document.body.dataset.app;             // "user" | "ops"
 const SIDE = `hg-console-side-${APP}`;
-const me = { name: "", role: "", platform: {}, ops: false, api: "" };
+const me = { account: {}, role: "", organization: {}, platform: {} };
 let pages = {}, nav = [];
 
 async function boot() {
   Object.assign(me, await api("GET", "/me"));
-  if (APP === "ops" && me.role !== "deployer") { location.href = "/"; return; }
+  me.name = me.account.name || me.account.email;
+  if (APP === "ops" && !me.account.platform_admin) { location.href = "/"; return; }
   const mod = await import(APP === "ops" ? "./pages_ops.js" : "./pages_user.js");
   pages = mod.pages; nav = mod.nav(me);
-  $("#brand").innerHTML = `<img class="logo" src="/static/mascot.png" alt=""><b>HarnessGateway${APP === "ops" ? " · Operations" : ""}</b>` +
+  $("#brand").innerHTML = `<img class="logo" src="/static/mascot.png" alt=""><b>HarnessGateway${APP === "ops" ? " · Platform" : ""}</b>` +
     `<button class="ib" id="sideclose" title="Hide the sidebar">${ic(I.side, 18)}</button>`;
   $("#sideopen").innerHTML = ic(I.side, 18);
   $("#sideclose").addEventListener("click", toggleSide); $("#sideopen").addEventListener("click", toggleSide);
@@ -51,7 +53,7 @@ async function route() {
   const page = pages[id] || pages[nav[0].items[0].id];
   renderNav();
   const label = nav.flatMap(m => m.items).find(it => it.id === (id === "drafts" ? "harnesses" : id));
-  $("#crumb").innerHTML = `${esc(APP === "ops" ? "Operations" : label && label.mod ? label.mod : "")} / <b>${esc(label ? label.label : page.title)}</b>` +
+  $("#crumb").innerHTML = `${esc(APP === "ops" ? "Platform" : label && label.mod ? label.mod : "")} / <b>${esc(label ? label.label : page.title)}</b>` +
     (params[0] && id !== "chat" ? ` / <b>${esc(params[0])}</b>` : "");
   const stale = $("#content"), el = stale.cloneNode(false);   // a fresh element: no listeners from the last page
   stale.replaceWith(el);
@@ -66,8 +68,8 @@ function accountMenu(e) {
   if (menu) { menu.remove(); return; }
   menu = document.createElement("div");
   menu.className = "menu";
-  menu.innerHTML = `<div class="hd">${esc(me.name)} · ${esc(me.role)}</div>` +
-    (APP === "user" && me.ops ? `<button data-go="/ops">Deployer console</button>` : "") +
+  menu.innerHTML = `<div class="hd">${esc(me.account.email)} · ${esc(me.role)}${me.account.platform_admin ? " · platform admin" : ""}</div>` +
+    (APP === "user" && me.account.platform_admin ? `<button data-go="/ops">Platform console</button>` : "") +
     (APP === "ops" ? `<button data-go="/">Organization console</button>` : "") +
     `<button data-pw>Change password</button><button data-out>Sign out</button>`;
   $("#who").appendChild(menu);
@@ -81,8 +83,8 @@ function accountMenu(e) {
 export function changePassword() {
   return modal({ title: "Change password", submit: "Change",
     body: field("Current password", `<input name="current" type="password" autocomplete="current-password" required>`) +
-          field("New password", `<input name="new" type="password" autocomplete="new-password" minlength="12" required>`, "at least 12 characters"),
-    onSubmit: async d => { await api("POST", "/password", d); toast("Password changed", "ok"); } });
+          field("New password", `<input name="new" type="password" autocomplete="new-password" minlength="12" required>`, "at least 12 characters; every other sign-in of yours ends"),
+    onSubmit: async d => { await api("POST", "/v1/auth/password", d); toast("Password changed", "ok"); } });
 }
 
 boot().catch(fail);

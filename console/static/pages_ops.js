@@ -1,20 +1,22 @@
-// The deployer's console: the platform as infrastructure.
-import { api, date, esc, when } from "./api.js";
-import { $, card, confirm, copy, fail, field, input, kv, modal, pill, pre, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
-import { usagePage, usersPage } from "./pages_user.js";
+// The platform console (SPEC §9.4): the platform as infrastructure, for platform admins.
+import { api, esc, when } from "./api.js";
+import { $, card, confirm, copy, fail, field, input, kv, modal, pill, pre, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { auditPage, usagePage } from "./pages_user.js";
 
 export function nav() {
-  const mods = [{ mod: "Operations", items: [
+  const mods = [{ mod: "Platform", items: [
     { id: "health", label: "Health", icon: "grid" }, { id: "nodes", label: "Nodes & pools", icon: "nodes" },
     { id: "orgs", label: "Organizations", icon: "org" }, { id: "usage", label: "Platform usage", icon: "usage" },
     { id: "versions", label: "Versions", icon: "tag" }, { id: "config", label: "Configuration", icon: "cfg" },
-    { id: "audit", label: "Audit log", icon: "log" }] },
-    { mod: "Account", items: [{ id: "users", label: "Deployer users", icon: "user" }] }];
+    { id: "audit", label: "Audit log", icon: "log" }] }];
   for (const m of mods) for (const it of m.items) it.mod = m.mod;
   return mods;
 }
 const top = (title, lead, acts = "") => `<div class="top"><div><h1>${esc(title)}</h1><p class="lead">${esc(lead)}</p></div><div class="acts">${acts}</div></div>`;
 const ok = (b, text) => `<span class="dot" style="background:var(--${b ? "ok" : "bad"})"></span>${esc(text)}`;
+// The API as another host reaches it. The console knows only its own upstream (inside compose, a name no other host
+// resolves), so the guess is this page's host on the API's default port; the operator corrects it where it is used.
+const apiGuess = () => `${location.protocol}//${location.hostname}:8000`;
 
 // ── Health ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const health = { title: "Health", async render(el) {
@@ -44,10 +46,12 @@ const nodes = { title: "Nodes & pools", async render(el, params, me) {
     (pools.length > 1 ? `<p class="muted small" style="margin-top:10px">Pools: ${pools.map(p => esc(p || "default")).join(", ")}. An organization pinned to a pool runs only there.</p>` : "");
   $("#token", el).addEventListener("click", () => modal({ title: "Join token", submit: "Create", body:
     field("Pool", input("pool", "", 'placeholder="(default)"'), "the pool the node joins; empty for the default pool") + field("Label", input("label", "", 'placeholder="rack-2"')) +
-    `<div class="row">${field("Uses", input("uses", "1", 'type="number" min="1"'))}${field("Valid for (days)", input("ttl_days", "7", 'type="number" min="1"'))}</div>`,
+    `<div class="row">${field("Uses", input("uses", "1", 'type="number" min="1"'))}${field("Valid for (days)", input("ttl_days", "7", 'type="number" min="1"'))}</div>` +
+    field("API URL", input("api", apiGuess(), 'type="url" required'), "the API as the new host reaches it: this host's address and HG_HTTP_PORT"),
     onSubmit: async d => {
+      const base = d.api.trim().replace(/\/$/, "");
       const r = await api("POST", "/internal/node-tokens", { pool: d.pool, label: d.label, uses: +d.uses, ttl_days: +d.ttl_days });
-      const line = `docker run -d --name harnessgateway-node --restart unless-stopped --user 0:0 \\\n  -e HG_API_URL=${me.api} -e HG_GATEWAY_URL=${me.api}/gateway \\\n  -e HG_NODE_JOIN_TOKEN=${r.token}${d.pool ? ` -e HG_NODE_POOL=${d.pool}` : ""} -e HG_UPLINK_NETWORK=bridge \\\n  -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \\\n  ghcr.io/harnessgateway/harnessgateway:${me.platform.version || "latest"} node`;
+      const line = `docker run -d --name harnessgateway-node --restart unless-stopped --user 0:0 \\\n  -e HG_API_URL=${base} -e HG_GATEWAY_URL=${base}/gateway \\\n  -e HG_NODE_JOIN_TOKEN=${r.token}${d.pool ? ` -e HG_NODE_POOL=${d.pool}` : ""} -e HG_UPLINK_NETWORK=bridge \\\n  -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \\\n  ghcr.io/harnessgateway/harnessgateway:${me.platform.version || "latest"} node`;
       then(() => modal({ title: "Run this on the new host", wide: true, body: `<p>Docker and gVisor must be installed (deploy/install.sh does both). The token is shown once.</p>${pre(line)}`, submit: "Copy", onSubmit: () => copy(line) }));
     } }));
   el.addEventListener("click", async e => {
@@ -64,15 +68,26 @@ const CAP = [["vcpus", "vCPUs per sandbox", "number", "0.5"], ["memory_mb", "Mem
   ["turn_timeout_s", "Turn timeout (s, 0: none)", "number", "1"], ["retention_days", "Retention (days, 0: keep)", "number", "1"], ["node_pool", "Node pool", "text", ""]];
 const orgs = { title: "Organizations", async render(el, params, me) {
   const rows = (await api("GET", "/internal/orgs")).data;
-  const saas = (me.platform.extensions || []).length > 0;
-  el.innerHTML = top("Organizations", saas ? "Every tenant: what it may use, what it is using, and a way in." : "Self-hosted runs one organization. Its capacity is what each of its sandboxes gets; the SaaS extension adds organizations here.") +
+  el.innerHTML = top("Organizations", "Every organization on this platform: what it may use and what it is using. Its capacity is what each of its sandboxes gets. Self-hosted runs one.") +
     `<div class="card">${table([{ h: "Organization", cell: o => `<b>${esc(o.name)}</b><br><span class="mono">${esc(o.id)}</span>` },
       { h: "Capacity", cell: o => `${o.capacity.vcpus} vCPU · ${o.capacity.memory_mb} MB · ${o.capacity.max_sandboxes || "∞"} sandboxes · ${o.capacity.max_running_turns || "∞"} turns${o.capacity.node_pool ? ` · pool ${esc(o.capacity.node_pool)}` : ""}` },
       { h: "Sessions", cell: o => o.sessions }, { h: "Running", cell: o => o.running }, { h: "Warm", cell: o => o.boxes }, { h: "Observability", cell: o => pill(o.capacity.observability, "b") },
       { h: "Status", cell: o => statusPill(o.status) },
-      { h: "", cls: "acts", cell: o => `<a class="btn2" href="/">Open as admin</a><button class="btn2" data-edit="${o.id}">Edit</button>` +
-        (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>`;
+      { h: "", cls: "acts", cell: o => `<button class="btn2" data-invite="${o.id}" data-name="${esc(o.name)}">Invite admin</button><button class="btn2" data-edit="${o.id}">Edit</button>` +
+        (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>` +
+    `<div class="card" style="margin-top:14px"><h2>Metrics</h2><p class="muted small">Prometheus scrapes <span class="mono">GET ${esc(apiGuess())}/internal/metrics</span> (the API as the scraper reaches it) with the operator key (<span class="mono">HG_OPERATOR_KEY</span>) as the bearer.</p></div>`;
   el.addEventListener("click", async e => {
+    const inv = e.target.closest("[data-invite]");
+    if (inv) {
+      modal({ title: `Invite an admin of ${inv.dataset.name}`, submit: "Invite", body:
+        field("Email", input("email", "", 'type="email" required')) + field("Name", input("name", "")),
+        onSubmit: async d => {
+          const a = await api("POST", `/internal/orgs/${inv.dataset.invite}/accounts`, { email: d.email, name: d.name });
+          then(() => reveal(`Invitation for ${a.email}`, "Invitation link", a.invitation, (a.sent ? `Sent to ${a.email}. ` : "") +
+            "The link is shown once, works once and expires in seven days; the person chooses their password with it."));
+        } });
+      return;
+    }
     const ed = e.target.closest("[data-edit]");
     if (ed) { editOrg(rows.find(o => o.id === ed.dataset.edit), () => rerender()); return; }
     const st = e.target.closest("[data-status]");
@@ -114,13 +129,6 @@ const config = { title: "Configuration", async render(el) {
 } };
 
 // ── Audit log ─────────────────────────────────────────────────────────────────────────────────────────────────────
-const audit = { title: "Audit log", async render(el) {
-  const rows = (await api("GET", "/audit")).data;
-  el.innerHTML = top("Audit log", "What the consoles did, newest first: sign-ins, user changes, every write to the platform.") +
-    `<div class="card">${table([{ h: "When", cell: r => date(r.at) }, { h: "User", cell: r => esc(r.user) }, { h: "Action", cell: r => `<span class="mono">${esc(r.action)}</span>` },
-      { h: "Detail", cell: r => `<span class="mono">${esc(Object.entries(r).filter(([k]) => !["at", "user", "action"].includes(k)).map(([k, v]) => `${k}=${v}`).join(" "))}</span>` }], rows, "Nothing yet.")}</div>`;
-} };
+const audit = auditPage("/internal/audit", "Every change of standing across the platform, newest first: the organizations' and the platform's own (node tokens, draining, capacity).");
 
-const users = usersPage("Deployer users", "Who can sign in to the deployer console.", [["deployer", "deployer"]]);
-
-export const pages = { health, nodes, orgs, usage, versions, config, audit, users };
+export const pages = { health, nodes, orgs, usage, versions, config, audit };

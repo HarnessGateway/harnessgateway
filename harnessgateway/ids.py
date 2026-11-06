@@ -11,8 +11,10 @@ from .domain.names import NAME
 from .errors import Invalid, NotFound
 
 PREFIX = {"org": "org", "key": "key", "provider": "prv", "harness": "hns", "session": "cntr", "turn": "resp",
-          "file": "file", "node": "node", "op": "cop", "node_token": "njt", "usage": "use", "trace": "trc"}
-SECRET = {"key": "hg_", "node": "hgn_", "node_token": "hgj_", "turn": "hgt_", "door": "hgd_", "placeholder": "hgs_"}
+          "file": "file", "node": "node", "op": "cop", "node_token": "njt", "usage": "use", "trace": "trc",
+          "account": "acct", "sign_in": "sgn", "audit": "aud"}
+SECRET = {"key": "hg_", "node": "hgn_", "node_token": "hgj_", "turn": "hgt_", "door": "hgd_", "placeholder": "hgs_",
+          "sign_in": "hgl_", "invitation": "hgi_"}
 _SHAPE = re.compile(r"[a-z]+_[0-9a-f]{32}")
 _ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 

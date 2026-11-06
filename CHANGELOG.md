@@ -7,6 +7,53 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [2.4.0]
+
+### Added
+
+- Identity in the core (SPEC §9). Accounts are people: an email, a scrypt-hashed password, a status, a membership in
+  the organization with one of two roles, `admin` or `developer`. An admin creates an account, which arrives invited
+  with a one-time token the person activates by setting a password; the same token resets a password; no default
+  password exists anywhere. Ten failed sign-ins lock an account for fifteen minutes. A sign-in is an opaque, hashed,
+  expiring, revocable bearer token the API resolves to a principal exactly as it does a key. `init` creates the first
+  admin and prints its invitation once.
+- Invitations by email: with `HG_SMTP_URL` and `HG_MAIL_FROM` set, an invited account and a password reset receive their
+  one-time link (built on `HG_CONSOLE_URL`) by mail; the link is returned to the admin once either way.
+- API keys are the unit an application is built around: a required label names the app, a role (`admin` or
+  `developer`), a `run_only` flag for what an application holds, an optional expiry. A session records the key that
+  created it, so an app's sessions and usage are read by its key (`GET /v1/usage?group_by=created_by`).
+- `Principal.require(resource, action)`: every permission check in one domain table, called by the service that owns
+  the resource; a refusal names the role that may.
+- The request's `user` is recorded on turns and sessions: `GET /v1/containers?user=` lists an application's end user's
+  sessions and `GET /v1/usage?group_by=user` their usage, so an application serves many people without the platform
+  holding their accounts.
+- The platform scope is held by people through a `platform_admin` flag on their account; the operator key remains for
+  automation and break-glass. `/internal` routes for people accept either.
+- Audit in the core: every change of standing (sign-ins and their failures, accounts, keys, providers, egress,
+  harnesses) is a row an admin reads at `GET /v1/audit` and the platform scope at
+  `GET /internal/audit`.
+- `GET /internal/metrics`: the platform's state in Prometheus text exposition (queue, running turns, nodes and slots,
+  warm sandboxes, turns by status and reason over 24 hours, usage totals, gateway calls by status).
+
+### Changed
+
+- The console holds no key: people sign in with their platform account, and every call the console relays carries
+  that sign-in. The console's own user file, `init` command and `HG_CONSOLE_KEY` are gone. Developers see Harnesses,
+  Chat, Playground, their keys, Sessions and Usage; admins also Providers, Egress, Accounts and the Audit log; platform
+  admins the platform console, where the deployer invites an organization's admin (`POST /internal/orgs/{id}/accounts`).
+- API keys have a role in place of a scope (`admin` for an organization key, `developer` otherwise).
+- `harnessgateway init --admin-email EMAIL` (or `HG_ADMIN_EMAIL`; `install.sh` asks) creates the first admin and prints
+  its invitation link and an admin key, once.
+- The schema is one migration again, the model as it stands: a 2.4.0 install starts from an empty database.
+- `init` checks the admin's email before it creates anything, so a run without one leaves no organization that cannot
+  get its admin.
+- The platform console asks for the API's address as a new host reaches it when it writes the `docker run` line for a
+  join token, and names it for the Prometheus scrape; the console's own upstream is not that address.
+- Usage shows memory and storage under one GiB-hour in MiB-hours instead of rounding to 0.
+- Tests: the services on a real Postgres and the console in a browser on a real API run in CI (`tests/services`,
+  `tests/e2e`); `tests/integration/test_secrets.py` proves on a live stack that a provider key, a harness secret and a
+  caller's MCP credential come out nowhere.
+
 ## [2.3.2]
 
 ### Fixed

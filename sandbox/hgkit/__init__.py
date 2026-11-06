@@ -41,7 +41,6 @@ __all__ = ["Call", "Emitter", "Provider", "Request", "Run", "State", "check"]
 
 FILE_PARTS = ("input_file", "input_image")
 VERBS = {"create_file": "Created", "update_file": "Edited", "delete_file": "Deleted"}
-VERBS = {"create_file": "Created", "update_file": "Edited", "delete_file": "Deleted"}
 
 
 def check(text: str) -> Any:

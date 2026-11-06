@@ -1,4 +1,4 @@
-"""Harnesses: packages installed in an organization under a name, with its settings and secret values (SPEC §5, §14.2).
+"""Harnesses: packages installed in an organization under a name, with its settings and secret values (SPEC §5, §14.3).
 
 A package is content-addressed and stored once, whoever installs it. A harness points at the package it was installed
 from; a session runs the package it started on, whatever the harness points at later. Packages arrive as uploads: an
@@ -13,11 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from .. import ids
-from ..db import Database
+from ..db import Database, Tx
 from ..domain import package as pkg
+from ..domain.access import Principal
 from ..domain.manifest import Manifest
 from ..errors import Invalid, NotFound
 from ..limits import SETTING_VALUE_MAX
+from .audit import Audit
 from .objects import Objects
 from .pages import ts
 from .vault import Vault
@@ -49,9 +51,17 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
             "created_at": ts(row["created_at"]), "updated_at": ts(row["updated_at"])}
 
 
+async def find(tx: Tx, name: str) -> dict[str, Any]:
+    """The installed harness `name` names, in the transaction's organization."""
+    row = await tx.one("SELECT * FROM harnesses WHERE name = %s", name)
+    if not row:
+        raise NotFound(f"no harness {name} installed", param="model", code="model_not_found")
+    return row
+
+
 class Harnesses:
-    def __init__(self, db: Database, objects: Objects, vault: Vault):
-        self.db, self.objects, self.vault = db, objects, vault
+    def __init__(self, db: Database, objects: Objects, vault: Vault, audit: Audit):
+        self.db, self.objects, self.vault, self.audit = db, objects, vault, audit
 
     # ── publishing a package ───────────────────────────────────────────────────────────────────────────────────────
     async def publish(self, folder: Path, owner: str | None) -> tuple[str, Manifest]:
@@ -69,9 +79,15 @@ class Harnesses:
         return digest, manifest
 
     # ── installing ─────────────────────────────────────────────────────────────────────────────────────────────────
-    async def install(self, org_id: str, archive: bytes) -> dict[str, Any]:
-        """Install or upgrade from a package archive. Settings and secret values the new version still declares are
-        kept."""
+    async def install(self, p: Principal, archive: bytes) -> dict[str, Any]:
+        """Install or upgrade from a package archive."""
+        p.require("harnesses", "install")
+        view = await self._install(p.org_id, archive)
+        await self.audit.write(p.org_id, p.actor, "harness.install", view["id"], {"name": view["name"], "digest": view["digest"]})
+        return view
+
+    async def _install(self, org_id: str, archive: bytes) -> dict[str, Any]:
+        """Settings and secret values the new version still declares are kept."""
         with tempfile.TemporaryDirectory(prefix="hg-upload-") as tmp:
             folder = Path(tmp) / "p"
             await asyncio.to_thread(pkg.unpack, archive, folder)
@@ -85,8 +101,9 @@ class Harnesses:
                          "manifest = EXCLUDED.manifest, settings = EXCLUDED.settings, secrets = EXCLUDED.secrets, "
                          "updated_at = now()", ids.new("harness"), org_id, manifest.name, digest, manifest.model_dump(),
                          settings, secrets)
+            row = await tx.get("SELECT * FROM harnesses WHERE name = %s", manifest.name)
         log.info("installed %s for %s (%s)", manifest.name, org_id, digest[:12])
-        return await self.get(org_id, manifest.name)
+        return _view(row)
 
     async def install_folder(self, org_id: str, folder: Path) -> dict[str, Any]:
         """Install or upgrade from a package folder on this host: the built-in harness package builder, at `init`."""
@@ -96,34 +113,33 @@ class Harnesses:
             copy = Path(tmp) / "p"
             shutil.copytree(folder, copy, ignore=skip)
             data = await asyncio.to_thread(pkg.pack, copy)
-        return await self.install(org_id, data)
+        return await self._install(org_id, data)
 
     # ── reading ────────────────────────────────────────────────────────────────────────────────────────────────────
-    async def row(self, org_id: str, name: str) -> dict[str, Any]:
-        async with self.db.tenant(org_id) as tx:
-            row = await tx.one("SELECT * FROM harnesses WHERE name = %s", name)
-        if not row:
-            raise NotFound(f"no harness {name} installed", param="model", code="model_not_found")
-        return row
+    async def row(self, p: Principal, name: str) -> dict[str, Any]:
+        p.require("harnesses", "read")
+        async with self.db.tenant(p.org_id) as tx:
+            return await find(tx, name)
 
-    async def get(self, org_id: str, name: str) -> dict[str, Any]:
-        return _view(await self.row(org_id, name))
+    async def get(self, p: Principal, name: str) -> dict[str, Any]:
+        return _view(await self.row(p, name))
 
-    async def list(self, org_id: str) -> list[dict[str, Any]]:
-        async with self.db.tenant(org_id) as tx:
-            return [_view(r) for r in await tx.all("SELECT * FROM harnesses ORDER BY name")]
+    async def list(self, p: Principal) -> list[dict[str, Any]]:
+        p.require("harnesses", "read")
+        async with self.db.tenant(p.org_id) as tx:
+            return [_view(r) for r in await tx.all("SELECT * FROM harnesses ORDER BY name, created_at")]
 
     # ── reading a package ──────────────────────────────────────────────────────────────────────────────────────────
-    async def _unpacked(self, org_id: str, name: str) -> Path:
+    async def _unpacked(self, p: Principal, name: str) -> Path:
         """The installed package's archive unpacked into a fresh folder: what the console shows and edits."""
-        row = await self.row(org_id, name)
+        row = await self.row(p, name)
         folder = Path(tempfile.mkdtemp(prefix="hg-read-")) / "p"
         await asyncio.to_thread(pkg.unpack, await self.objects.get(archive_key(row["digest"])), folder)
         return folder
 
-    async def files(self, org_id: str, name: str) -> Files:
+    async def files(self, p: Principal, name: str) -> Files:
         """Every file of the installed package: path, size and executable bit."""
-        folder = await self._unpacked(org_id, name)
+        folder = await self._unpacked(p, name)
         try:
             out = []
             for rel, path in pkg.entries(folder):
@@ -133,28 +149,31 @@ class Harnesses:
         finally:
             shutil.rmtree(folder.parent, ignore_errors=True)
 
-    async def file(self, org_id: str, name: str, rel: str) -> bytes:
+    async def file(self, p: Principal, name: str, rel: str) -> bytes:
         clean = pkg.clean_member(rel)
-        folder = await self._unpacked(org_id, name)
+        folder = await self._unpacked(p, name)
         try:
-            p = folder / clean
-            if not p.is_file():
+            path = folder / clean
+            if not path.is_file():
                 raise NotFound(f"{name} has no file {rel}", param="path")
-            return p.read_bytes()
+            return path.read_bytes()
         finally:
             shutil.rmtree(folder.parent, ignore_errors=True)
 
-    async def uninstall(self, org_id: str, name: str) -> None:
-        async with self.db.tenant(org_id) as tx:
-            if not await tx.run("DELETE FROM harnesses WHERE name = %s", name):
-                raise NotFound(f"no harness {name}")
+    async def uninstall(self, p: Principal, name: str) -> None:
+        p.require("harnesses", "uninstall")
+        async with self.db.tenant(p.org_id) as tx:
+            row = await find(tx, name)
+            await tx.run("DELETE FROM harnesses WHERE id = %s", row["id"])
+        await self.audit.write(p.org_id, p.actor, "harness.uninstall", row["id"], {"name": name})
 
     # ── configuring ────────────────────────────────────────────────────────────────────────────────────────────────
-    async def configure(self, org_id: str, name: str, *, settings: object = None, secrets: object = None,
+    async def configure(self, p: Principal, name: str, *, settings: object = None, secrets: object = None,
                         default_provider: object = None, default_model: object = None) -> dict[str, Any]:
         """Each setting or secret given is set (a string) or cleared (null); the rest are kept. Secret values are
         sealed and never shown again."""
-        row = await self.row(org_id, name)
+        p.require("harnesses", "configure")
+        row = await self.row(p, name)
         m = Manifest.model_validate(row["manifest"])
         current_settings, current_secrets = dict(row["settings"]), dict(row["secrets"])
         for what, given, declared in (("settings", settings, m.settings), ("secrets", secrets, m.secrets)):
@@ -176,8 +195,8 @@ class Harnesses:
             if v is None:
                 current_secrets.pop(k, None)
             else:
-                current_secrets[k] = await self.vault.seal(org_id, secret_context(name, k), v)
-        async with self.db.tenant(org_id) as tx:
+                current_secrets[k] = await self.vault.seal(p.org_id, secret_context(name, k), v)
+        async with self.db.tenant(p.org_id) as tx:
             if default_provider:
                 ids.check_name(default_provider, "provider")
                 if not await tx.one("SELECT 1 FROM providers WHERE name = %s", default_provider):
@@ -185,9 +204,14 @@ class Harnesses:
             if default_model is not None and (not isinstance(default_model, str) or len(default_model) > 200):
                 raise Invalid("default_model is a model name of at most 200 characters", param="default_model")
             await tx.run("UPDATE harnesses SET settings = %s, secrets = %s, default_provider = coalesce(%s, default_provider), "
-                         "default_model = coalesce(%s, default_model), updated_at = now() WHERE name = %s",
-                         current_settings, current_secrets, default_provider, default_model, name)
-        return await self.get(org_id, name)
+                         "default_model = coalesce(%s, default_model), updated_at = now() WHERE id = %s",
+                         current_settings, current_secrets, default_provider, default_model, row["id"])
+            row = await tx.get("SELECT * FROM harnesses WHERE id = %s", row["id"])
+        await self.audit.write(p.org_id, p.actor, "harness.configure", row["id"],
+                               {"name": name, "settings": sorted((settings or {}).keys()),  # type: ignore[attr-defined]
+                                "secrets": sorted((secrets or {}).keys()),  # type: ignore[attr-defined]
+                                "default_provider": default_provider, "default_model": default_model})
+        return _view(row)
 
     async def open_secrets(self, org_id: str, name: str, sealed: dict[str, str]) -> dict[str, str]:
         return {k: await self.vault.open(org_id, secret_context(name, k), v) for k, v in sealed.items()}

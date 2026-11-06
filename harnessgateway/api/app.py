@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from .. import __version__
 from ..errors import ApiError, Invalid
 from ..services.platform import Platform
-from . import internal, manage, responses, storage
+from . import identity, internal, manage, responses, storage
 from .http import BodyLimit, error_response
 
 log = logging.getLogger("harnessgateway.api")
@@ -72,7 +72,7 @@ def create_api(plat: Platform, *, background: bool = True) -> FastAPI:
             return JSONResponse({"ok": False, "database": type(e).__name__}, status_code=503)
         return JSONResponse({"ok": True})
 
-    for module in (responses, storage, manage, internal):
+    for module in (responses, storage, manage, identity, internal):
         app.include_router(module.router)
     for router in plat.extensions.routers():
         app.include_router(router)

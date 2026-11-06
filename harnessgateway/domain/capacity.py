@@ -1,5 +1,5 @@
 """An organization's capacity (SPEC §9): what each of its sandboxes gets and how many it may hold. Self-hosted takes the
-defaults from configuration; a SaaS sets them per organization."""
+defaults from configuration; the platform scope or an extension sets them per organization."""
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal

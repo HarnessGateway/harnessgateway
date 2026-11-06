@@ -1,6 +1,6 @@
-"""What an operator sees of the whole platform (SPEC §14.3): health, nodes, every organization, usage across them,
-the running configuration and versions, and one action an operator needs on a session (evicting its warm box).
-Reads cross organizations, so everything here runs on the platform path, behind the operator key."""
+"""What the platform scope sees of the whole platform (SPEC §9.4, §14.4): health, nodes, every organization, usage
+across them, the running configuration and versions, Prometheus metrics, and one action an operator needs on a session
+(evicting its warm box). Reads cross organizations, so everything here runs on the platform path."""
 from __future__ import annotations
 
 import time
@@ -56,6 +56,29 @@ class Operations:
             {"failed": sum(int(r["count"]) for r in day if r["status"] == "failed")}
         doc["failures_24h"] = {r["hg_reason"] or "harness": int(r["count"]) for r in day if r["status"] == "failed"}
         return doc
+
+    async def metrics(self) -> str:
+        """The platform's gauges in Prometheus text exposition: what a scraper reads at GET /internal/metrics (SPEC §11)."""
+        h = await self.health()
+        lines = [f'hg_up{{version="{__version__}"}} {int(h["database"]["ok"] and h.get("objects", {}).get("ok", False))}']
+        if h["database"]["ok"]:
+            n, q = h["nodes"], h["queue"]
+            lines += [f"hg_nodes_total {n['count']}", f"hg_nodes_live {n['live']}", f"hg_node_slots {n['slots']}",
+                      f"hg_turns_running {n['running']}", f"hg_sandboxes_warm {n['warm']}", f"hg_turns_queued {q['queued']}",
+                      f"hg_queue_oldest_seconds {q['oldest_s']}"]
+            lines += [f'hg_turns_24h{{status="{k}"}} {v}' for k, v in sorted(h["turns_24h"].items())]
+            lines += [f'hg_failures_24h{{reason="{k}"}} {v}' for k, v in sorted(h["failures_24h"].items())]
+            async with self.db.platform() as tx:
+                orgs = await tx.all("SELECT o.name, (SELECT count(*) FROM sessions s WHERE s.org_id = o.id AND s.status = "
+                                    "'active') AS sessions, (SELECT count(*) FROM turns t WHERE t.org_id = o.id AND t.status = "
+                                    "'in_progress') AS running FROM orgs o ORDER BY o.name")
+                people = await tx.get("SELECT count(*) FILTER (WHERE status = 'active') AS active, count(*) AS total "
+                                      "FROM accounts")
+            for o in orgs:
+                lines += [f'hg_org_sessions{{org="{o["name"]}"}} {int(o["sessions"])}',
+                          f'hg_org_turns_running{{org="{o["name"]}"}} {int(o["running"])}']
+            lines += [f"hg_accounts_total {int(people['total'])}", f"hg_accounts_active {int(people['active'])}"]
+        return "\n".join(lines) + "\n"
 
     async def nodes(self) -> dict[str, Any]:
         async with self.db.platform() as tx:

@@ -85,6 +85,7 @@ class Database:
 
     @asynccontextmanager
     async def tenant(self, org_id: str) -> AsyncIterator[Tx]:
+        """One organization's rows (SPEC §9.1)."""
         assert org_id.startswith("org_"), "a tenant transaction names an organization"
         async with self._pool.connection() as cx, cx.transaction():
             await cx.execute("SELECT set_config('hg.org', %s, true), set_config('hg.scope', 'tenant', true)", (org_id,))

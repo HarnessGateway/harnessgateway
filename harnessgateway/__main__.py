@@ -4,7 +4,7 @@
     harnessgateway node                         a node: runs sandboxes on this host's Docker with gVisor
     harnessgateway door                         a sandbox's door (started by the node)
     harnessgateway migrate                      apply the schema migrations
-    harnessgateway init                         the self-hosted organization and its first admin key (once)
+    harnessgateway init --admin-email EMAIL     the self-hosted organization, its first admin and an admin key (once)
     harnessgateway node-token create            a join token for nodes of a pool
     harnessgateway keygen                       fresh values for HG_SECRET_KEY, HG_OPERATOR_KEY, HG_NODE_JOIN_TOKEN
 
@@ -18,6 +18,7 @@ import base64
 import contextlib
 import json
 import logging
+import os
 import secrets
 import signal
 import sys
@@ -105,9 +106,14 @@ async def admin(args: argparse.Namespace) -> None:
         if args.command == "migrate":
             print(json.dumps({"ok": True}))
         elif args.command == "init":
-            org, key = await plat.init(args.name)
-            print(json.dumps({"organization": org["id"], "name": org["name"], "admin_key": key,
-                              "note": None if key else "already initialized: no new key"}, indent=2))
+            out = await plat.init(args.name, args.admin_email)
+            doc = {"organization": out["organization"]["id"], "name": out["organization"]["name"]}
+            if "admin" in out:
+                doc |= {"admin_email": out["admin"]["email"], "invitation": out["admin"]["invitation"],
+                        "invitation_sent": out["admin"]["sent"], "admin_key": out["admin_key"]}
+            else:
+                doc["note"] = out["note"]
+            print(json.dumps(doc, indent=2))
         elif args.command == "node-token":
             token = await plat.scheduler.create_token(args.pool, args.label, args.uses, args.ttl_days)
             print(json.dumps({"token": token, "pool": args.pool}, indent=2))
@@ -125,7 +131,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("door", add_help=False)
     sub.add_parser("migrate")
     sub.add_parser("keygen")
-    sub.add_parser("init").add_argument("--name", default="default")
+    p = sub.add_parser("init")
+    p.add_argument("--name", default="default")
+    p.add_argument("--admin-email", default=os.environ.get("HG_ADMIN_EMAIL", ""),
+                   help="the first admin's login (or HG_ADMIN_EMAIL); the invitation that activates it is printed once")
     p = sub.add_parser("node-token")
     p.add_argument("action", choices=["create"])
     p.add_argument("--pool", default="")

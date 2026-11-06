@@ -2,43 +2,19 @@
 
     HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_... .venv/bin/pytest -q tests/integration
 
-These tests install `shell` from `packages/shell` (upgrading it if installed), install and remove a harness
-`hg-test-seeds`, and set the organization's egress (to `*.npmjs.org`, `!evil.npmjs.org`, `mcp.hg-test.dev`)."""
-import io
+HG_TEST_KEY is an admin key (conftest.py installs `shell` and sets the organization's egress to `*.npmjs.org`,
+`!evil.npmjs.org`, `mcp.hg-test.dev`). The tests also install and remove a harness `hg-test-seeds`."""
 import json
 import os
-import tarfile
 import time
-from pathlib import Path
 
 import httpx
 import pytest
 
+from .conftest import seeded_archive
+
 pytestmark = pytest.mark.skipif(not os.environ.get("HG_TEST_STACK"), reason="needs a live stack (HG_TEST_STACK=1)")
 PLACEHOLDER_LEN = len("hgs_") + 32
-
-
-@pytest.fixture(scope="module")
-def api():
-    with httpx.Client(base_url=os.environ.get("HG_TEST_URL", "http://localhost:8000"),
-                      headers={"authorization": f"Bearer {os.environ['HG_TEST_KEY']}"}, timeout=600) as c:
-        r = c.put("/v1/egress", json={"egress": ["*.npmjs.org", "!evil.npmjs.org", "mcp.hg-test.dev"]})
-        r.raise_for_status()
-        r = c.post("/v1/harnesses", files={"package": ("shell.tgz", pack(SHELL))})
-        assert r.status_code == 200, r.text
-        yield c
-
-
-SHELL = Path(__file__).resolve().parents[2] / "packages" / "shell"
-
-
-def pack(folder: Path) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for p in sorted(folder.rglob("*")):
-            if p.is_file() and "__pycache__" not in p.parts:
-                tar.add(p, arcname=p.relative_to(folder).as_posix())
-    return buf.getvalue()
 
 
 def turn(api: httpx.Client, body: dict) -> dict:
@@ -155,26 +131,6 @@ def test_cancel_stops_a_running_turn(api):
             break
         time.sleep(0.2)
     assert got["status"] == "cancelled" and got["metadata"]["hg_reason"] == "cancelled"
-
-
-def seeded_archive() -> bytes:
-    """The shell package under another name, with seeds, a setting, a secret and an MCP server: what an organization's
-    own package adds to a CLI."""
-    manifest = {"contract": 1, "name": "hg-test-seeds", "version": "test",
-                "settings": {"GREETING": {"description": "shown", "default": "hello"}},
-                "secrets": {"T": {"description": "an mcp token", "hosts": ["mcp.hg-test.dev"]}},
-                "mcp": {"t": {"url": "https://mcp.hg-test.dev/mcp", "headers": {"Authorization": "Bearer ${T}"}}}}
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        files = [("harness.json", json.dumps(manifest).encode()), ("seeds/home/AGENTS.md", b"be kind\n"),
-                 ("seeds/workspace/hello.txt", b"from the seeds\n")]
-        files += [(n, (SHELL / n).read_bytes()) for n in ("install", "run")]
-        for path, data in files:
-            info = tarfile.TarInfo(path)
-            info.size = len(data)
-            info.mode = 0o755 if path in ("install", "run") else 0o644
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
 
 
 def test_a_package_adds_the_organizations_seeds_settings_secrets_and_mcp(api):

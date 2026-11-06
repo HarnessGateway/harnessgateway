@@ -9,7 +9,7 @@
 # setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
 # change and weekly (.github/workflows/images.yml).
 #
-# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:2.3.2 .
+# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:2.4.0 .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret: --secret id=ca,src=/path/ca.pem
 FROM cgr.dev/chainguard/wolfi-base@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
@@ -33,7 +33,7 @@ rm -rf /src /var/cache/apk /etc/apk/cache
 echo 'harnessgateway:x:10002:10002:harnessgateway:/nonexistent:/sbin/nologin' >> /etc/passwd
 echo 'harnessgateway:x:10002:' >> /etc/group
 mkdir -p /var/lib/harnessgateway-objects /var/lib/harnessgateway-console
-chown 10002:10002 /var/lib/harnessgateway-objects /var/lib/harnessgateway-console   # the file:// object store; the console's users
+chown 10002:10002 /var/lib/harnessgateway-objects /var/lib/harnessgateway-console   # the file:// object store; the console's drafts
 sed -i -E '/^harnessgateway:/!s#:[^:]*$#:/sbin/nologin#' /etc/passwd
 # no privilege-raising files; then no shell or package manager (BusyBox provides sh, rm and find: it goes last, and
 # its applet links, which apk does not own, after it)

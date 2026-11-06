@@ -1,21 +1,21 @@
 # HarnessGateway self-hosted on one host (SPEC §10.4): `install.sh` sets it up; by hand:
 #
-#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:2.3.2 keygen >> .env
+#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:2.4.0 keygen >> .env
 #   docker compose up -d
-#   docker compose up -d --wait postgres harnessgateway node
-#   docker compose exec harnessgateway harnessgateway init      # prints the admin key, once → HG_CONSOLE_KEY in .env
-#   docker compose run --rm console init                        # the consoles' first users, once
-#   docker compose up -d --wait console
+#   docker compose up -d --wait
+#   docker compose exec harnessgateway harnessgateway init --admin-email you@example.com
+#                                     # prints, once, the first admin's invitation link and an admin key for automation
 #
 # Services: postgres (all state), harnessgateway (the API and the provider gateway on one port, objects on a volume),
-# node (runs each session's sandbox under gVisor) and console (the web consoles on :8800, holding the admin key). The node drives the host's Docker: sandboxes are sibling
+# node (runs each session's sandbox under gVisor) and console (the web console on :8800; it holds no key: people sign
+# in with their platform account). The node drives the host's Docker: sandboxes are sibling
 # containers that bind-mount their session directories from the host, so the node directory is mounted at the SAME
 # path inside and out. Each sandbox's egress door joins `hg-uplink`, where it reaches the gateway and the internet;
 # postgres stays on `backend`, which no door joins.
 name: harnessgateway
 
 x-platform: &platform
-  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:2.3.2}
+  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:2.4.0}
   restart: unless-stopped
 
 services:
@@ -44,6 +44,9 @@ services:
       HG_NODE_JOIN_TOKEN: ${HG_NODE_JOIN_TOKEN:-}      # the default pool's shared token, registered at start
       HG_BLOB_URL: ${HG_BLOB_URL:-file:///var/lib/harnessgateway-objects}
       HG_API_URL: http://harnessgateway:8000
+      HG_CONSOLE_URL: ${HG_CONSOLE_URL:-http://localhost:8800}
+      HG_SMTP_URL: ${HG_SMTP_URL:-}
+      HG_MAIL_FROM: ${HG_MAIL_FROM:-}
       HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
       HG_EXTENSIONS: ${HG_EXTENSIONS:-}
       HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
@@ -74,8 +77,8 @@ services:
       HG_NODE_DIR: ${HG_NODE_DIR:-/var/lib/harnessgateway}
       HG_NODE_NAME: ${HG_NODE_NAME:-node-1}
       HG_NODE_SLOTS: ${HG_NODE_SLOTS:-4}
-      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:2.3.2}
-      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:2.3.2}
+      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:2.4.0}
+      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:2.4.0}
       HG_UPSTREAM_PROXY: ${HG_UPSTREAM_PROXY:-}
       HG_CA_FILE: ${HG_CA_FILE:-}
       HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
@@ -93,9 +96,7 @@ services:
     command: ["--host", "0.0.0.0", "--port", "8800"]
     environment:
       HG_API: http://harnessgateway:8000
-      HG_KEY: ${HG_CONSOLE_KEY:-}                      # an admin key: install.sh writes it after init
-      HG_OPERATOR_KEY: ${HG_OPERATOR_KEY:-}
-      HG_CONSOLE_DIR: /var/lib/harnessgateway-console
+      HG_CONSOLE_DIR: /var/lib/harnessgateway-console    # drafts: packages being written in the console
     volumes:
       - console:/var/lib/harnessgateway-console
     ports:

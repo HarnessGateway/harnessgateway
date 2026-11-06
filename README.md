@@ -59,10 +59,11 @@ git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
 sudo ./deploy/install.sh
 ```
 
-The installer starts Postgres, the API with the provider gateway, a node, and the consoles, creates your
-organization with the built-in harness package builder, and prints your admin key and console sign-ins once. Then:
+The installer starts Postgres, the API with the provider gateway, a node, and the console, creates your organization
+with the built-in harness package builder and your admin account, and prints the invitation link that activates it and
+an admin key for automation, once. Then:
 
-1. Open the console at `http://localhost:8800`, sign in as `admin`, and add a provider under **Setup → Providers**
+1. Open the invitation link, choose a password, and add a provider under **Setup → Providers**
    (an Anthropic, OpenAI or Gemini API endpoint and your key; the key is sealed and never shown again).
 2. Add a harness under **Setup → Harnesses**: **New harness** starts one from the template, you edit its three files
    for the CLI you want (the template's README says what to change in each), and **Install**. Or ask the built-in
@@ -70,7 +71,9 @@ organization with the built-in harness package builder, and prints your admin ke
 3. Open **Workbench → Chat**, pick the harness and the provider, and ask for something.
 4. Or call the API with any OpenAI SDK pointed at `http://localhost:8000/v1`, as above.
 
-The deployer console at `http://localhost:8800/ops` shows health, nodes, organizations, usage and configuration.
+Under **Access**, invite developers by email, and create an API key per app: a run-only key is what an app holds, and
+its sessions and usage are read by that key. The platform console at `http://localhost:8800/ops` shows health, nodes,
+organizations, usage, configuration and the audit log to platform admins.
 For many hosts, a managed Postgres, an S3 bucket and node pools, see [`docs/operations.md`](docs/operations.md).
 
 ## Harnesses
@@ -109,8 +112,8 @@ caller ──Responses──▶ API ──queue (Postgres)──▶ node ──�
   the terminal event becomes the final `Response`. The session's
   workspace is saved, and the sandbox stays warm for the next turn.
 
-The whole design, including the contract, packages, sandboxing, secrets, scale, metering and the extension seam for
-a multi-tenant deployment, is in [`SPEC.md`](SPEC.md).
+The whole design, including the contract, packages, sandboxing, secrets, scale, metering and the extension seam, is
+in [`SPEC.md`](SPEC.md).
 
 ## Documentation
 
