@@ -1,4 +1,4 @@
-"""A turn's states and the reasons the platform (not the package) ends one (SPEC §4.4)."""
+"""A turn's states and the reasons the platform (not the package) ends one (SPEC §4.2, §9)."""
 from __future__ import annotations
 
 from enum import StrEnum
@@ -23,5 +23,6 @@ class Reason(StrEnum):
     INSTALL_FAILED = "install_failed"
     SANDBOX_FAILED = "sandbox_failed"
     INVALID_OUTPUT = "invalid_output"
-    NODE_LOST = "node_lost"
+    BOX_LOST = "box_lost"
     EXITED_WITHOUT_RESULT = "exited_without_result"
+    SUSPENDED = "suspended"

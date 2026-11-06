@@ -1,5 +1,5 @@
-"""Egress entries and policies (SPEC §7.2): the one rule of what a sandbox may reach, used by the API (to check a
-request's MCP servers), the scheduler (to compose a turn's policy) and the door (to decide each connection).
+"""Egress entries and policies (SPEC §8.2): the one rule of what a box may reach, used by the api (to check a request's
+MCP servers and to compose a turn's policy) and the door (to decide each connection).
 
 An entry is `host`, `*.domain` or `*`, with an optional `:port` (443 when absent); `!` in front makes it a deny."""
 from __future__ import annotations
@@ -62,18 +62,36 @@ def host_entry(url_host: str, port: int | None) -> str:
 
 @dataclass(frozen=True)
 class Policy:
-    """Allowed when some allow entry matches and no deny entry does."""
+    """Allowed when some allow entry matches and no deny entry does, or the host is a platform host: the api as boxes
+    reach it (`host:port`, exact, possibly a single label on a private network), which no deny entry can remove."""
     allow: tuple[Entry, ...] = ()
     deny: tuple[Entry, ...] = ()
+    platform: tuple[tuple[str, int], ...] = ()
 
     @classmethod
-    def of(cls, *levels: Iterable[str]) -> Policy:
+    def of(cls, *levels: Iterable[str], platform: Iterable[str] = ()) -> Policy:
         parsed = [Entry.parse(v) for level in levels for v in level]
-        return cls(tuple(e for e in parsed if not e.deny), tuple(e for e in parsed if e.deny))
+        hosts = tuple(_platform_host(v) for v in platform)
+        return cls(tuple(e for e in parsed if not e.deny), tuple(e for e in parsed if e.deny), hosts)
+
+    def is_platform(self, host: str, port: int) -> bool:
+        return (host.lower().rstrip("."), port) in self.platform
 
     def permits(self, host: str, port: int) -> bool:
         host = host.lower().rstrip(".")
+        if (host, port) in self.platform:
+            return True
         return any(e.matches(host, port) for e in self.allow) and not any(e.matches(host, port) for e in self.deny)
 
     def entries(self) -> list[str]:
         return sorted({str(e) for e in (*self.allow, *self.deny)})
+
+    def platform_entries(self) -> list[str]:
+        return sorted(f"{h}:{p}" for h, p in self.platform)
+
+
+def _platform_host(value: str) -> tuple[str, int]:
+    host, sep, port = value.rpartition(":")
+    if not sep or not port.isdigit() or not host or len(host) > 253:
+        raise ValueError(f"a platform host is host:port, not {value!r}")
+    return host.lower(), int(port)

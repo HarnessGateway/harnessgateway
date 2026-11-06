@@ -1,4 +1,4 @@
-"""Accounts and sign-ins (SPEC §9.3): people, their passwords, their one-time invitations and their bearer tokens.
+"""Accounts and sign-ins (SPEC §10.1): people, their passwords, their one-time invitations and their bearer tokens.
 
 An account is created invited and activated with a one-time token by setting a password; the same token resets one.
 The invitation is a link to the console's setup page, mailed to the person when mail is configured and returned to
@@ -20,10 +20,10 @@ from typing import Any
 from urllib.parse import quote
 
 from .. import ids
-from ..db import Database, Tx
 from ..domain.access import ROLES
 from ..errors import Conflict, Invalid, Locked, NotFound, Unauthenticated
 from ..ports.mail import Mailer
+from ..store.db import Database, Tx
 from .audit import Audit
 from .pages import ts
 
@@ -267,6 +267,50 @@ class Accounts:
         async with self.db.platform() as tx:
             await tx.run("UPDATE sign_ins SET revoked_at = now() WHERE digest = %s AND revoked_at IS NULL",
                          ids.digest(token, self.pepper))
+
+    # ── SSO (SPEC §10.3): an identity provider vouched for a person ───────────────────────────────────────────────
+    async def sso_sign_in(self, org_id: str, *, subject: str, email: str, name: str, role: str | None,
+                          auto_provision: bool, default_role: str, client: str) -> dict[str, Any]:
+        """The account the provider's claims name, provisioned when allowed, its membership's role updated when the
+        claims say so; signed in. The provider's subject is remembered so a changed email cannot take over another
+        account."""
+        email = check_email(email)
+        async with self.db.platform() as tx:
+            row = await tx.one("SELECT * FROM accounts WHERE sso_subject = %s", f"{org_id}:{subject}") or \
+                await tx.one("SELECT * FROM accounts WHERE email = %s AND sso_subject IS NULL", email)
+            if row is None:
+                if not auto_provision:
+                    raise Unauthenticated("no account for this sign-in: ask an admin for an invitation")
+                await tx.run("INSERT INTO accounts (id, email, name, status, sso_subject) VALUES (%s, %s, %s, 'active', %s)",
+                             ids.new("account"), email, name[:200], f"{org_id}:{subject}")
+                row = await tx.get("SELECT * FROM accounts WHERE email = %s", email)
+                created = True
+            else:
+                created = False
+                if row["status"] == "disabled":
+                    raise Unauthenticated("the account is disabled")
+                await tx.run("UPDATE accounts SET sso_subject = %s, status = 'active', name = CASE WHEN name = '' THEN %s "
+                             "ELSE name END, failures = 0, locked_until = NULL, signed_in_at = now() WHERE id = %s",
+                             f"{org_id}:{subject}", name[:200], row["id"])
+            member = await tx.one("SELECT role FROM memberships WHERE account_id = %s AND org_id = %s", row["id"], org_id)
+            if member is None:
+                if not auto_provision:
+                    raise Unauthenticated("no membership for this sign-in: ask an admin for an invitation")
+                await tx.run("INSERT INTO memberships (account_id, org_id, role) VALUES (%s, %s, %s)",
+                             row["id"], org_id, role or default_role)
+            elif role is not None and role != member["role"]:
+                if member["role"] == "admin" and await self._last_admin(tx, org_id, row["id"]):
+                    raise Conflict("the organization keeps at least one active admin")
+                await tx.run("UPDATE memberships SET role = %s WHERE account_id = %s AND org_id = %s", role, row["id"], org_id)
+            row = await tx.get("SELECT * FROM accounts WHERE id = %s", row["id"])
+            signed = await self._sign_in(tx, row, client)
+        await self._audit(row["id"], "auth.sso", {"client": client, "provisioned": created})
+        return signed
+
+    @staticmethod
+    async def _last_admin(tx: Tx, org_id: str, account_id: str) -> bool:
+        return await tx.value("SELECT count(*) FROM memberships m JOIN accounts a ON a.id = m.account_id WHERE m.org_id = %s "
+                              "AND m.role = 'admin' AND a.status <> 'disabled' AND a.id <> %s", org_id, account_id) == 0
 
     async def authenticate(self, secret: str) -> dict[str, Any] | None:
         """The account behind a live sign-in token and its memberships, or None."""

@@ -1,15 +1,17 @@
 """The live stack every integration test runs against (HG_TEST_STACK=1): an admin key, with `shell` installed from
-`packages/shell` and the organization's egress set."""
+`packages/shell` (its install run by a worker) and the organization's egress set."""
 import io
 import json
 import os
 import tarfile
+import time
 from pathlib import Path
 
 import httpx
 import pytest
 
 SHELL = Path(__file__).resolve().parents[2] / "packages" / "shell"
+INSTALL_WAIT_S = 600
 
 
 def pack(folder: Path) -> bytes:
@@ -41,6 +43,18 @@ def seeded_archive() -> bytes:
     return buf.getvalue()
 
 
+def installed(c: httpx.Client, name: str) -> None:
+    """Wait until the harness's install is ready (a worker runs it in an install box); fail on a failed install."""
+    deadline = time.monotonic() + INSTALL_WAIT_S
+    while time.monotonic() < deadline:
+        install = c.get(f"/v1/harnesses/{name}/install").json()
+        if install["status"] == "ready":
+            return
+        assert install["status"] != "failed", install["log_tail"]
+        time.sleep(1)
+    raise AssertionError(f"the install of {name} did not finish in {INSTALL_WAIT_S}s")
+
+
 @pytest.fixture(scope="session")
 def api():
     with httpx.Client(base_url=os.environ.get("HG_TEST_URL", "http://localhost:8000"), timeout=600,
@@ -49,4 +63,5 @@ def api():
         r.raise_for_status()
         r = c.post("/v1/harnesses", files={"package": ("shell.tgz", pack(SHELL))})
         assert r.status_code == 200, r.text
+        installed(c, "shell")
         yield c

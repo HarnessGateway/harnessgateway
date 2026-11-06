@@ -1,4 +1,4 @@
-"""Who may do what (SPEC §9.2): the two roles, the run-only key, and the one table every service checks against.
+"""Who may do what (SPEC §8.4): the two roles, the run-only key, and the one table every service checks against.
 
 A `Principal` is whoever a request runs as, resolved from a sign-in or an API key: its organization, its actor
 (`account:<id>` or `key:<id>`), its role, whether it is a key that only runs, whether it holds the platform scope,
@@ -18,6 +18,7 @@ RUN_ONLY = "run_only"                         # a developer key that only runs: 
 TABLE: dict[str, dict[str, frozenset[str]]] = {
     "organization": {"read": frozenset({DEVELOPER, RUN_ONLY})},
     "accounts": {"create": frozenset(), "read": frozenset(), "update": frozenset(), "reset": frozenset()},
+    "sso": {"read": frozenset(), "update": frozenset()},
     "providers": {"create": frozenset(), "read": frozenset({DEVELOPER, RUN_ONLY}), "update": frozenset(),
                   "delete": frozenset()},
     "egress": {"read": frozenset({DEVELOPER}), "update": frozenset()},
@@ -41,7 +42,7 @@ class Principal:
     actor: str                        # account:<id> | key:<id> | what an extension names
     role: str                         # admin | developer
     run_only: bool = False            # a key that only runs
-    platform_admin: bool = False      # the platform scope (SPEC §9.4)
+    platform_admin: bool = False      # the platform scope
     account_id: str | None = None     # the person: the sign-in's account, or the account that created the key
     name: str = ""                    # the account's name or the key's label, for display
 

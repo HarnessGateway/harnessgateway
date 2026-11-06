@@ -1,40 +1,52 @@
-"""Turns from the caller's side: a Responses request in, a Response out (SPEC §4, §6.3).
+"""Turns from the caller's side (SPEC §9.1, §9.3, §9.7): a Responses request in, a Response out.
 
 `Turns.create` routes `model` to a harness and a provider, resolves the turn's MCP servers (taking the caller's own
 credentials out of the request), lets extensions admit it, and queues it on its session: the one `previous_response_id`
-names when that response is the session's last and the harness is the same, else a fork, a new session restored from
-the state saved after that response (its checkpoint), as the Responses API's tree of responses means it. A fork onto
-another harness carries the workspace only (the old harness's state is the old CLI's), plus the conversation, which
-every turn receives as its session's history in Responses form. `EventBus` wakes every stream
-following a turn, across API replicas, through Postgres NOTIFY. `record_events` and `conclude` are the writes every
-side of a turn shares."""
+names when that response is the session's last and the harness is the same, else a fork, a new session starting from
+the snapshot after that response (its checkpoint). A fork onto another harness carries the workspace only, plus the
+conversation, which every turn receives as its session's history. `record_events` and `conclude` are the writes every
+side of a turn shares; events go to the durable log here and to the live stream after the transaction commits."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import posixpath
-import tarfile
 import time
-from collections import defaultdict
 from collections.abc import AsyncIterator
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .. import ids
-from ..db import Database, Tx, dumps
-from ..domain import contract, egress, mcp
+from ..contract import (
+    DELTAS,
+    FINAL,
+    TERMINAL,
+    TERMINAL_EVENT,
+    ModelPath,
+    OutputError,
+    Routing,
+    history_entry,
+    input_items,
+    response,
+)
+from ..domain import egress, mcp
 from ..domain.access import Principal
 from ..domain.manifest import Manifest
 from ..domain.turn import Reason, Status
 from ..errors import Conflict, Invalid, NotFound
 from ..extensions import Admission, Extensions, TurnSummary
+from ..store.db import Database, Tx, dumps
+from ..store.moments import Moments
+from ..store.objects import Objects, org_key
 from .harnesses import find
-from .objects import Objects, org_key
+from .pages import own
+from .snapshots import Snapshots
 from .vault import Vault
 
-CHANNEL = "hg_turn_events"
+if TYPE_CHECKING:
+    from .boxes import Boxes
+
 KEEPALIVE_S = 15
+POLL_S = 1.0
 IDEMPOTENCY_KEY_MAX = 200
 log = logging.getLogger("harnessgateway.turns")
 
@@ -44,7 +56,7 @@ def _ts(dt: Any) -> float:
 
 
 def end_user(body: dict[str, Any]) -> str | None:
-    """The request's `user`: the application's own end user, kept on the session and the turn (SPEC §14.1)."""
+    """The request's `user`: the application's own end user, kept on the session and the turn."""
     user = body.get("user")
     if user is None:
         return None
@@ -53,86 +65,31 @@ def end_user(body: dict[str, Any]) -> str | None:
     return user
 
 
-def own(p: Principal) -> tuple[str, list[str]]:
-    """A clause confining a query on sessions `s` to the principal's own, when that is all it may read."""
-    return (" AND s.created_by = %s", [p.actor]) if p.owns_only else ("", [])
-
-
-class EventBus:
-    """One LISTEN connection per API process; each follower of a turn waits on an asyncio.Event for it."""
-
-    def __init__(self, db: Database):
-        self.db = db
-        self._waiters: dict[str, set[asyncio.Event]] = defaultdict(set)
-        self._task: asyncio.Task[None] | None = None
-
-    def start(self) -> None:
-        self._task = asyncio.create_task(self._listen())
-
-    async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-
-    async def _listen(self) -> None:
-        while True:
-            try:
-                async with self.db.listen(CHANNEL) as cx:
-                    async for note in cx.notifies():
-                        for ev in self._waiters.get(note.payload, ()):
-                            ev.set()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                log.exception("event bus connection lost; reconnecting")
-                for waiters in self._waiters.values():
-                    for ev in waiters:
-                        ev.set()
-                await asyncio.sleep(1)
-
-    def waiter(self, rid: str) -> asyncio.Event:
-        ev = asyncio.Event()
-        self._waiters[rid].add(ev)
-        return ev
-
-    def drop(self, rid: str, ev: asyncio.Event) -> None:
-        self._waiters[rid].discard(ev)
-        if not self._waiters[rid]:
-            self._waiters.pop(rid, None)
-
-
-async def record_events(tx: Tx, turn: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    """Number events from the turn's counter and store them: deltas in live_events, the rest in turn_events."""
-    if not events:
-        return
+async def record_events(tx: Tx, turn: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Number events from the turn's counter; store the non-deltas durably; return them all, numbered, for the
+    live stream once the transaction has committed."""
+    numbered: list[dict[str, Any]] = []
     kept: list[tuple[Any, ...]] = []
-    live: list[tuple[Any, ...]] = []
     for event in events:
         seq = turn["events"]
         turn["events"] = seq + 1
-        row = (turn["id"], seq, turn["org_id"], {**event, "sequence_number": seq})
-        (live if event["type"] in contract.DELTAS else kept).append(row)
-    await tx.many("INSERT INTO turn_events (turn_id, seq, org_id, data) VALUES (%s, %s, %s, %s)", kept)
-    await tx.many("INSERT INTO live_events (turn_id, seq, org_id, data) VALUES (%s, %s, %s, %s)", live)
-    await tx.run("UPDATE turns SET events = %s WHERE id = %s", turn["events"], turn["id"])
-    await tx.notify(CHANNEL, turn["id"])
+        ev = {**event, "sequence_number": seq}
+        numbered.append(ev)
+        if event["type"] not in DELTAS:
+            kept.append((turn["id"], seq, turn["org_id"], ev))
+    if numbered:
+        await tx.many("INSERT INTO turn_events (turn_id, seq, org_id, data) VALUES (%s, %s, %s, %s)", kept)
+        await tx.run("UPDATE turns SET events = %s WHERE id = %s", turn["events"], turn["id"])
+    return numbered
 
 
 async def request_body(objects: Objects, turn: dict[str, Any]) -> dict[str, Any]:
     return json.loads(await objects.get(turn["request_key"]))  # type: ignore[no-any-return]
 
 
-def _workspace_only(src: Path, dst: Path) -> None:
-    """A snapshot archive reduced to its workspace: what a fork onto another harness carries."""
-    with tarfile.open(src, "r:gz") as tin, tarfile.open(dst, "w:gz") as tout:
-        for m in tin:
-            name = posixpath.normpath(m.name.removeprefix("./"))
-            if name == "workspace" or name.startswith("workspace/"):
-                tout.addfile(m, tin.extractfile(m) if m.isfile() else None)
-
-
 async def history(tx: Tx, objects: Objects, session: dict[str, Any], before_seq: int) -> list[dict[str, Any]]:
-    """The session's earlier turns in order, as a package receives them (SPEC §5.6): through every fork back to the
-    root, each turn as `contract.history_entry`. A turn whose request is gone is left out."""
+    """The session's earlier turns in order, as a package receives them (SPEC §5.3): through every fork back to the
+    root, each turn as `history_entry`. A turn whose request is gone is left out."""
     chain: list[tuple[dict[str, Any], int]] = []
     s, upto = session, before_seq - 1
     while True:
@@ -153,7 +110,7 @@ async def history(tx: Tx, objects: Objects, session: dict[str, Any], before_seq:
                 body = await request_body(objects, t)
             except KeyError:
                 continue
-            out.append(contract.history_entry(t["id"], t["status"], body, t["response"]))
+            out.append(history_entry(t["id"], t["status"], body, t["response"]))
     return out
 
 
@@ -171,8 +128,9 @@ async def conclude(tx: Tx, objects: Objects, turn: dict[str, Any], status: Statu
                    output: list[dict[str, Any]] | None = None, usage: dict[str, Any] | None = None,
                    error: dict[str, Any] | None = None, incomplete: dict[str, Any] | None = None,
                    metadata: dict[str, str] | None = None, reason: Reason | None = None, message: str = ""
-                   ) -> TurnSummary:
-    """End a turn, in the transaction holding its row: the final Response stored and its terminal event recorded."""
+                   ) -> tuple[TurnSummary, list[dict[str, Any]]]:
+    """End a turn, in the transaction holding its row: the final Response stored and its terminal event recorded.
+    Returns the summary for extensions and the numbered events for the stream."""
     assert status.final and not Status(turn["status"]).final, f"{turn['id']}: {turn['status']} -> {status}"
     body = await request_body(objects, turn)
     meta = {**(metadata or {}), "session_id": turn["session_id"]}
@@ -182,34 +140,42 @@ async def conclude(tx: Tx, objects: Objects, turn: dict[str, Any], status: Statu
             error = {"code": "server_error", "message": message or reason.value.replace("_", " ")}
     now = time.time()
     try:
-        doc = contract.response(rid=turn["id"], body=body, created=_ts(turn["created_at"]), status=status.value,
-                                output=output, usage=usage, error=error, incomplete=incomplete, metadata=meta,
-                                completed=now)
-    except contract.OutputError as e:
+        doc = response(rid=turn["id"], body=body, created=_ts(turn["created_at"]), status=status.value, output=output,
+                       usage=usage, error=error, incomplete=incomplete, metadata=meta, completed=now)
+    except OutputError as e:
         status, message, reason = Status.FAILED, str(e), Reason.INVALID_OUTPUT
         meta["hg_reason"] = reason.value
-        doc = contract.response(rid=turn["id"], body=body, created=_ts(turn["created_at"]), status=status.value,
-                                error={"code": "server_error", "message": message}, metadata=meta, completed=now)
+        doc = response(rid=turn["id"], body=body, created=_ts(turn["created_at"]), status=status.value,
+                       error={"code": "server_error", "message": message}, metadata=meta, completed=now)
     moved = await tx.run("UPDATE turns SET status = %s, response = %s, hg_reason = %s, hg_message = %s, ended_at = now() "
                          "WHERE id = %s AND status = %s", status.value, doc, meta.get("hg_reason"), message[:4000] or None,
                          turn["id"], turn["status"])
     assert moved == 1, "the turn row is held by this transaction"
     turn["status"] = status.value
-    await record_events(tx, turn, [{"type": contract.TERMINAL_EVENT[status.value], "response": doc}])
+    events = await record_events(tx, turn, [{"type": TERMINAL_EVENT[status.value], "response": doc}])
     session = await tx.get("SELECT harness FROM sessions WHERE id = %s", turn["session_id"])
-    return TurnSummary(id=turn["id"], org_id=turn["org_id"], session_id=turn["session_id"], harness=session["harness"],
-                       model=turn["model"], status=status.value, reason=meta.get("hg_reason"), usage=doc.get("usage"),
-                       created_at=_ts(turn["created_at"]), ended_at=now, metadata=doc.get("metadata") or {})
+    summary = TurnSummary(id=turn["id"], org_id=turn["org_id"], session_id=turn["session_id"], harness=session["harness"],
+                          model=turn["model"], status=status.value, reason=meta.get("hg_reason"), usage=doc.get("usage"),
+                          created_at=_ts(turn["created_at"]), ended_at=now, metadata=doc.get("metadata") or {})
+    return summary, events
 
 
 class Turns:
-    def __init__(self, db: Database, objects: Objects, vault: Vault, bus: EventBus, extensions: Extensions):
-        self.db, self.objects, self.vault, self.bus, self.ext = db, objects, vault, bus, extensions
+    def __init__(self, db: Database, objects: Objects, vault: Vault, moments: Moments, extensions: Extensions,
+                 boxes: Boxes, snapshots: Snapshots):
+        self.db, self.objects, self.vault, self.moments, self.ext = db, objects, vault, moments, extensions
+        self.boxes, self.snapshots = boxes, snapshots
+
+    async def publish(self, rid: str, events: list[dict[str, Any]], *, ended: bool = False) -> None:
+        """Numbered events onto the live stream, after their transaction committed."""
+        await self.moments.publish(rid, events)
+        if ended:
+            await self.moments.end_stream(rid)
 
     # ── create ─────────────────────────────────────────────────────────────────────────────────────────────────────
     async def create(self, p: Principal, body: dict[str, Any], idempotency_key: str = "") -> dict[str, Any]:
         p.require("responses", "create")
-        routing = contract.Routing.parse(body)
+        routing = Routing.parse(body)
         user = end_user(body)
         if len(idempotency_key) > IDEMPOTENCY_KEY_MAX:
             raise Invalid(f"Idempotency-Key is at most {IDEMPOTENCY_KEY_MAX} characters", param="Idempotency-Key")
@@ -222,13 +188,15 @@ class Turns:
         request_key = org_key(p.org_id, "turns", rid, "request.json")
         try:
             async with self.db.tenant(p.org_id) as tx:
-                turn = await self._queue(tx, p, rid, body, routing, request_key, user)
+                turn, events, after = await self._queue(tx, p, rid, body, routing, request_key, user)
                 if idempotency_key:
                     await tx.run("INSERT INTO idempotency (org_id, key, request_digest, turn_id) VALUES (%s, %s, %s, %s)",
                                  p.org_id, idempotency_key, digest, rid)
         except BaseException:
             await self.objects.delete(request_key)
             raise
+        await self.publish(rid, events)
+        await self.boxes.after_commit(after)
         return turn
 
     async def _replay(self, p: Principal, digest: str, key: str) -> dict[str, Any] | None:
@@ -240,13 +208,13 @@ class Turns:
             raise Conflict("this Idempotency-Key was used with a different request", param="Idempotency-Key")
         return await self.row(p, row["turn_id"])
 
-    async def _queue(self, tx: Tx, p: Principal, rid: str, body: dict[str, Any], routing: contract.Routing,
-                     request_key: str, user: str | None) -> dict[str, Any]:
+    async def _queue(self, tx: Tx, p: Principal, rid: str, body: dict[str, Any], routing: Routing, request_key: str,
+                     user: str | None) -> tuple[dict[str, Any], list[dict[str, Any]], Any]:
         path = routing.path
         harness = await find(tx, path.harness)
-        prev, session, fork, switch = None, None, None, False
+        prev, session, fork_from, switch = None, None, None, False
         if routing.previous_response_id:
-            prev = await tx.one("SELECT id, session_id, seq, status, provider_id, provider_model, snapshot_key, files_key "
+            prev = await tx.one("SELECT id, session_id, seq, status, provider_id, provider_model, snapshot_id "
                                 "FROM turns WHERE id = %s", routing.previous_response_id)
             session = await tx.one("SELECT * FROM sessions WHERE id = %s FOR UPDATE", prev["session_id"]) if prev else None
             if not prev or not session or (p.owns_only and session["created_by"] != p.actor):
@@ -256,7 +224,7 @@ class Turns:
                               param="previous_response_id")
             switch = session["harness"] != path.harness      # another harness: a fork onto it, with the workspace
             if switch or prev["seq"] != session["turns"]:    # and the conversation; an earlier response: the state after it
-                fork = await self._checkpoint(p.org_id, prev, session, workspace_only=switch)
+                fork_from = self._checkpoint_of(prev, session)
         manifest = Manifest.model_validate(harness["manifest"] if session is None or switch else session["manifest"])
         missing = [k for k, s in manifest.settings.items() if s.required and s.default is None and k not in
                    harness["settings"]] + [k for k, s in manifest.secrets.items() if s.required and k not in harness["secrets"]]
@@ -274,17 +242,22 @@ class Turns:
             missing_files = [f for f in routing.file_ids if f not in found]
             if missing_files:
                 raise NotFound(f"no file {missing_files[0]}", param="input")
-        org = await tx.get("SELECT egress FROM orgs WHERE id = %s", p.org_id)
+        org = await tx.get("SELECT egress, limits, status FROM orgs WHERE id = %s", p.org_id)
+        if org["status"] != "active":
+            raise Invalid("the organization is suspended", param="model")
         resolved = mcp.resolve(manifest.mcp, body, egress.Policy.of(org["egress"], manifest.run_entries()))
         await self.objects.put(request_key, dumps(resolved.body).encode(), org_id=p.org_id, kind="request")
-        if fork is not None and session is not None:   # a new session from the checkpoint, pinned like its parent
-            parent, session = session, {"id": fork["id"], "turns": 0}   # (or, on a switch, to the new harness)
+        if fork_from is not None and session is not None:   # a new session from the checkpoint, pinned like its parent
+            parent, sid = session, ids.new("session")       # (or, on a switch, to the new harness)
             pinned = harness if switch else parent
             await tx.run("INSERT INTO sessions (id, org_id, created_by, end_user, harness, digest, manifest, provider_id, "
-                         "model, store, snapshot_key, files_key, snapshot_bytes, forked_from) VALUES (%s, %s, %s, %s, %s, %s, "
-                         "%s, %s, %s, %s, %s, %s, %s, %s)", session["id"], p.org_id, p.actor, user, path.harness,
-                         pinned["digest"], pinned["manifest"], provider_id, model, routing.store, fork["snapshot_key"],
-                         fork["files_key"], fork["bytes"], routing.previous_response_id)
+                         "model, store, forked_from) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                         sid, p.org_id, p.actor, user, path.harness, pinned["digest"], pinned["manifest"], provider_id,
+                         model, routing.store, routing.previous_response_id)
+            if fork_from != "seeds":
+                made = await self.snapshots.derive(tx, p.org_id, fork_from, sid, "workspace" if switch else None)
+                await tx.run("UPDATE sessions SET snapshot_id = %s WHERE id = %s", made["id"], sid)
+            session = {"id": sid, "turns": 0}
         elif session is None:
             session = {"id": ids.new("session"), "turns": 0}
             await tx.run("INSERT INTO sessions (id, org_id, created_by, end_user, harness, digest, manifest, provider_id, "
@@ -299,46 +272,31 @@ class Turns:
                      model, routing.stream, routing.background, request_key, dumps(resolved.servers),
                      routing.previous_response_id, p.actor, user)
         if resolved.bindings:
-            sealed = await self.vault.seal(p.org_id, f"turn/{rid}/bindings", dumps(
-                [{"placeholder": b.placeholder, "value": b.value, "hosts": list(b.hosts)} for b in resolved.bindings]))
+            sealed = await self.vault.seal(p.org_id, f"turn/{rid}/bindings", dumps([b.as_dict() for b in resolved.bindings]))
             await tx.run("INSERT INTO turn_bindings (turn_id, org_id, sealed) VALUES (%s, %s, %s)", rid, p.org_id, sealed)
         turn = await tx.get("SELECT * FROM turns WHERE id = %s", rid)
-        partial = contract.response(rid=rid, body=resolved.body, created=_ts(turn["created_at"]), status="queued",
-                                    metadata={"session_id": session["id"]})
-        await record_events(tx, turn, [{"type": "response.created", "response": partial}])
-        return turn
+        partial = response(rid=rid, body=resolved.body, created=_ts(turn["created_at"]), status="queued",
+                           metadata={"session_id": session["id"]})
+        events = await record_events(tx, turn, [{"type": "response.created", "response": partial}])
+        session_row = await tx.get("SELECT * FROM sessions WHERE id = %s", session["id"])
+        after = await self.boxes.ensure(tx, p.org_id, session_row, org["limits"])
+        return turn, events, after
 
-    async def _checkpoint(self, org_id: str, prev: dict[str, Any], session: dict[str, Any],
-                          workspace_only: bool = False) -> dict[str, Any]:
-        """The state saved after `prev`, copied under the new session so the parent's deletion cannot take it away:
-        {id, snapshot_key, files_key, bytes} for the session about to be created. A turn that saved nothing of its
-        own (unchanged, cancelled before it ran, lost with its node) points at the session's last save before it.
-        `workspace_only` (a fork onto another harness) leaves out $HG_STATE and the old package's persist paths."""
+    @staticmethod
+    def _checkpoint_of(prev: dict[str, Any], session: dict[str, Any]) -> str:
+        """The manifest key of the state after `prev`, or "seeds" when the session had no state yet."""
         rid = prev["id"]
         if not Status(prev["status"]).final:
             raise Conflict(f"{rid} is still running; continue from it once it has ended", param="previous_response_id")
-        source, listing_src = prev["snapshot_key"], prev["files_key"]
-        if source is None:
-            if session["saving_turn_id"] == rid:
-                raise Conflict(f"the state after {rid} is still being saved; try again shortly",
-                               param="previous_response_id")
-            if session["snapshot_seq"] > prev["seq"]:        # ended without a save of its own, before a later one landed
+        if prev["snapshot_id"] is None:
+            if session["snapshot_seq"] > prev["seq"] or (session["snapshot_id"] and session["snapshot_seq"] >= prev["seq"]):
                 raise Conflict(f"the state after {rid} was not saved, so nothing can continue from it",
                                param="previous_response_id")
-            source, listing_src = session["snapshot_key"], session["files_key"]
-        sid = ids.new("session")
-        if source is None:                                   # the session had no state yet: the fork starts from the seeds
-            return {"id": sid, "snapshot_key": None, "files_key": None, "bytes": 0}
-        stem = f"{prev['seq']:08d}-fork"
-        snapshot = org_key(org_id, "sessions", sid, "snapshots", f"{stem}.tgz")
-        listing = org_key(org_id, "sessions", sid, "snapshots", f"{stem}.json")
-        size = await self.objects.copy(source, snapshot, org_id=org_id, kind="snapshot",
-                                       transform=_workspace_only if workspace_only else None)
-        await self.objects.copy(listing_src, listing, org_id=org_id, kind="snapshot")
-        return {"id": sid, "snapshot_key": snapshot, "files_key": listing, "bytes": size}
+            return "seeds"
+        return str(prev["snapshot_id"])
 
     @staticmethod
-    async def _provider(tx: Tx, manifest: Manifest, path: contract.ModelPath, harness: dict[str, Any],
+    async def _provider(tx: Tx, manifest: Manifest, path: ModelPath, harness: dict[str, Any],
                         session: dict[str, Any] | None) -> dict[str, Any] | None:
         """Named in `model`, else the session's, else the harness's default, else the organization's only provider of
         an API the package speaks."""
@@ -383,59 +341,68 @@ class Turns:
         turn = await self.row(p, rid)
         if turn["response"] is not None:
             return turn["response"]  # type: ignore[no-any-return]
-        return contract.response(rid=turn["id"], body=await request_body(self.objects, turn),
-                                 created=_ts(turn["created_at"]), status=turn["status"],
-                                 metadata={"session_id": turn["session_id"]})
+        return response(rid=turn["id"], body=await request_body(self.objects, turn), created=_ts(turn["created_at"]),
+                        status=turn["status"], metadata={"session_id": turn["session_id"]})
 
     async def input_items(self, p: Principal, rid: str) -> list[dict[str, Any]]:
         turn = await self.row(p, rid)
-        items = contract.input_items(await request_body(self.objects, turn))
+        items = input_items(await request_body(self.objects, turn))
         return [{"id": f"item_{rid[5:21]}_{i}", **item} for i, item in enumerate(items)]
 
     async def follow(self, p: Principal, rid: str, after: int = -1) -> AsyncIterator[dict[str, Any] | None]:
-        """The turn's events numbered above `after`, live until its terminal event; None is a keep-alive."""
-        await self.row(p, rid)
+        """The turn's events numbered above `after`: from the live stream while it exists, else from the durable log,
+        followed until the terminal event; None is a keep-alive."""
+        turn = await self.row(p, rid)
+        if await self.moments.has_stream(rid):
+            async for event in self.moments.follow(rid, after, terminal=frozenset(TERMINAL), keepalive_s=KEEPALIVE_S):
+                yield event
+                if event and event["type"] in TERMINAL:
+                    return
         while True:
-            waiter = self.bus.waiter(rid)
-            try:
+            async with self.db.tenant(p.org_id) as tx:
+                rows = await tx.all("SELECT seq, data FROM turn_events WHERE turn_id = %s AND seq > %s ORDER BY seq", rid, after)
+                status = await tx.value("SELECT status FROM turns WHERE id = %s", rid)
+            for r in rows:
+                after = r["seq"]
+                yield r["data"]
+                if r["data"]["type"] in TERMINAL:
+                    return
+            if status in FINAL and not rows:
+                return
+            turn["status"] = status
+            waited = 0.0
+            while waited < KEEPALIVE_S:
+                await asyncio.sleep(POLL_S)
+                waited += POLL_S
                 async with self.db.tenant(p.org_id) as tx:
-                    rows = await tx.all("SELECT seq, data FROM turn_events WHERE turn_id = %s AND seq > %s UNION ALL "
-                                        "SELECT seq, data FROM live_events WHERE turn_id = %s AND seq > %s ORDER BY seq",
-                                        rid, after, rid, after)
-                for r in rows:
-                    after = r["seq"]
-                    yield r["data"]
-                    if r["data"]["type"] in contract.TERMINAL:
-                        return
-                if not rows:
-                    try:
-                        await asyncio.wait_for(waiter.wait(), timeout=KEEPALIVE_S)
-                    except TimeoutError:
-                        yield None
-            finally:
-                self.bus.drop(rid, waiter)
+                    newer = await tx.value("SELECT count(*) FROM turn_events WHERE turn_id = %s AND seq > %s", rid, after)
+                if newer:
+                    break
+            else:
+                yield None
 
     async def wait(self, p: Principal, rid: str) -> dict[str, Any]:
         async for event in self.follow(p, rid):
-            if event and event["type"] in contract.TERMINAL:
+            if event and event["type"] in TERMINAL:
                 break
         return await self.response(p, rid)
 
     # ── cancel and delete ──────────────────────────────────────────────────────────────────────────────────────────
     async def cancel(self, p: Principal, rid: str) -> dict[str, Any]:
-        """A queued turn ends now; a running one is stopped by its node (SIGTERM, then the package's grace)."""
+        """A queued turn ends now; a running one is stopped by its box (SIGTERM, then the package's grace)."""
         p.require("responses", "cancel")
-        ended = None
+        ended: TurnSummary | None = None
+        events: list[dict[str, Any]] = []
         async with self.db.tenant(p.org_id) as tx:
             turn = await self._row(tx, p, rid, lock=True)
             if turn["status"] == Status.QUEUED:
-                ended = await conclude(tx, self.objects, turn, Status.CANCELLED, reason=Reason.CANCELLED)
+                ended, events = await conclude(tx, self.objects, turn, Status.CANCELLED, reason=Reason.CANCELLED)
                 await tx.run("DELETE FROM turn_bindings WHERE turn_id = %s", rid)
             else:
-                await tx.run("UPDATE turns SET cancel = %s WHERE id = %s AND cancel IS NULL AND (status = 'in_progress' "
-                             "OR EXISTS (SELECT 1 FROM sessions s WHERE s.running_turn_id = turns.id))",
+                await tx.run("UPDATE turns SET cancel = %s WHERE id = %s AND cancel IS NULL AND status = 'in_progress'",
                              Reason.CANCELLED.value, rid)
         if ended:
+            await self.publish(rid, events, ended=True)
             await self.ext.turn_ended(ended)
         return await self.response(p, rid)
 
@@ -443,9 +410,11 @@ class Turns:
         p.require("responses", "delete")
         async with self.db.tenant(p.org_id) as tx:
             turn = await self._row(tx, p, rid)
-            if not Status(turn["status"]).final or await tx.one("SELECT 1 FROM sessions WHERE running_turn_id = %s", rid):
+            if not Status(turn["status"]).final:
                 raise Conflict(f"{rid} is still running; cancel it first")
-            await tx.run("DELETE FROM live_events WHERE turn_id = %s", rid)
+            current = await tx.value("SELECT snapshot_id FROM sessions WHERE id = %s", turn["session_id"])
             await tx.run("DELETE FROM traces WHERE response_id = %s", rid)
             await tx.run("DELETE FROM turns WHERE id = %s", rid)
+        if turn["snapshot_id"] and turn["snapshot_id"] != current:
+            await self.snapshots.release(p.org_id, [turn["snapshot_id"]])
         await self.objects.delete_prefix(org_key(p.org_id, "turns", rid, ""))

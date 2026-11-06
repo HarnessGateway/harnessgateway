@@ -1,15 +1,15 @@
-"""An organization's model providers (SPEC §7.3): an API shape, a base URL and a key sealed the moment it arrives and
-opened only by the gateway."""
+"""An organization's model providers (SPEC §9.4): an API shape, a base URL and a key sealed the moment it arrives and
+opened only for the door's binding of a running turn."""
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
 from .. import ids
-from ..db import Database
 from ..domain.provider import PROVIDER_APIS, WIRES
 from ..errors import Invalid, NotFound
 from ..netguard import check_url
+from ..store.db import Database
 from .pages import ts
 from .vault import Vault
 

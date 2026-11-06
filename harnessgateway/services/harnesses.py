@@ -1,4 +1,4 @@
-"""Harnesses: packages installed in an organization under a name, with its settings and secret values (SPEC §5, §14.3).
+"""Harnesses: packages installed in an organization under a name, with its settings and secret values (SPEC §5, §14.2).
 
 A package is content-addressed and stored once, whoever installs it. A harness points at the package it was installed
 from; a session runs the package it started on, whatever the harness points at later. Packages arrive as uploads: an
@@ -13,14 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from .. import ids
-from ..db import Database, Tx
 from ..domain import package as pkg
-from ..domain.access import Principal
+from ..domain.access import ADMIN, Principal
 from ..domain.manifest import Manifest
 from ..errors import Invalid, NotFound
 from ..limits import SETTING_VALUE_MAX
+from ..store.db import Database, Tx
+from ..store.objects import Objects
 from .audit import Audit
-from .objects import Objects
+from .installs import Installs
 from .pages import ts
 from .vault import Vault
 
@@ -43,12 +44,18 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
             "description": m.description, "digest": row["digest"], "provider_apis": m.provider.apis if m.provider else [],
             "default_provider": row["default_provider"], "default_model": row["default_model"] or m.defaults.model,
             "persist": m.persist, "egress": m.run_entries(), "install_egress": m.install.egress,
+            "install": {"id": row["install_id"], "status": row["install_status"], "log_tail": row["install_log_tail"],
+                        "updated_at": ts(row["install_at"])} if row.get("install_id") else None,
             "settings": {k: {"description": s.description, "default": s.default, "required": s.required,
                              "set": k in row["settings"], "value": row["settings"].get(k)} for k, s in m.settings.items()},
             "secrets": {k: {"description": s.description, "hosts": s.hosts, "required": s.required,
                             "set": k in row["secrets"]} for k, s in m.secrets.items()},
             "mcp": {label: {"url": s.url, "allowed_tools": s.allowed_tools} for label, s in m.mcp.items()},
             "created_at": ts(row["created_at"]), "updated_at": ts(row["updated_at"])}
+
+
+JOINED = ("SELECT h.*, i.id AS install_id, i.status AS install_status, i.log_tail AS install_log_tail, i.updated_at AS "
+          "install_at FROM harnesses h LEFT JOIN installs i ON i.org_id = h.org_id AND i.digest = h.digest AND i.image = %s")
 
 
 async def find(tx: Tx, name: str) -> dict[str, Any]:
@@ -60,8 +67,8 @@ async def find(tx: Tx, name: str) -> dict[str, Any]:
 
 
 class Harnesses:
-    def __init__(self, db: Database, objects: Objects, vault: Vault, audit: Audit):
-        self.db, self.objects, self.vault, self.audit = db, objects, vault, audit
+    def __init__(self, db: Database, objects: Objects, vault: Vault, audit: Audit, installs: Installs):
+        self.db, self.objects, self.vault, self.audit, self.installs = db, objects, vault, audit, installs
 
     # ── publishing a package ───────────────────────────────────────────────────────────────────────────────────────
     async def publish(self, folder: Path, owner: str | None) -> tuple[str, Manifest]:
@@ -101,9 +108,9 @@ class Harnesses:
                          "manifest = EXCLUDED.manifest, settings = EXCLUDED.settings, secrets = EXCLUDED.secrets, "
                          "updated_at = now()", ids.new("harness"), org_id, manifest.name, digest, manifest.model_dump(),
                          settings, secrets)
-            row = await tx.get("SELECT * FROM harnesses WHERE name = %s", manifest.name)
-        log.info("installed %s for %s (%s)", manifest.name, org_id, digest[:12])
-        return _view(row)
+        install = await self.installs.ensure(org_id, digest)    # the organization's own run of `install`, once
+        log.info("installed %s for %s (%s): install %s", manifest.name, org_id, digest[:12], install["status"])
+        return await self.get(Principal(org_id, "platform:install", ADMIN), manifest.name)
 
     async def install_folder(self, org_id: str, folder: Path) -> dict[str, Any]:
         """Install or upgrade from a package folder on this host: the built-in harness package builder, at `init`."""
@@ -122,12 +129,17 @@ class Harnesses:
             return await find(tx, name)
 
     async def get(self, p: Principal, name: str) -> dict[str, Any]:
-        return _view(await self.row(p, name))
+        p.require("harnesses", "read")
+        async with self.db.tenant(p.org_id) as tx:
+            row = await tx.one(f"{JOINED} WHERE h.name = %s", self.installs.image, name)
+        if not row:
+            raise NotFound(f"no harness {name} installed", param="model", code="model_not_found")
+        return _view(row)
 
     async def list(self, p: Principal) -> list[dict[str, Any]]:
         p.require("harnesses", "read")
         async with self.db.tenant(p.org_id) as tx:
-            return [_view(r) for r in await tx.all("SELECT * FROM harnesses ORDER BY name, created_at")]
+            return [_view(r) for r in await tx.all(f"{JOINED} ORDER BY h.name, h.created_at", self.installs.image)]
 
     # ── reading a package ──────────────────────────────────────────────────────────────────────────────────────────
     async def _unpacked(self, p: Principal, name: str) -> Path:
@@ -206,7 +218,7 @@ class Harnesses:
             await tx.run("UPDATE harnesses SET settings = %s, secrets = %s, default_provider = coalesce(%s, default_provider), "
                          "default_model = coalesce(%s, default_model), updated_at = now() WHERE id = %s",
                          current_settings, current_secrets, default_provider, default_model, row["id"])
-            row = await tx.get("SELECT * FROM harnesses WHERE id = %s", row["id"])
+            row = await tx.get(f"{JOINED} WHERE h.id = %s", self.installs.image, row["id"])
         await self.audit.write(p.org_id, p.actor, "harness.configure", row["id"],
                                {"name": name, "settings": sorted((settings or {}).keys()),  # type: ignore[attr-defined]
                                 "secrets": sorted((secrets or {}).keys()),  # type: ignore[attr-defined]

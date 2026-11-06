@@ -1,4 +1,8 @@
-"""The caller's side of a turn (SPEC §4, §6.3): routing, queueing, idempotency, reads, cancel and delete."""
+"""The caller's side of a turn (SPEC §4, §9.1): routing, queueing, idempotency, reads, cancel and delete."""
+import io
+import json
+import tarfile
+
 import pytest
 
 from harnessgateway.errors import Conflict, Invalid, NotFound
@@ -6,6 +10,28 @@ from harnessgateway.errors import Conflict, Invalid, NotFound
 from .conftest import SHELL, pack
 
 BODY = {"model": "shell", "input": "echo hi"}
+
+
+async def follow_until(plat, org, rid, count):
+    seen = 0
+    async for event in plat.turns.follow(org.admin, rid):
+        if event is None:
+            continue
+        yield event
+        seen += 1
+        if seen >= count:
+            return
+
+
+def package(manifest: dict) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in (("harness.json", json.dumps(manifest).encode()), ("install", (SHELL / "install").read_bytes()),
+                           ("run", (SHELL / "run").read_bytes())):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o755
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
 
 
 async def test_a_turn_is_queued_with_its_session_and_its_envelope(plat, org, shell):
@@ -20,18 +46,9 @@ async def test_a_turn_is_queued_with_its_session_and_its_envelope(plat, org, she
     assert events[0]["type"] == "response.created" and events[0]["sequence_number"] == 0
     container = await plat.containers.get(org.admin, turn["session_id"])
     assert container["metadata"]["created_by"] == org.admin.actor and container["metadata"]["user"] == "alice"
-    assert container["metadata"]["state"] == "idle" and container["metadata"]["turns"] == "1"
-
-
-async def follow_until(plat, org, rid, count):
-    seen = 0
-    async for event in plat.turns.follow(org.admin, rid):
-        if event is None:
-            continue
-        yield event
-        seen += 1
-        if seen >= count:
-            return
+    assert container["metadata"]["state"] == "queued" and container["metadata"]["turns"] == "1"
+    async with plat.db.platform() as tx:                         # the install is pending: no box yet
+        assert await tx.value("SELECT count(*) FROM boxes WHERE session_id = %s", turn["session_id"]) == 0
 
 
 async def test_routing_refusals_name_what_is_wrong(plat, org, shell):
@@ -52,19 +69,9 @@ async def test_routing_refusals_name_what_is_wrong(plat, org, shell):
 
 
 async def test_required_settings_and_secrets_gate_a_turn(plat, org):
-    import json
     folder_manifest = json.loads((SHELL / "harness.json").read_text())
     manifest = {**folder_manifest, "name": "gated", "secrets": {"T": {"hosts": ["mcp.example.com"], "required": True}}}
-    import io
-    import tarfile
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, data in (("harness.json", json.dumps(manifest).encode()), ("install", (SHELL / "install").read_bytes()),
-                           ("run", (SHELL / "run").read_bytes())):
-            info = tarfile.TarInfo(name)
-            info.size, info.mode = len(data), 0o755
-            tar.addfile(info, io.BytesIO(data))
-    await plat.harnesses.install(org.admin, buf.getvalue())
+    await plat.harnesses.install(org.admin, package(manifest))
     with pytest.raises(Invalid, match="needs T set"):
         await plat.turns.create(org.admin, {"model": "gated", "input": "x"})
     h = await plat.harnesses.configure(org.admin, "gated", secrets={"T": "the-value"})
@@ -130,3 +137,11 @@ async def test_the_catalog_is_the_models_list_and_uninstall_keeps_sessions(plat,
     assert (await plat.containers.get(org.admin, turn["session_id"]))["metadata"]["harness"] == "shell"
     await plat.harnesses.install(org.admin, pack(SHELL))
     assert (await plat.harnesses.get(org.admin, "shell"))["digest"] == shell["digest"]
+
+
+async def test_a_suspended_organization_queues_nothing(plat, org, shell):
+    await plat.orgs.update(org.id, status="suspended")
+    with pytest.raises(Invalid, match="suspended"):
+        await plat.turns.create(org.admin, BODY)
+    await plat.orgs.update(org.id, status="active")
+    assert (await plat.turns.create(org.admin, BODY))["status"] == "queued"

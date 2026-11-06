@@ -1,174 +1,146 @@
-# HarnessGateway: specification
+# HarnessGateway 3.0 — Specification
 
-HarnessGateway runs coding-agent CLIs (harnesses) as an API. A caller sends a standard OpenAI Responses request; the
-platform runs it through a **harness package** in a gVisor sandbox and streams back standard Responses events. The
-session survives the sandbox, so the next request continues it.
+This document is the platform. It is written so that someone with no context can build, run, operate and extend
+HarnessGateway from it alone. The code is checked against it; when the design changes, this file changes first.
 
-This document is the whole platform: what it does, how it is built, and how it is deployed, self-hosted, as one
-organization. It is the reference every change is checked against. What is built on top of the core is specified
-elsewhere; here is only what the core provides for it, the extension seam (§13).
+Read it in order once. Afterwards, §15 (build order) and §16 (checks) are where work starts.
 
-## 1. Principles
+---
 
-1. **The contract is the OpenAI Responses schema, in both directions.** No HarnessGateway request or response schema
-   exists. Any OpenAI SDK works unchanged. Output is validated with the OpenAI SDK's own types.
-2. **The request serves the task; the package defines the agent.** What to work on, with which files, under which
-   per-call guidance, comes in the request. What the agent *is* (its instructions, skills, hooks, subagents,
-   permissions, MCP servers, egress, secrets it may use) is the package: operational IP, version-controlled.
-3. **The platform knows no CLI.** Every CLI-specific fact (install method, command line, config paths, output format)
-   lives in a package. The platform runs scripts, lays down seeds, moves bytes, enforces the sandbox and keeps sessions.
-4. **No secret ever enters a sandbox.** Not the provider key, not an organization's secrets, not a caller's token. A
-   sandbox holds placeholders; values are injected outside it, at the gateway or the sandbox's egress door.
-5. **Narrowing is safe; widening is escalation.** A request may select or narrow what the package offers. It may never
-   add capability the organization did not grant (§3.3).
-6. **One organization, built to be extended.** Every row and object belongs to an organization and every query is
-   scoped to one. Identity is the core's: accounts, two roles, keys, sign-ins and audit. Self-hosted runs one
-   organization; the extension seam (§13) is where more is built, without forking the core.
-7. **Stateless roles, one stateful store.** API, gateway and node processes keep no state that matters across restarts;
-   Postgres and an object store hold everything. Any role scales by running more of it.
-8. **KISS, DRY, OOP, SRP, negative space.** Each module has one job. What is not allowed is refused at the boundary,
-   loudly, with a message that says what is allowed. Nothing speculative is built.
+## 1. What HarnessGateway is
+
+**One sentence.** A sandbox that saves the agent's home directory and workspace, with a gateway that turns an OpenAI
+Responses request into a run of that sandbox, and a ledger that says what it cost.
+
+**The primitive.** A container holds a coding-agent CLI (a *harness*). A request arrives on its standard input. It runs
+the task. Its home directory and workspace are saved at the end and restored before the next request, so the next
+request continues the same session. Anyone can do this by hand with a script and a tarball.
+
+**What the platform adds.** It does that for any harness, the same way, over the OpenAI Responses API, in hardened
+ephemeral sandboxes, with egress control, with every secret kept out of the sandbox, with partial output,
+interruption, forking and rewinding, with a usage ledger that bills **agent-seconds** and **stored bytes**, and with
+nothing of a session living anywhere but an object store.
+
+**Who defines what.**
+
+| Thing | Defined by |
+|---|---|
+| The task, the instructions, the tools offered, the output format | the request (OpenAI Responses) |
+| The harness: which CLI, how it is installed, how it is driven, what of its home persists | the harness package |
+| Sandboxing, egress, secrets, sessions, snapshots, streaming, metering | the platform |
+
+The platform knows no CLI. Nothing CLI-specific is ever added to it.
+
+**Two deployments, one code.** The open-source core is a complete single-organization platform anyone self-hosts:
+sandboxes, egress door, snapshots, SSO, keys and roles, audit, metering, autoscaled roles, console and chat. The SaaS
+is the same image plus a private extension loaded through §13, adding what only many organizations need. Nothing is
+held back from the core.
+
+---
 
 ## 2. Vocabulary
 
 | Term | Meaning |
 |---|---|
-| Organization (org) | The tenant. Owns accounts, keys, providers, egress, harnesses, sessions, files, usage. Self-hosted has one. |
-| Account | A person: an email, a password, a role in the organization. |
-| API key | What an application is built around: named after the app, with a role; run-only when it only runs. |
-| Principal | Whoever a request runs as: an account's sign-in or an API key, resolved to organization, actor, role. |
-| Sign-in | An account's bearer token after a login; hashed, expiring, revocable. Not a sandbox session. |
-| Operator | The platform's owner: a platform admin's account, or the operator key for automation. |
-| Harness package | A directory (a manifest, two executables, seeds) that teaches the platform one CLI and one agent. |
-| Harness | A package installed in an org under a name, with the org's settings and secret values. |
-| Provider | An org's model endpoint: an API shape (`anthropic`, `openai`, `google`), a base URL, a sealed key. |
-| Session (container) | The continuing conversation and workspace of one harness. Exposed as an OpenAI container. |
-| Turn (response) | One request on a session: one run of the package's `run`. Exposed as an OpenAI response. |
-| Sandbox (box) | The gVisor container a session runs in. Disposable; the session is not. |
-| Door | The box's only network exit: an egress allowlist, secret injection, and the provider relay. |
-| Gateway | The service that swaps a turn's token for the org's provider key and relays model calls. |
-| Node | A host that runs boxes. Pulls turns from the API. |
+| **Organization** | The tenant. Self-hosted has one; the schema supports many (row-level security on every tenant table). |
+| **Harness** | A package installed in an organization under a name. `model: <name>` in a request selects it. |
+| **Package** | A folder: `harness.json`, `install`, `run`, optional `seeds/`. Content-addressed by digest. |
+| **Provider** | A model API endpoint of the organization: an API shape (`anthropic`, `openai`, `google`), a base URL and a sealed key. |
+| **Session** | A sequence of turns sharing a home and a workspace. Identified as an OpenAI *container* (`cntr_…`). |
+| **Turn** | One request and its response (`resp_…`). One run of the package's `run`. |
+| **Snapshot** | The session's state after a turn: a manifest of paths and content hashes, plus the blobs it names. Every turn that changed something has one; it is that turn's checkpoint. |
+| **Box** | One sandbox container running one session, for one or more consecutive turns, then gone. |
+| **Runner** | The small program inside the box that drives a turn: fetch, restore, run, stream, snapshot, report. |
+| **Door** | The egress proxy. A box's only way out. Enforces the allow list and swaps secret placeholders for values. |
+| **Launcher** | The adapter that starts a box: Docker self-hosted, a container service in the SaaS. |
+| **Worker** | The process that consumes the job queue (launching boxes, installs, stops, deletions) and runs scheduled duties. |
+| **Placeholder** | A random token (`hgs_…`) a box holds where a secret would be; the door replaces it on the way out, only toward the hosts it is bound to. |
+| **Agent-seconds** | Seconds a turn was running, measured by the API's clock from the box's first report to its finish. The unit customers are billed in. |
 
-## 3. The seam: request, package, union
+---
 
-### 3.1 The rule
+## 3. Principles
 
-Three questions place everything:
+1. **The contract is the OpenAI Responses schema, both directions.** Requests are validated against the OpenAI SDK's
+   request type; every event and the final `Response` are validated against the SDK's models. No HarnessGateway
+   request or response schema exists. Platform facts ride in fields the schema has: `model`,
+   `previous_response_id`, `metadata`, `tools` of type `mcp`.
+2. **The platform knows no CLI.** A harness that cannot work inside the contract is a package problem; the platform
+   never changes for it.
+3. **Nothing on compute is state.** An API replica, a worker, a door replica, a box: each can die at any moment and
+   the platform recovers from Postgres and the object store without losing a turn's record. Redis holds moments,
+   not records (§7).
+4. **No secret ever enters a sandbox.** Provider keys, harness secrets and caller credentials are placeholders
+   inside; the door makes them real only toward the hosts they are bound to. No secret in any file, log, row,
+   snapshot, event or error message.
+5. **Include-only, allow-only.** What persists is what the package names (default: the whole home, and the
+   workspace). What a box may reach is what the organization and the package allow. Nothing is excluded, because
+   nothing else is included.
+6. **Negative space.** Every boundary refuses what it does not allow with a message naming what it does. Invariants
+   are asserted, not handled. There are no silent fallbacks.
+7. **One implementation per idea.** One validator (shared with packages as `hgkit`). One snapshot format. One
+   job shape. One secret mechanism (placeholders at the door). One image, several roles.
+8. **Ports and adapters.** Vendor SDKs only in `adapters/`. Postgres, Redis, HTTP, OCI images and the OpenAI schema
+   are standards the core is written against, not ports.
 
-1. Does it change the **agent** (capability, policy, standing knowledge) or the **task** (the work, its data, its
-   framing, its budget, the shape of the answer)? Agent → package. Task → request.
-2. Would taking it from the request **widen** what the agent can do? Then the request may only select or narrow it.
-3. Is it a **secret**? Then neither package files nor request bodies carry it; the org stores it sealed, and the
-   platform injects it outside the sandbox.
-
-### 3.2 The split
-
-| Concern | Request (the caller) | Package (the org's IP) | Union rule |
-|---|---|---|---|
-| Work items | `input` text, `input_file`, `input_image` | a starter project (`seeds/workspace`), optional | request files are placed in the workspace as work, by name, never at config paths |
-| Instructions | `instructions`; `system`/`developer` messages in `input` | standing system prompt, instruction files, rules, persona (`seeds/home`) | the package's standing prompt first, the request's appended. Replace only if the package chooses to map `instructions` to its CLI's replace mechanism |
-| Skills, hooks, subagents, commands, permissions, CLI settings | — | `seeds/home` | package only |
-| MCP servers | `tools[type=mcp]`: select a package server by `server_label` and narrow with `allowed_tools`; add a server whose host the org already allows | the catalog: `mcp` in `harness.json` | §3.3 |
-| Built-in tools | narrow only (`tool_choice: "none"`, `allowed_tools`) | which tools exist and their permission rules | intersection; what a CLI cannot narrow, its package reports as ignored |
-| Model and provider | `model` = `harness[/provider[/model]]` | provider APIs spoken, default model | the request picks within what the package speaks |
-| Per-call knobs | `reasoning`, `text.format`, `max_output_tokens`, `max_tool_calls`, `stream`, `background`, `store` | defaults and their mapping to the CLI | the request wins where the CLI honours it; otherwise the package reports it ignored |
-| Egress | — | `run.egress`, `install.egress` (allow and `!deny` entries) | the org's entries apply to every harness; a harness widens or narrows them for its sandboxes; a deny wins (§7.2) |
-| Secrets | an MCP tool's `authorization`/`headers` values (the caller's own token) | secret names, the hosts each may reach | values sealed in the org, injected at the door, scoped to hosts (§8) |
-| Continuity | `previous_response_id` | `persist`: the CLI's session store | the platform snapshots workspace, state and `persist` (§6.4) and hands every turn the session's conversation so far in Responses form (§5.6); a package resumes its CLI natively when it can and from that history otherwise |
-
-**Home holds the IP, the workspace holds the work.** `seeds/home` is laid down in every new sandbox and is not persisted
-(unless named in `persist`, which a package uses only for the CLI's session store). So the org's instructions, skills
-and hooks are re-applied by the package version on every sandbox, cannot be permanently edited by the agent, and take
-effect on upgrade without migration. The workspace belongs to the caller: persisted, worked in, downloaded from.
-
-### 3.3 MCP servers: the one true union
-
-A package declares its catalog in `harness.json` (§5.2). The platform resolves the turn's MCP servers, CLI-agnostically,
-into `/run/hg/mcp.json` (§5.6), which the package renders into its CLI's configuration:
-
-1. A request `mcp` tool **without** `server_url` selects the catalog server of that `server_label` (unknown label: 400
-   `mcp_server_not_found`). Its `allowed_tools` narrows the catalog's.
-2. If the request selects any catalog server, only the selected catalog servers are active; otherwise all are.
-3. A request `mcp` tool **with** `server_url` adds a server. Its host must already be in the turn's effective egress
-   (§7.2), else 400 `mcp_server_not_allowed`. Its label must not collide with the catalog's (400 `mcp_label_conflict`).
-4. Values of an added server's `authorization` and `headers` are the caller's secrets (§8.3): replaced by placeholders
-   before the request is stored or delivered, injected by the door for that server's host for that turn only.
-5. `require_approval` is accepted and ignored: a harness runs unattended inside its sandbox.
+---
 
 ## 4. The Responses contract
 
-### 4.1 In
+### 4.1 Routing fields the platform reads
 
-`POST /v1/responses` takes a body validated against the OpenAI SDK's `ResponseCreateParams` (pinned SDK version). The
-platform reads only what routes and secures a turn:
+- `model`: `harness`, `harness/provider` or `harness/provider/model`. The model part may contain `/`.
+- `previous_response_id`: a `resp_…` this platform returned. Resolves to its session (§9.3).
+- `stream`, `background`, `store` (default true; `store: false` sessions are deleted ten minutes after their last turn).
+- `input`: `file_id` references (`input_file`, `input_image`) are delivered into the box; at most 64 per request.
+- `tools` of `type: "mcp"`: select or narrow the package's MCP catalog, or add a server with the caller's own
+  credentials (replaced by placeholders before storage).
+- `user`: the application's end user, kept on the session and turn for grouping.
+- `metadata`: echoed; the platform adds `session_id`, `hg_reason` (why the platform ended a turn), `hg_error_code`
+  (a package error code outside OpenAI's set), `hg_ignored_fields` (what the package reported it did not honour).
+- `conversation` is refused (continue with `previous_response_id`). `connector_id` MCP tools are refused.
 
-| Field | Platform use |
-|---|---|
-| `model` | `harness[/provider[/model]]`: the installed harness, the org's provider, the model name the CLI gets. Absent parts fall back: provider to the session's, the harness's default, else the org's only provider of an API the package speaks; model to the session's last, the harness's default, the manifest's default. |
-| `input` | `file_id` references in `input_file`/`input_image` parts are checked and delivered to the sandbox. |
-| `previous_response_id` | the response to continue from. Its session's last response: the turn joins that session. An earlier response: a **fork**, a new session restored from the state saved after that response (§6.4), named in the container's `metadata.forked_from`; the original session is untouched. Responses form a tree, as in OpenAI's API. Provider and model may change. Another harness in `model` is a fork onto it: a new session on that harness, restored from the checkpoint's workspace only (the old package's `$HG_STATE` and `persist` paths are the old CLI's), with the conversation reaching the new harness as the session's history (§5.6). 409 while that response is still running or its state still being saved. |
-| `tools[type=mcp]` | resolved per §3.3; secret values extracted per §8.3. |
-| `stream`, `background`, `store` | delivery and retention. `store: false` runs a session that is not snapshotted and cannot be continued. |
-| `metadata` | echoed. |
-| `conversation` | refused: 400, "continue with previous_response_id". |
+Everything else goes to the package untouched, in the request file.
 
-Everything else reaches the package as the caller sent it (with §3.3's secret values replaced). The package maps what
-its CLI supports and names what it ignored (§4.3).
+### 4.2 Output
 
-### 4.2 Out
+Each stdout line of `run` is one of:
 
-The package's `run` prints one JSON object per stdout line. A line that parses as an object whose `type` starts with
-`response.` is a Responses stream event; any other line is a log line (kept, never delivered).
+- a Responses stream event (checked against the SDK model its `type` names; `sequence_number` assigned by the
+  platform; `response.created`, `response.in_progress`, `response.queued` are dropped: the platform owns the envelope);
+- the terminal event: `response.completed`, `response.incomplete` or `response.failed`, with `response.output`
+  (or the completed `output_item.done` items when absent), `usage`, `error`, `incomplete_details`, `metadata`;
+- anything else: a log line, kept in the turn's log tail (and the full log when observability is `full`).
 
-- The platform owns the envelope: it emits `response.created`, `response.in_progress`, assigns every
-  `sequence_number`, and builds the final `Response` from the package's terminal event.
-- Each event is validated against the SDK model for its `type`; each item against the SDK model for its item type. An
-  invalid line fails the turn with `hg_reason=invalid_output` and a message naming the field.
-- Exactly one terminal event (`response.completed`, `response.incomplete`, `response.failed`) ends the package's
-  output; anything printed after it fails the turn.
-- Delta events stream live and are discarded once their item is done; every other event is kept.
-- Stored text holds no NUL: where a package's output carries U+0000 (a binary read back as text), U+FFFD stands
-  in, in every stored record. Nothing else in an event is changed.
-- The final `Response` echoes the request's parameters (secrets redacted), the package's `output` (or the items it
-  completed), `usage`, `error`/`incomplete_details`, and `metadata`: the request's, the package's, plus `session_id`
-  and, on platform-caused endings, `hg_reason`.
-- Typical items a package emits: `message`, `reasoning`, `shell_call`/`shell_call_output`,
-  `apply_patch_call`/`apply_patch_call_output`, `mcp_call`, `function_call`/`function_call_output`.
+A line the schema refuses fails the turn (`hg_reason: invalid_output`) and stops the process. Nothing may follow
+the terminal event. A process that exits without one ends the turn as `failed` with `hg_reason:
+exited_without_result`, keeping the completed items.
 
-### 4.3 What a package could not honour
+The final `Response` echoes the request's parameters, carries the package's output and usage, and validates
+against the SDK's `Response` before a client sees it. A cancelled turn is `status: cancelled` with terminal event
+`response.failed`.
 
-A package names request fields it did not act on in its terminal event's `metadata.hg_ignored_fields`
-(comma-separated). `hgkit` provides it. A silently ignored field is indistinguishable from an honoured one.
+### 4.3 Errors
 
-### 4.4 Errors
+OpenAI's envelope: `{"error": {"type", "code", "message", "param"}}`. Types: `invalid_request_error` (400, 413),
+`authentication_error` (401, 423), `permission_error` (403), `not_found_error` (404), `conflict_error` (409),
+`rate_limit_error` (429, an extension's refusal), `server_error` (500, 502).
 
-OpenAI's error shape: `{"error": {"type", "code", "message", "param"}}`. A turn that fails after acceptance is a
-`Response` with `status: "failed"`; codes outside the SDK's enum become `server_error` with the real code in
-`metadata.hg_error_code`. Platform reasons (`hg_reason`): `cancelled`, `timed_out`, `install_failed`,
-`sandbox_failed`, `invalid_output`, `node_lost`, `exited_without_result`.
+### 4.4 Streaming
 
-## 5. Harness packages
+`POST /v1/responses` with `stream: true` is a server-sent event stream of the turn's events from `response.created`
+to the terminal event, keep-alive comments every 15 s. `GET /v1/responses/{id}?stream=true&starting_after=N`
+replays from event N+1 and follows live. A foreground turn (not `background`) is cancelled when its client
+disconnects; a background turn outlives its request.
 
-### 5.1 Layout
+---
 
-```
-harness.json          the manifest (§5.2)
-install               an executable: installs the CLI into $HG_TOOLS
-run                   an executable: one turn, the request in, Responses events out
-seeds/home/           laid into $HOME in every new sandbox: the agent's standing configuration
-seeds/workspace/      laid into the workspace of a new session: a starter project
-anything else         the package's own (modules, README, tests): the platform reads none of it
-```
+## 5. The package contract
 
-The platform reads the manifest, runs the two executables and copies the seeds; it knows no language. `install` and
-`run` are scripts whose first line names their interpreter, or Linux binaries, and are run as they are (the platform
-marks them executable at install).
+A package is a folder. The platform reads `harness.json`, runs `install` and `run`, copies `seeds/home` and
+`seeds/workspace`. Everything else is the package's own (README, tests, assets).
 
-A package is identified by its **digest**: SHA-256 over every file's path, executable bit and bytes. It moves as a
-canonical gzipped tar (sorted, owner 0, mtime 0), so the same files give the same bytes. Limits: 5,000 files, 256 MiB
-unpacked. Regular files and directories only; nothing outside the root.
-
-### 5.2 Manifest
+### 5.1 `harness.json`
 
 ```json
 {
@@ -178,633 +150,738 @@ unpacked. Regular files and directories only; nothing outside the root.
   "description": "…",
   "provider": {"apis": ["anthropic"]},
   "defaults": {"model": "claude-sonnet-5-5"},
-  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 1200},
-  "run": {"egress": [], "timeout_s": null, "stop_grace_s": 10},
-  "persist": [".claude/projects"],
-  "settings": {"LOG_LEVEL": {"description": "…", "default": "info"}},
-  "secrets": {"GITHUB_TOKEN": {"description": "…", "hosts": ["api.github.com"], "required": false}},
-  "mcp": {"github": {"url": "https://api.githubcopilot.com/mcp/",
-                     "headers": {"Authorization": "Bearer ${GITHUB_TOKEN}"},
-                     "allowed_tools": ["search_issues", "get_issue"]}}
+  "install": {"egress": ["registry.npmjs.org"], "timeout_s": 900},
+  "run": {"egress": [], "timeout_s": null, "stop_grace_s": 20},
+  "persist": ["."],
+  "settings": {"NAME": {"description": "", "default": null, "required": false}},
+  "secrets": {"NAME": {"description": "", "hosts": ["api.example.com"], "required": false}},
+  "mcp": {"label": {"url": "https://…", "transport": "http", "headers": {"Authorization": "Bearer ${NAME}"}, "allowed_tools": null}}
 }
 ```
 
-| Field | Rule |
+- `name`: `[a-z0-9][a-z0-9._-]{0,62}`. `version`: `<CLI version>-<package revision>`, 1–64 characters.
+- `provider`: absent for a harness that calls no model. `apis` among `anthropic`, `openai`, `google`.
+- `install.egress`, `run.egress`: egress entries (§8.2). `install.timeout_s` 1–3600 (default 900). `run.timeout_s`
+  null (none) or ≥ 1; the organization's `turn_timeout_s` also bounds a turn. `run.stop_grace_s` 1–300 (20): the time
+  the process gets after SIGTERM, and after its terminal event, before SIGKILL.
+- `persist`: paths relative to `$HOME` kept across turns, at most 64, normalized, no `..`. `"."` means the whole
+  home. Default `["."]`. The workspace and `$HG_STATE` always persist.
+- `settings`: environment variables for `run`, named `[A-Z][A-Z0-9_]*`, not `HG_*`, not a reserved name (`HOME`,
+  `PATH`, proxy and CA variables). At most 64; a value at most 16 KiB.
+- `secrets`: same names; each bound to allow entries (`hosts`, no `!`). The organization sets values; `run` sees
+  placeholders. A `${NAME}` in an MCP header must name a declared secret.
+- `mcp`: the catalog. A request may select labels (narrowing `allowed_tools`) or add servers.
+
+### 5.2 `install`
+
+An executable (shebang script or Linux binary). Runs once per package digest and sandbox image, in an install box
+with the install egress, as the sandbox user, with `HG_TOOLS` (writable, where the CLI goes), `HG_PACKAGE_DIR`,
+`HG_PACKAGE_VERSION`, `HG_CONTRACT=1`, `HOME=/tmp/home`. Exit 0 within `install.timeout_s`. Its output tail is kept.
+The result is archived (§9.6) and never placed in an image.
+
+### 5.3 `run`
+
+An executable. Runs once per turn, in the session's box, as the sandbox user, in `/workspace`, with the request on
+standard input and these variables:
+
+| Variable | Value |
 |---|---|
-| `contract` | `1`. |
-| `name` | `[a-z0-9][a-z0-9._-]{0,62}`. |
-| `version` | `<CLI version>-<package revision>`; handed to `install` and `run` as `HG_PACKAGE_VERSION`, so the CLI's version is written once. |
-| `provider.apis` | subset of `anthropic`, `openai`, `google`; absent means the harness runs without a model. |
-| `install.egress`, `run.egress` | egress entries (§7.2). `install.timeout_s` 1–3600, default 900. |
-| `run.timeout_s` | the package's own bound on a turn, if any. `run.stop_grace_s` 1–300, default 20. |
-| `persist` | at most 64 normalized paths relative to `$HOME`, without `..`: what survives besides the workspace and state. |
-| `settings` | non-secret configuration, ≤64, names `[A-Z][A-Z0-9_]{0,63}` not starting `HG_` and not a reserved name (`HOME`, `PATH`, `LANG`, proxy and CA variables); exported to `run` as environment variables. |
-| `secrets` | secret names (same naming rule), each with the `hosts` it may reach (egress-entry syntax). Exported to `run` as placeholders (§8). |
-| `mcp` | the catalog: label → `{url, transport?, headers?, allowed_tools?}`. `${NAME}` in a header value names a declared secret. A catalog server's host joins the run egress and its secrets' hosts. |
-
-Unknown fields are refused, with the field named.
-
-### 5.3 One package per harness
-
-A harness is one package: the CLI's install and mapping and, when the org wants it, the org's own agent on that CLI
-(`seeds/home` with its instruction files, skills and hooks; its `mcp` catalog, `settings` and `secrets`). There is no
-composition between packages. An org that wants its own agent on a CLI another package already maps copies that
-package in the console (open it, **Edit**, change `name`) and adds its seeds; the two are then separate harnesses,
-each pinned by its own digest. Packages others start from stay *vanilla*: the CLI as its vendor ships it plus what it
-needs to run headless in the sandbox, nothing an org would want to own.
-
-### 5.4 Install
-
-`install` runs once per (package digest, sandbox image id) on a node, in an install box: gVisor, the sandbox image,
-writable `$HG_TOOLS` and `/tmp`, egress = org egress ∪ `install.egress`, no provider, no secrets, within
-`install.timeout_s`. On success `$HG_TOOLS` is kept on the node and mounted read-only into every box of that package. A
-package installs its CLI by the CLI's official, documented method, pinned to the manifest's version, and verifies it.
-
-### 5.5 Run
-
-`run` runs once per turn, in the session's box, in its own process group, with the working directory
-`$HG_WORKSPACE`, the request on stdin, stdout as the turn's events (§4.2), stderr as the turn's log. Its exit ends the
-turn's process; its terminal event ends the turn's response. After the terminal event it has `stop_grace_s` to exit.
-
-### 5.6 What a turn sees
-
-| Path / variable | Content |
-|---|---|
-| `/run/hg/request.json` (`HG_REQUEST`) | the request as stored (secret values replaced by placeholders) |
-| `/run/hg/files/` (`HG_FILES`) | `file_id` inputs at `<id>/<filename>`, and `index.json`: `{id: {filename, path, bytes}}` |
-| `/run/hg/mcp.json` (`HG_MCP`) | the turn's MCP servers: `[{label, url, transport, headers, allowed_tools}]`, header values holding placeholders |
-| `/run/hg/history.json` (`HG_HISTORY`) | the session's earlier turns in order, through every fork back to the root: `[{id, status, input, output}]`, the input items (file bytes left out) and output items of each, in Responses form; `[]` on a first turn. The conversation in the platform's own format, for a package whose CLI cannot resume its own session (§6.3) |
-| `/run/hg/history.json` (`HG_HISTORY`) | the session's earlier turns in order, through every fork back to the root: `[{id, status, input, output}]`, the input items (file bytes left out) and output items of each, in Responses form; `[]` on a first turn. The conversation in the platform's own format, for a package whose CLI cannot resume its own session (§6.3) |
-| `HG_WORKSPACE` = `/workspace` | the session's workspace (persisted) |
-| `HG_STATE` = `/state` | the package's small session state, e.g. the CLI's session id (persisted) |
-| `HOME` = `/home/hg` | seeded from `seeds/home` in every new box; only `persist` paths survive |
-| `HG_PACKAGE_DIR` = `/opt/hg/package` | the composed package, read-only |
-| `HG_TOOLS` = `/opt/hg/tools` | the installed CLI, read-only |
-| `HG_PACKAGE_VERSION` | the manifest's `version` (also given to `install`) |
-| `HG_SESSION`, `HG_RESPONSE`, `HG_TURN` | session id, response id, turn number |
-| `HG_MODEL`, `HG_PROVIDER_API`, `HG_PROVIDER_URL`, `HG_PROVIDER_TOKEN` | the model name; the provider's API shape; `http://hg-door:8080`; the turn's token (§7.4) |
-| settings, secrets | each declared setting as its value; each declared secret as its placeholder |
-
-`/run/hg` and the package and tools are read-only to the box's user.
-
-### 5.7 hgkit
-
-The Responses contract in Python: a small library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`), optional,
-and harness-agnostic: it knows the request a turn receives and the events it must print, and nothing about any CLI.
-
-- `Request`: the request, with readers for prompt text, instructions (request + system/developer messages), reasoning
-  effort, text format, MCP servers (`/run/hg/mcp.json`), `place_inputs()`, which writes `file_id` and inline files
-  into the workspace by name (a collision gets a numeric suffix) and returns their names, `history()` and
-  `transcript()` (the session's history, as items and as plain text a CLI can be given), and the turn's environment
-  (`model`, `provider`, `state`, ids, the package version).
-- `Emitter`: prints valid events, named by what the agent did: `say` and `think` (streamed), `ran`, `wrote`,
-  `edited`, `deleted`, `called` (MCP), `used` (any tool), each as the whole call or a handle whose `done`/`failed`
-  reports the result later; `item` and `emit` for any other Responses item or event; `ignored(fields)`; exactly one
-  terminal event: `done`, `stopped`, `failed`.
-- `validate`: the reader the platform itself uses (§4.2), on the same pinned OpenAI SDK: `Emitter(validate=True)`
-  checks each event as it is printed, `check(text)` reads a whole output, `python3 -m hgkit check` does so from the
-  command line. The platform's own reader is this module; a package that passes it passes the platform.
-
-### 5.8 The template and the built-in
-
-The platform ships two packages. `shell` (no model: the input runs as a bash command; the reference and test
-package) is the template: the console starts every new harness as a copy of it under the name the user gives.
-`harness-package-builder` (the claude-code package seeded with the platform's harness-package-builder skill, the
-template and the packages guide) is the one built-in harness: `init` installs it into the org (`HG_BUILDER_DIR`), and
-it writes packages into its workspace, which the console turns into a draft from that session's page and from no
-other. The builder is the one shipped package that is not vanilla; its seeds are the platform's own. Every other
-harness is one someone wrote, by hand from the template or with the builder. Each package follows one layout:
-`harness.json`, `install`, `run`, `README.md` (Files, The command, Request fields, Output mapping, Known limits,
-Tests), `tests/` with fixtures recorded from real runs. The template's README says, file by file, what to change for
-a CLI. The builder's skill is self-contained under `seeds/home`: it carries the template and the packages guide as
-copies kept current from their sources (`scripts/sync-builder-seeds`; a unit test fails when they drift), so every
-deployment's builder ships the current skill, template and guide, and a builder session's workspace holds only the
-packages it delivers.
-
-## 6. Sandboxes and sessions
-
-### 6.1 The box
-
-One per session at a time, on one node:
-
-- gVisor (`runsc`); another runtime only when the operator sets `HG_UNSAFE_RUNTIME` for development.
-- uid 10001, no capabilities, `no-new-privileges`, read-only root, `/tmp` a size-limited tmpfs.
-- CPU, memory, swap (= memory), pids limits from the org's capacity. The memory limit is `memory_mb` for the box's
-  processes plus `tmp_mb`: `/tmp` is a tmpfs, which the kernel charges to the box. A box killed for its memory ends
-  its turn with a failure that says so.
-- Writable: `/workspace`, `/state`, `/home/hg` (bind mounts of the node's per-session directories). Read-only:
-  `/run/hg`, `/opt/hg/package`, `/opt/hg/tools`, `/opt/hg/runtime`.
-- An internal network whose only peer is the box's door; no DNS (the door resolves names); proxy variables point at the
-  door; the door's CA is trusted (§8.2).
-- The node never touches a box's writable files as root: seeding, restore, snapshot and file staging run inside the box
-  as its user.
-
-### 6.2 Lifecycle of a turn on a node
-
-1. **Claim.** The node claims the next turn it may run (§10.2) and receives a job: ids, the composed package's
-   location and digests, the request's location, file locations, staged container operations, the session's snapshot
-   location, capacity, effective egress, settings, secret bindings (§8), the provider token.
-2. **Package and tools.** Fetched and verified against the digest; tools installed if absent (§5.4).
-3. **Box.** The session's warm box if this node ran its last turn and holds it; otherwise a new box: home seeds, then the
-   snapshot (or, for a new session, the workspace seeds).
-4. **Inputs.** `/run/hg` written; staged container file operations applied to the workspace; the door's turn rules set.
-5. **Run.** `run` started; stdout sent to the API in byte batches as it arrives; stderr kept.
-6. **End.** On exit, cancel (SIGTERM to the process group, then SIGKILL to every process in the box after
-   `stop_grace_s`), timeout (the tighter of the package's and the org's), or the grace after the terminal event: the end
-   is reported, the door's secret bindings are cleared, the turn token revoked.
-7. **Snapshot.** In the background, under the session's lock: if the included paths changed, archived and uploaded
-   (§6.4). The box stays warm until its idle TTL; then it is destroyed.
-
-One turn per session runs at a time; later turns of a session queue in order.
-
-### 6.3 Continuity
-
-`previous_response_id` continues from a response: on the session's last response and the same harness, the same
-session; on an earlier response, a fork: a new session, pinned to the same package digest, restored from that
-response's checkpoint; on another harness, a fork onto it: a new session pinned to that harness's package, restored
-from the checkpoint's workspace only. Provider and model are free to change at any point. A session ends when deleted,
-or after the org's retention.
-
-The platform carries the conversation in two harness-agnostic forms, and knows no CLI to do so. The snapshot (§6.4)
-carries the CLI's own session store where the package named it in `persist`; it is the richer form and the package's
-first choice. The history (`/run/hg/history.json`, §5.6) carries every earlier turn's input and output items in
-Responses form, the platform's own record; it is what a package continues from when the CLI's session is not there:
-a turn killed mid-way (a stop or an interrupt), a fork onto this harness from another, a CLI that keeps no session.
-How a CLI is resumed, and how the history becomes its context, is the package's; the platform only moves the two.
-A client rewinds, branches or switches harness by naming an earlier response; nothing else is needed, and the harness
-is not told, because from inside the sandbox each is a continuation on a fresh box.
-
-### 6.4 Snapshots
-
-Include-only, the way egress is allow-only: `/workspace`, `/state`, and `$HOME/<persist>` paths. Everything else
-(tools, caches, `/tmp`, the rest of `$HOME`) belongs to the box. The node lists the included paths inside the box; the
-listing's hash is the state's fingerprint; when unchanged, nothing is uploaded. Otherwise a gzipped tar is uploaded to
-the object store with the workspace's file list (for the Containers API). Restore unpacks it after the home seeds, so
-the session's own state wins. Every outcome (completed, failed, cancelled, timed out) is snapshotted. A node lost
-mid-turn loses that turn's changes; the session restores from its last snapshot.
-
-Every snapshot is kept for the session's life (its retention, or its deletion): each turn records the snapshot that
-holds the state after it, its **checkpoint**, which a later request forks from by naming the turn (§4.1). A fork copies
-the checkpoint under the new session, so deleting the parent cannot take it away. A turn that changed nothing, or saved
-nothing of its own (cancelled before it ran, lost with its node), points at the last checkpoint before it; one whose
-save failed has none, and cannot be forked from. Storage is metered (§12) and bounded
-by the organization's retention.
-
-## 7. Network
-
-### 7.1 The door
-
-A small process per box (stdlib Python plus `cryptography`), run from the platform image in its own container on the
-box's internal network (`hg-door`) and the node's uplink network:
-
-- **:3128, CONNECT proxy.** A host:port not allowed gets 403. Names are resolved by the door; it connects to the
-  address it checked; private, loopback, link-local and metadata addresses are refused unless the operator set
-  `HG_ALLOW_PRIVATE_EGRESS`. Hosts with no secret binding are tunnelled untouched (no TLS interception). Hosts with a
-  binding are intercepted (§8.2).
-- **:8080, provider relay.** Plain HTTP from the box, relayed to the gateway over TLS, with the door's node credential
-  attached (§7.4).
-- Counts every byte in and out, per turn and for the box, for metering (§12). Logs one line per decision (host, port,
-  verdict, intercepted or not, bytes); never a header, body or value.
-- Rules (allowlist, bindings) come from a file the node writes into the door's private directory per turn; the door
-  reloads it when it changes. The box cannot read it.
-
-### 7.2 Egress
-
-An egress entry is `host`, `*.domain` (any depth of subdomains, not the domain itself) or `*`, with an optional
-`:port` (443 when absent). An entry prefixed with `!` denies instead of allowing. The same syntax at every level; the
-levels differ only in scope:
-
-| Level | Set by | Applies to |
-|---|---|---|
-| Org | the org's admin (`PUT /v1/egress`) | every sandbox of the org |
-| Harness | the package's manifest (`run.egress`, `install.egress`), plus its catalog MCP hosts and its secrets' hosts | that harness's sandboxes |
-
-A connection is allowed when an allow entry of either level matches it and no deny entry of either level does. So the
-org's list applies to every harness; a harness widens it for its own sandboxes with allow entries and narrows it with
-deny entries; a deny wins at either level. Install egress is composed the same way from the org's list and
-`install.egress`. The private-address rule applies on top and cannot be lifted by an org or package. Provider calls
-never need egress: they go through the relay.
-
-### 7.3 The gateway
-
-Stateless HTTP service, the only process where provider keys are in the clear. For each call: the presented turn token
-and the door's node credential → the grant (turn, org, provider; cached ≤10 s) → only that provider API's paths
-(Anthropic `/v1/messages…`, OpenAI `/v1/responses…`, `/v1/chat/completions`, `/v1/models`, Google
-`/v1beta/models…`) → the key set in the provider's auth header → streamed to the provider's base URL with no read
-timeout → streamed back. Every exchange is recorded for observability (§11). The provider's host is re-checked against
-the private-address rule.
-
-### 7.4 The turn token
-
-Minted when a node claims a turn, scoped to one turn and one provider, revoked when the turn ends (and by the sweeper if
-its node is lost). The gateway honours it only when presented with the credential of the node running the turn, which
-only that node's doors hold: a token copied out of a sandbox is useless anywhere else.
-
-## 8. Settings and secrets
-
-### 8.1 Storage
-
-Settings are plain values on the org's harness. Secrets (harness secret values, provider keys) are sealed: AES-256-GCM
-under a per-org data key, the data key wrapped by the key wrapper port (a local master key, or a KMS), with the org,
-kind and name as associated data. A sealed value is written by the API, opened by the scheduler (for a turn's bindings)
-or the gateway (provider keys), and never returned by any read API.
-
-### 8.2 Injection at the door
-
-For each turn, every secret the package declares and the org has set is bound to a fresh random placeholder
-(`hgs_<32 hex>`). The box sees only placeholders (as the declared environment variable, and inside `/run/hg/mcp.json`
-headers). The door's turn rules carry `{placeholder, value, hosts}`.
-
-For a CONNECT to a host with a binding, the door terminates TLS with a certificate it issues for that host from the
-node's CA (generated on the node at start; its key never leaves the node; its certificate is trusted inside boxes),
-offers only HTTP/1.1, verifies the upstream normally, and in each request **header** replaces the placeholders bound
-to that host with their values. Bodies, URLs and responses are not touched. A placeholder sent to any other host is
-sent as it is: worthless. Bindings live only for the turn.
-
-### 8.3 The caller's own token
-
-An added MCP server's `authorization` and `headers` values (§3.3) are taken out of the request before it is stored:
-the stored and delivered request holds placeholders, the values are sealed into the turn's bindings (bound to that
-server's host) until the turn ends, then deleted. They are never echoed, logged, or captured.
-
-### 8.4 What a sandbox can and cannot learn
-
-It can learn placeholders, its turn token (useless outside its door), and anything the injected services send back. It
-cannot learn a provider key, an org secret, or a caller's token. A package that needs a secret in a request **body**
-or URL cannot have it injected; it is refused rather than given the value.
-
-## 9. Tenancy, identity and access
-
-### 9.1 Organizations
-
-The **organization** is the tenant: a team that builds harness packages and the applications around them. Every
-tenant table carries `org_id`, and row-level security confines a tenant transaction to the organization it declared
-(`hg.org`); platform work (scheduling, sweeping, the operator) runs on a separate scope (`hg.scope = platform`).
-Object keys are `orgs/<org_id>/…`. Self-hosted runs one organization; an extension (§13) may create more, on the same
-identity code. A company that wants isolation between groups runs them as organizations; an account may belong to
-several.
-
-### 9.2 Principals and roles
-
-A **principal** is a person (an account's sign-in) or a program (an API key). Both resolve to one shape: `org`, `actor`
-(`account:<id>` or `key:<id>`), `role`, `run_only` (keys) and `platform_admin` (accounts). Two roles:
-
-| Role | May |
-|---|---|
-| `admin` | everything in the organization: providers, egress, accounts, every key, harnesses, sessions, usage, traces, audit |
-| `developer` | install, configure and uninstall harnesses, use the builder, the chat and the playground, create and revoke its own keys, read the organization's sessions, traces and usage; read providers (names, shapes, URLs) and egress |
-
-An **API key** is what an application is built around: it is named after the app (its label is required), carries a
-role, and with `run_only` it may create responses, read, continue and cancel the sessions it made, upload files and
-read `/models`, and nothing else: this is what an application holds. A session records the key (or person) that
-created it, so an app's sessions and usage are read by its key, with no further concept. A key may carry an expiry.
-
-Every check is one call, `Principal.require(resource, action)`, made by the service that owns the resource; the table of
-who may do what lives in one domain module, and a refusal names the role that may.
-
-| Resource | Actions | `admin` | `developer` | run-only key |
-|---|---|---|---|---|
-| organization | read | ✓ | ✓ | ✓ |
-| accounts | create, read, update, reset | ✓ | read self | |
-| providers | create, read, update, delete | ✓ | read | read |
-| egress | read, update | ✓ | read | |
-| harnesses | install, read, configure, uninstall | ✓ | ✓ | read |
-| keys | create, read, revoke | ✓ | its own | |
-| responses, sessions, files | create, read, cancel, delete | ✓ | ✓ | its own |
-| usage, traces | read | ✓ | ✓ | its own |
-| audit | read | ✓ | | |
-| platform (`/internal`) | all | platform admins, the operator key | | |
-
-### 9.3 Accounts and sign-ins
-
-- An **account** is a person: an email (the login), a name, a password hash (scrypt), a status (`invited`, `active`,
-  `disabled`), a platform-admin flag, and a **membership** in the organization with a role. An account in several
-  organizations holds one membership per organization; self-hosted holds one.
-- An admin creates an account (or `init` creates the first admin). It arrives **invited**: a one-time invitation link
-  (the console's setup page with a token `hgi_…`, valid seven days) is mailed to the person when mail is configured
-  (`HG_SMTP_URL`, `HG_MAIL_FROM`, `HG_CONSOLE_URL`) and returned to the creator once either way; the person activates
-  the account by choosing a password with it. An admin resets a password the same way. There is no default password
-  anywhere. A password is at least 12 characters; ten failed sign-ins lock the account for fifteen minutes; every
-  attempt is audited. Disabling an account revokes its sign-ins and its keys.
-- A **sign-in** is an opaque token (`hgl_…`), stored as an HMAC under the pepper with its account, expiry (twelve
-  hours), last use and client, revoked by logout, by disabling the account, or by a password change. The console keeps
-  it in an HttpOnly cookie and presents it as a bearer; the API resolves it to a principal exactly as it does a key.
-- Single sign-on (OIDC against the organization's identity provider, just-in-time accounts, group-to-role mapping) is
-  the next identity feature (§20). Nothing above changes for it: an SSO login produces the same sign-in.
-
-### 9.4 The platform scope
-
-- The **operator** is the platform's owner: whoever deployed it. The platform scope sees every organization, the
-  nodes, the queue and the configuration, and invites an organization's admin; it does not work inside an
-  organization unless the same account is also a member of it.
-- People hold it as a flag on their account (`platform_admin`), never as a shared secret. `init` gives it to the first
-  admin; a platform admin grants it to others. `HG_OPERATOR_KEY` remains for automation (node tokens, draining,
-  metrics scrapers) and for break-glass; its use is audited.
-- `/internal` routes for people accept a platform admin's sign-in or the operator key. Nodes use their own
-  credential.
-
-### 9.5 Audit
-
-Every change of standing is a row in `audit`: sign-ins, their failures and locks; accounts created, activated, reset,
-disabled; keys created and revoked; providers and egress changed; harnesses installed,
-configured and uninstalled. A row is when, who (the actor), what (a dotted action such as `key.create`), the target and
-a detail object that never holds a secret. Admins read their organization's log (`GET /v1/audit`); the platform scope
-reads all (`GET /internal/audit`).
-
-### 9.6 Capacity
-
-Per organization: `vcpus`, `memory_mb` (the processes), `pids`, `tmp_mb` (`/tmp`, a tmpfs charged on top of
-`memory_mb`) per box; `max_sandboxes`, `max_running_turns`; `idle_ttl_s`; `turn_timeout_s`; `retention_days`;
-`node_pool`; `observability` (§11). Self-hosted takes defaults from configuration; the platform scope sets an
-organization's own. An extension that creates organizations (§13) authenticates nobody in a way of its own: accounts,
-roles, sign-ins and audit are the core's.
-
-## 10. Scale and deployment
-
-### 10.1 Processes
-
-One platform image, one CLI, `harnessgateway <command>`:
-
-| Command | Role | Scales by |
-|---|---|---|
-| `serve --role api` | public API, SSE streaming, internal node API | replicas behind any load balancer |
-| `serve --role gateway` | provider relay | replicas behind any load balancer |
-| `serve --role api,gateway` | both in one process (small deployments) | replicas |
-| `node` | runs boxes on its host's Docker with gVisor | more hosts |
-| `migrate` | applies schema migrations (advisory-locked, idempotent; `serve` runs it too) | — |
-| `init` | creates the org with the built-in harness package builder, the first admin's invitation and an admin key (idempotent; prints nothing new when run again) | — |
-| `door` | the per-box door (started by the node) | — |
-| `node-token create` | prints a join token for a node pool (operator) | — |
-| `keygen` | prints fresh secrets for configuration | — |
-
-Plus the sandbox image. Both images are versioned together.
-
-### 10.2 Coordination
-
-Postgres is the queue and the bus: nodes claim turns with `FOR UPDATE SKIP LOCKED`; stream followers on any API replica
-wake on `LISTEN/NOTIFY`; a periodic sweeper (any API replica, under an advisory lock) fails the turns of nodes silent
-for 45 s and releases their sessions. Claim order: orgs by fewest running turns, then age; a session's turns in order;
-a session sticks to the node holding its warm box or saving its state; within the org's capacity; within the node's
-pool. Nodes hold no credential but their own: everything else travels by short-lived signed links.
-
-### 10.3 Storage
-
-- **Postgres** 16+: all state.
-- **Object store**: package archives, request bodies, files, snapshots, captures, logs. Two adapters: a filesystem
-  directory (single host; the API serves signed links itself) and any S3-compatible service (multi-host).
-
-### 10.4 Self-hosted, one host
-
-`deploy/` holds `compose.yaml` and `install.sh`. On a Linux host with Docker:
+| `HG_CONTRACT` | `1` |
+| `HG_REQUEST` | `/run/hg/request.json`: the Responses request as the caller sent it, credentials replaced by placeholders |
+| `HG_HISTORY` | `/run/hg/history.json`: the session's earlier turns in order through every fork, each `{id, status, input, output}` in Responses form, file bytes left out |
+| `HG_FILES` | `/run/hg/files/`: `index.json` maps `file_id` to `{filename, path, bytes}`; each file at `<id>/<filename>` |
+| `HG_MCP` | `/run/hg/mcp.json`: the turn's MCP servers `[{label, url, transport, headers, allowed_tools}]`, headers holding placeholders |
+| `HG_WORKSPACE` | `/workspace` |
+| `HG_STATE` | `/state`: small key/value files the package keeps (e.g. the CLI's own session id) |
+| `HOME` | `/home/hg` |
+| `HG_PACKAGE_DIR` | `/opt/hg/package` (read-only) |
+| `HG_TOOLS` | `/opt/hg/tools` (the install's output, read-only) |
+| `HG_SESSION`, `HG_RESPONSE`, `HG_TURN` | the session id, the response id, the turn's sequence number in the session |
+| `HG_PACKAGE_VERSION` | the manifest's `version` |
+| `HG_MODEL` | the model name the CLI is given: the request's, the session's, or the harness's default |
+| `HG_PROVIDER_API` | `anthropic`, `openai` or `google`; empty without a provider |
+| `HG_PROVIDER_URL` | the provider's base URL (e.g. `https://api.anthropic.com`), without a version segment |
+| `HG_PROVIDER_TOKEN` | a placeholder the door replaces with the organization's key, on the provider's host only |
+| settings and secret names | the organization's setting values; placeholders for secrets |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, `PIP_CERT` | set by the runner: the door, and the trust bundle including the door's CA |
+
+`run` prints §4.2 lines on stdout; stderr is kept as a tail (and whole when observability is `full`). It runs in
+its own process group; a stop is SIGTERM to the group, `stop_grace_s`, then SIGKILL to everything in the box.
+
+### 5.4 `seeds/`
+
+`seeds/home/` is copied into `$HOME` before every restore (the session's own files win). `seeds/workspace/` is
+copied into the workspace of a new session only. Nothing else may be under `seeds/`.
+
+### 5.5 Archive, digest, validation
+
+A package archive is a tar (gzipped or not) of the folder; one top-level directory wrapping it is stripped. Limits:
+5,000 files, 256 MiB unpacked, 64 MiB uploaded. Regular files and directories only, nothing outside the root.
+The digest is SHA-256 over every file's path, executable bit and bytes. The canonical archive (sorted, root-owned,
+mtime 0) is stored once, shared by every organization that installs it: a package's files are the author's scripts,
+never a CLI.
+
+Validation: `harness.json` present and valid; `install` and `run` present, starting `#!` or ELF; `seeds/` holds only
+`home` and `workspace`; every `${NAME}` reference declared.
+
+### 5.6 `hgkit`
+
+An optional Python library in the sandbox image (`/opt/hg/lib`, on `PYTHONPATH`): `Request` (the request and the
+environment with readers), `Emitter` (a valid event stream with streamed text and reasoning, tool items, the
+terminal event), `State`, and `check(text)`, the platform's own reader for package tests. Packages in other
+languages print the same lines and use nothing of it. `python3 -m hgkit check FILE` reads an output the way the
+platform does.
+
+### 5.7 The two shipped packages
+
+`packages/shell`: no model; the input text runs as one bash command; the template every new harness starts from and
+the one the platform's tests use. `packages/harness-package-builder`: Claude Code seeded with the builder skill;
+the built-in that `init` installs. Both carry a README and tests on recorded output.
+
+---
+
+## 6. Architecture
 
 ```
-curl -fsSL <release>/install.sh | sh     # checks Docker, installs gVisor from its official repository if absent,
-                                         # writes .env with generated secrets, pulls images, compose up, init
+          clients (OpenAI SDK)            people (browser)
+                 │                              │
+                 ▼                              ▼
+           ┌──────────┐                   ┌───────────┐
+           │   api    │◄──────────────────│  console  │  (and chat; stateless apps on the public API)
+           │ replicas │                   └───────────┘
+           └────┬─────┘
+    records     │  moments & jobs                   bytes
+   ┌────────┐   │  ┌────────┐                   ┌──────────────┐
+   │Postgres│◄──┼──│ Redis  │                   │ object store │
+   └────────┘   │  └───┬────┘                   └──────┬───────┘
+                │      │ queue                          │ (through the api)
+                │  ┌───▼────┐   launcher      ┌─────────▼────────┐
+                │  │ worker │───────────────► │   box (runner)   │  one per session, ephemeral
+                │  └────────┘                 └─────────┬────────┘
+                │                                       │ the only exit
+                │   policy, records          ┌──────────▼───────┐
+                └───────────────────────────►│      door        │────► providers, allowed hosts
+                                             └──────────────────┘
 ```
 
-The compose project runs `postgres`, `harnessgateway` (`api,gateway`), `node` (with the Docker socket and the
-`runsc` runtime) and `console`, on a filesystem object store volume. `init` prints, once, the first admin's invitation
-link (the console's setup page) and an organization admin key for automation; the console holds no key of its own.
+One image, four roles of the same package: `api`, `worker`, `door`, plus `runner` inside the sandbox image. Admin
+commands: `migrate`, `init`, `keygen`. The console and chat are two stdlib HTTP servers in `console/`, run from the
+same image.
 
-### 10.5 Self-hosted, many hosts
-
-- Point `HG_DATABASE_URL` at one Postgres (managed recommended) and `HG_BLOB_URL` at an S3-compatible bucket.
-- Run `api` and `gateway` replicas anywhere, behind a load balancer.
-- On each node host (Docker + gVisor): `docker run … harnessgateway node` with `HG_API_URL`, `HG_GATEWAY_URL` and a
-  node join token (`harnessgateway node-token create`, or `HG_NODE_JOIN_TOKEN` shared by all nodes of the default
-  pool). A node joins, gets its own credential, and starts claiming. Draining: `POST /internal/nodes/{id}/drain`
-  (operator key); the node finishes its turns and takes no new ones.
-
-### 10.6 Configuration
-
-Environment variables only, all `HG_` prefixed, validated at start with every error reported at once:
-`HG_DATABASE_URL`, `HG_BLOB_URL`, `HG_SECRET_KEY` (master key for the local key wrapper and the pepper),
-`HG_OPERATOR_KEY` (the operator's key for node tokens and draining), `HG_KMS_KEY`
-(optional, KMS adapter), `HG_API_URL`, `HG_GATEWAY_URL`, `HG_NODE_JOIN_TOKEN`, `HG_NODE_SLOTS`,
-`HG_NODE_DIR`, `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE`, `HG_UPLINK_NETWORK`, `HG_UPSTREAM_PROXY`, `HG_CA_FILE` (an operator CA trusted by doors and boxes),
-`HG_ALLOW_PRIVATE_EGRESS`, `HG_UNSAFE_RUNTIME`, `HG_EXTENSIONS`, capacity defaults (`HG_DEFAULT_*`), `HG_LOG_LEVEL`.
-
-## 11. Observability
-
-Two kinds of record, both per turn, both org-scoped, both written to the object store under the turn and handed to
-extensions (§13) as they happen:
-
-| Record | Content | Level |
-|---|---|---|
-| Harness exchange | the request as delivered to the sandbox (placeholders, not values), every stdout line (events and logs) and stderr, timings, exit code, the final Response | `metadata`: timings, sizes, exit, outcome. `full`: the bodies too |
-| Gateway exchange | method, path, provider host, status, timings, request and response sizes; bodies (≤4 MiB each) | `metadata` / `full` as above |
-| Door exchange | host, port, verdict, intercepted, bytes | always (it is also metering's source) |
-
-The org's `observability` is `metadata` (default) or `full`. `GET /v1/traces/{response_id}` returns a turn's records.
-
-**Metrics.** `GET /internal/metrics` (operator key or platform admin) is the platform's state in Prometheus text
-exposition, for whatever the deployer already scrapes: turns queued and running, the oldest queued age, nodes live and
-their slots, warm sandboxes, turns ended in the last 24 hours by status and reason, usage totals by meter, and the
-gateway's relayed calls by status. The deployer console reads the same numbers.
-Captures never contain a secret value: placeholders are what the sandbox had, injected values exist only inside the
-door's and gateway's outbound requests, which are recorded with auth headers removed. Retention follows the org's.
-Platform logs are JSON lines on stdout with ids, never bodies or values.
-
-## 12. Metering
-
-Infrastructure usage, measured where it happens, recorded as an append-only ledger. Tokens are not metered: the org
-pays its provider directly.
-
-| Meter | Unit | Measured by | When |
+| Unit | Holds | Scales on | Loses nothing when it dies because |
 |---|---|---|---|
-| `vcpu_seconds` | vCPU × s | node: the box's allocated vCPUs × the time it exists (running and warm) | every 30 s and at close |
-| `memory_gib_seconds` | GiB × s | node: allocated memory × time | same |
-| `egress_bytes` | bytes | door: bytes from box outward (provider traffic included) | same |
-| `ingress_bytes` | bytes | door: bytes toward the box | same |
-| `storage_gib_hours` | GiB × h | API sweeper: bytes the org holds in the object store (snapshots, files, packages, captures) | hourly |
+| api | nothing (caches) | requests, open streams | records are in Postgres; streams are Redis; followers reconnect with `starting_after` |
+| worker | nothing | queue depth | jobs are acknowledged only when done; duties are idempotent and re-run on the next tick |
+| door | a policy cache per box token; the CA derived from the secret key | connections, bytes | the box's next connection lands on another door, which fetches the same policy |
+| box | the session's files while alive | running sessions | the turn fails as lost; the session resumes from its last snapshot anywhere |
+| Postgres | records, ledger, blob reference counts | the one thing sized | managed, backed up |
+| Redis | event streams, the job queue, SSO state | memory | a lost Redis costs a delay: a reconciler re-queues what Postgres says is pending |
+| object store | blobs, manifests, requests, responses, traces, install archives, files | itself | itself |
 
-Install boxes are metered the same way, attributed to the org whose turn triggered the install. Allocated (not used)
-CPU and memory are metered because a box reserves them; the figures are deterministic and auditable.
+### 6.1 Who talks to whom
 
-A usage record: `{id, org_id, meter, quantity, session_id?, response_id?, harness?, kind (turn|warm|install|storage),
-start, end}`. Ids are generated where measured, so a retried report is inserted once. `GET /v1/usage` sums records by
-meter, optionally grouped by `harness`, `session` or `day`, over `[start, end)`.
+- Clients and the console talk to the **api** only.
+- The **api** talks to Postgres, Redis and the object store. It never contacts a box, a door or a worker.
+- The **worker** reads the queue and talks to Postgres, Redis, the object store and the launcher's substrate (the
+  Docker socket self-hosted; a container service API in the SaaS).
+- A **box** talks to the api only, through the door (every byte out of a box goes through the door, the api
+  included). It authenticates with its box token.
+- The **door** talks to the api (policy, records) with the door key, and to the internet on a box's behalf.
 
-## 13. The extension seam
+### 6.2 Process layout inside a box
 
-`HG_EXTENSIONS` names classes (`module:Class`) loaded at start; each implements any subset of:
-
-```python
-class Extension:
-    def router(self) -> fastapi.APIRouter | None            # extra routes under the same app
-    async def authenticate(self, request) -> Principal | None  # before keys and sign-ins; None passes to the next
-    async def admit(self, principal, turn: Admission) -> None  # raise Refused before a turn queues
-    async def observe(self, record: TraceRecord) -> None       # every §11 record as written
-    async def meter(self, records: list[UsageRecord]) -> None  # every §12 batch after it is stored
-    async def turn_ended(self, summary: TurnSummary) -> None   # status, reason, usage, timings
+```
+/opt/hg/runner.py     the runner (in the sandbox image; Python standard library only)
+/opt/hg/lib/hgkit     the package library
+/opt/hg/package       the package folder (read-only, from the archive)
+/opt/hg/tools         the install archive, extracted (read-only to run)
+/run/hg               the turn's inputs (request, history, files, mcp)
+/workspace            persisted
+/home/hg              persisted per the manifest
+/state                persisted
+/tmp                  tmpfs, the box's own
 ```
 
-Hooks run in the order configured; `observe`, `meter` and `turn_ended` run after the core's own write and never fail a
-turn (their errors are logged). The core exposes its services (`Orgs`, `Accounts`, `Keys`, `Harnesses`, `Usage`,
-`Traces`, …) to extensions. What is built on the seam lives outside this repository and never forks the core.
+The runner is PID 1's child; `run` is started under `setsid` in its own process group.
 
-## 14. API
+---
 
-All under `/v1`, JSON, a bearer credential: an API key or a sign-in token (§9). OpenAI-shaped endpoints match OpenAI's
-request and response shapes.
+## 7. State and where it lives
 
-### 14.1 OpenAI-shaped
+### 7.1 Postgres: records
 
-| Endpoint | Notes |
-|---|---|
-| `POST /responses` | §4. `stream` → SSE; `background` → returns `queued`; `Idempotency-Key` honoured (same body → same response; different body → 409). |
-| `GET /responses/{id}` | with `stream=true&starting_after=N`, resumes the stream |
-| `POST /responses/{id}/cancel` | |
-| `DELETE /responses/{id}` | refused while running |
-| `GET /responses/{id}/input_items` | |
-| `POST /files`, `GET /files`, `GET /files/{id}`, `GET /files/{id}/content`, `DELETE /files/{id}` | ≤512 MiB per file |
-| `GET /containers` (`?user=` filters), `GET /containers/{id}`, `DELETE /containers/{id}` | a container is a session, created by its first response. `metadata` names its harness, model, turns, state, saved bytes, last response, `created_by` (the first turn's actor: `account:<id>`, `key:<id>`, or what an extension's principal names), `user` (the request's `user`, the application's own end user) and, for a fork, `forked_from` (the response it continued from) |
-| `GET /containers/{id}/files`, `GET …/files/{fid}`, `GET …/files/{fid}/content` | the workspace as of the last snapshot |
-| `POST /containers/{id}/files` (multipart `file`, optional `path`), `DELETE …/files/{fid}` | staged; applied before the session's next turn |
-| `GET /containers/{id}/responses` | the session's responses in turn order, each as `GET /responses/{id}` returns it |
-| `GET /containers/{id}/traces` (admin) | every §11 record of the session's turns, each with its `response_id`, in turn order; log bodies left out |
-| `GET /models`, `GET /models/{id}` | every `harness/provider/model` the organization can send |
+Every tenant table carries `org_id`; row-level security confines a transaction to the organization it declared
+(`SET LOCAL hg.org`, `hg.scope = tenant`) unless it declared the platform scope. The database role is never a
+superuser and never `BYPASSRLS`; the api refuses to start otherwise.
 
-### 14.2 Identity
-
-| Endpoint | Notes |
-|---|---|
-| `POST /auth/login` | `{email, password}` → a sign-in token (once), its expiry, the account and its memberships; 401 on failure, 423 while locked |
-| `POST /auth/logout`, `GET /auth/me`, `POST /auth/password` (`{current, new}`) | the sign-in's own account |
-| `POST /auth/accept` | `{token, password}`: activates an invited account, or sets the password after a reset; no credential needed |
-| `GET/POST /accounts`, `GET/PATCH /accounts/{id}`, `POST /accounts/{id}/reset` (admin) | create: `{email, name, role, platform_admin?}` → the account, its invitation link (once) and whether it was mailed; patch: `role`, `status` (`disabled`), `platform_admin` (platform admins only); reset → a new invitation |
-| `GET /audit` (admin) | the organization's audit rows, newest first, `?after=` paging |
-
-### 14.3 Management
-
-| Endpoint | Notes |
-|---|---|
-| `GET/POST/DELETE /keys` | create: `{label, role, run_only, expires_in_days}` (the label names the app); an admin creates any, a developer creates developer keys and sees its own; returns the key once |
-| `GET/PUT/DELETE /providers/{name}` | `{api, base_url, key}`; the key is write-only, and may be left out when updating (the stored one is kept) |
-| `GET/PUT /egress` | the org's egress entries |
-| `GET /harnesses`, `GET /harnesses/{name}` | the installed harnesses: manifest, digest, which settings and secrets are set (never values); `GET /harnesses/{name}/files` and `/files/{path}` read the package |
-| `POST /harnesses` | install or upgrade from a multipart `package` archive (the package folder as a tar, gzipped or not) |
-| `PATCH /harnesses/{name}` | `settings`, `secrets` (write-only; null clears), `default_provider`, `default_model` |
-| `DELETE /harnesses/{name}` | existing sessions keep running on their pinned package |
-| `GET /usage` | §12; `group_by` adds `created_by` (the app's key or the person) and `user` |
-| `GET /traces/{response_id}` | §11; a session's records together: `GET /containers/{id}/traces` (§14.1) |
-
-Upgrading a harness affects new sessions only.
-
-### 14.4 Internal (node credential; operator key or a platform admin's sign-in where noted)
-
-`POST /internal/nodes/join`, `/heartbeat`, `/claim`, `/turns/{id}/events` (stdout bytes), `/turns/{id}/finish`,
-`/turns/{id}/saved`, `/usage`, `/traces`; operator: `node-tokens`, `nodes/{id}/drain`, `health`, `nodes`, `orgs`, `orgs/{id}/accounts` (invite an organization's admin), `usage`, `config`, `versions`, `audit`, `metrics` (§11), `sessions/{id}/evict`.
-
-## 15. Data model
+Tables (`migrations/0001_core.sql`):
 
 | Table | Holds |
 |---|---|
-| `orgs` | id, name, status, capacity (JSON), egress (JSON), sealed data key |
-| `accounts` | id, email, name, password hash, status, platform_admin, failures, locked_until, created, last sign-in |
-| `memberships` | account, org, role |
-| `invitations` | digest, account, expiry (one-time: activation and password reset) |
-| `sign_ins` | id, account, digest, created, expiry, last used, client, revoked |
-| `api_keys` | id, org, account (its creator), digest, role, run_only, label (the app), created, expires, last used, revoked |
-| `audit` | id, org, at, actor, action, target, detail (JSON) |
-| `providers` | org, name, api, base_url, sealed key |
-| `packages` | digest, manifest, object key (shared across orgs; content-addressed) |
-| `harnesses` | org, name, package digest, manifest, settings, sealed secrets, default provider, default model |
-| `files` | org, id, created_by, filename, bytes, object key |
-| `sessions` | org, id, harness name, package digest, manifest, provider, model, store, status, snapshot key, node, running turn, forked_from, created_by, user, timestamps |
-| `turns` | org, id, session, seq, status, model, provider, request key, response (JSON), hg_reason, node, timestamps, cancel flag, actor (the account, key or extension principal that created it), user (the request's), snapshot key (its checkpoint) |
-| `turn_events` / `live_events` | kept events / deltas (purged after the turn), by (turn, seq) |
-| `turn_bindings` | sealed caller secrets of a turn, deleted at its end |
-| `turn_tokens` | digest, turn, org, provider, node, expiry, revoked |
-| `container_ops` | staged workspace operations |
-| `nodes`, `node_tokens` | node id, pool, digest, slots, last seen, status / join tokens |
-| `usage` | §12 records |
-| `traces` | §11 record index (object keys) |
-| `idempotency` | org, key, request digest, response |
+| `orgs` | id, name, status (`active`, `suspended`), `limits` jsonb (§7.4), `egress` jsonb, `data_key` (wrapped), created_at |
+| `accounts`, `memberships`, `invitations`, `sign_ins` | people (§10) |
+| `identity_providers` | one row per organization: the OIDC configuration (§10.3) |
+| `api_keys` | keys with role, `run_only`, label, hint, expiry, revocation |
+| `audit` | every change of standing |
+| `providers` | name, api, base_url, sealed_key |
+| `packages` | digest, name, version, manifest, object_key, bytes (shared, content-addressed) |
+| `harnesses` | org, name, digest, manifest, settings, sealed secrets, default_provider, default_model |
+| `installs` | org, digest, image id, status (`pending`, `ready`, `failed`), object_key, bytes, log tail |
+| `files` | uploads |
+| `sessions` | id, org, created_by, end_user, harness, digest, manifest, provider_id, model, store, status, turns, `snapshot_id`, forked_from, created_at, last_active_at |
+| `turns` | id, org, session, seq, status, actor, end_user, model, provider_id, provider_model, stream, background, request_key, mcp, previous_id, cancel, hg_reason, hg_message, exit_code, response, events, last_batch, log_tail, stderr_tail, `snapshot_id`, created_at, started_at, ended_at, exited_at |
+| `turn_events` | the durable event log: every non-delta event, `(turn_id, seq)` |
+| `turn_bindings` | a turn's caller credentials, sealed |
+| `boxes` | id, org, session, `token_digest`, status (`starting`, `running`, `standby`, `gone`), turn_id, launcher_ref, launched_at, last_seen_at, expires_at. **Unique on `session_id` where status ≠ `gone`**: one live box per session. |
+| `snapshots` | id, org, session, turn, manifest_key, bytes (logical), files (count), created_at |
+| `blobs` | (org, hash) pk, bytes, refs, created_at, updated_at. `refs` = how many snapshots name the blob. |
+| `objects` | key pk, org, kind, bytes, created_at, deleted_at: every non-blob object, for storage accounting |
+| `usage` | id, org, meter, quantity, kind, harness, session_id, response_id, start_at, end_at |
+| `storage_accruals` | org, accrued_until |
+| `traces` | id, org, response_id, kind (`harness`, `door`, `provider`), object_key, at |
+| `idempotency` | (org, key) → request digest, turn id |
+| `schema_migrations` | package, version |
 
-## 16. Security summary
+Platform-only tables (no `org_id` policy): `packages` (readable by all), `boxes` is tenant-scoped but written on the
+platform path, `objects`, `storage_accruals`.
 
-- gVisor boxes with no capabilities, read-only root, one unprivileged user, CPU/memory/pids/tmp limits.
-- Network allow-only through the door; no DNS in the box; private addresses refused; per-turn rules.
-- No secret in a box: provider keys at the gateway, org and caller secrets at the door, placeholders inside.
-- Turn tokens are turn-scoped, provider-scoped, node-bound and revoked at the end.
-- Sealed secrets with per-org data keys under a pluggable key wrapper; API keys, sign-ins and invitations stored as HMACs.
-- People sign in as themselves: accounts with scrypt-hashed passwords, one-time invitations, no default password, lockout
-  after repeated failures, expiring and revocable sign-ins; two roles checked in one place; the platform scope held by a
-  flag on an account, the operator key kept for automation; every change of standing audited.
-- Row-level security on every tenant table, by organization; org-prefixed object keys; signed, short-lived object links.
-- Packages: content-addressed, verified by digest on every node, extracted with no links and no path escape.
-- Request validation at the boundary; output validation with the SDK's types; bounded sizes everywhere (§17).
-- No credential in any response, event, log, capture or error.
+### 7.2 Redis: moments
 
-## 17. Limits
+| Key | Type | Holds | Lifetime |
+|---|---|---|---|
+| `hg:turn:<rid>` | stream | every event of the turn, deltas included, as `{seq, type, json}` | trimmed to 20,000 entries; expires 10 minutes after the terminal event |
+| `hg:jobs` | stream, consumer group `workers` | jobs (§7.5) | acknowledged when done; pending entries older than 5 minutes are reclaimed |
+| `hg:wake:<sid>` | pub/sub channel | "a turn is queued for this session" | none |
+| `hg:sso:<state>` | string | an OIDC exchange in flight (nonce, code verifier, redirect) | 10 minutes |
 
-| Limit | Value |
+Rules: nothing in Redis is a record. A lost Redis loses in-flight deltas (clients reconnect and replay the durable
+log) and queued jobs (the reconciler duty re-queues every box in `starting` with no launcher reference and every
+pending install).
+
+### 7.3 Object store: bytes
+
+Keys under `orgs/<org>/…`:
+
+| Key | What |
 |---|---|
-| Request body (inline files included) | 32 MiB |
-| File upload | 512 MiB |
-| Package archive / unpacked | 64 MiB / 256 MiB, 5,000 files |
-| `file_id` inputs per request | 64 |
-| One stdout line from a package | 64 MiB |
-| Captured body | 4 MiB per side |
-| Settings / secrets per harness | 64 each, values ≤16 KiB |
-| Org egress entries | 256 |
+| `turns/<rid>/request.json`, `history.json` | the turn's request (placeholders, never values) and history |
+| `turns/<rid>/traces/<ms>-<kind>-<id>.json` | observability records |
+| `turns/<rid>/stdout.log`, `stderr.log` | full logs when observability is `full` |
+| `sessions/<sid>/snapshots/<snapshot_id>.jsonl` | a manifest (§9.5) |
+| `sessions/<sid>/ops/<op_id>` | a file staged through the Containers API |
+| `blobs/<sha256>` | content, shared by every snapshot of the organization |
+| `installs/<digest>-<image>.tar.zst` | an install archive |
+| `files/<file_id>` | an upload |
 
-## 18. Repository and engineering
+Shared: `packages/<digest>.tgz`. The store is `file:///path` (one host; served by the api) or `s3://bucket/prefix`.
+Boxes never hold store credentials: every byte a box reads or writes goes through the api with the box token.
+
+### 7.4 Organization limits
+
+`orgs.limits` over configured defaults (`HG_DEFAULT_*`):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `vcpus` | 2.0 | a box's CPU cap |
+| `memory_mb` | 4096 | a box's memory cap for processes; `/tmp` is on top |
+| `tmp_mb` | 4096 | the box's tmpfs size |
+| `pids` | 1024 | process limit |
+| `max_concurrent_turns` | 0 (none) | turns in progress at once |
+| `standby_s` | 120 | how long a box waits for the session's next turn after one ends |
+| `turn_timeout_s` | 0 (none) | the bound on a turn, with the package's own |
+| `retention_days` | 0 (keep) | sessions idle longer are deleted with their snapshots |
+| `observability` | `metadata` | `full` keeps bodies and whole logs |
+
+### 7.5 Jobs
+
+`{"kind": …, …}` on `hg:jobs`, each idempotent (mail is sent by the api process that creates an invitation, not queued):
+
+| Kind | Payload | Done when |
+|---|---|---|
+| `launch` | box_id | the launcher started the box and recorded its reference, or the box is `gone` and its turn failed |
+| `install` | install_id | an install box ran and the archive is recorded, or the install is `failed` |
+| `stop` | box_id | the launcher stopped the box (a lost lease, a suspended organization) |
+| `delete_session` | session_id | the session's objects are gone and its snapshots' blob references decremented |
+
+### 7.6 Duties
+
+Run by every worker on a tick, each under a Postgres advisory lock so one runs at a time:
+
+| Duty | Every | Does |
+|---|---|---|
+| `lost` | 15 s | boxes whose `expires_at` passed: status `gone`; their running turn fails `node_lost`→ `box_lost`; a `stop` job for the launcher |
+| `reconcile` | 30 s | boxes `starting` without a launcher reference for over a minute, installs `pending` without a job: re-queued |
+| `retention` | 5 min | sessions past their organization's retention: `delete_session` jobs |
+| `purge` | 5 min | unstored sessions idle 10 minutes; spent idempotency keys and sign-in tokens after a day; `objects` rows deleted over a day |
+| `gc` | 10 min | blobs with `refs = 0` untouched for an hour: object deleted, row deleted |
+| `accrue` | 1 h | storage GiB-hours per organization since its last accrual (§12.2) |
+| `reap` (Docker launcher only) | 1 min | exited box containers and their networks removed |
+
+---
+
+## 8. Security
+
+### 8.1 Isolation
+
+A box is a container from the sandbox image with: a read-only root, a tmpfs `/tmp` of `tmp_mb` with `exec`, no
+capabilities, `no-new-privileges`, uid 10001, `--cpus`, `--memory` (`memory_mb + tmp_mb`), `--pids-limit`, no DNS,
+one hosts entry (`hg-door`), and bind mounts only for its own directories. Self-hosted, Docker runs it under gVisor
+(`runsc`) when installed; `HG_SANDBOX_RUNTIME=runc` is allowed and logged as unisolated. In the SaaS the container
+service's micro-VM is the isolation.
+
+### 8.2 Egress
+
+An egress entry is `host`, `*.domain` or `*`, with an optional `:port` (443 by default); `!` in front denies.
+`*.domain` matches subdomains at any depth, never the domain. A policy allows a host when some allow entry matches
+and no deny entry does. Levels compose by union of entries: the organization's, the package's (`run.egress`, the
+catalog's MCP hosts, the secrets' hosts, the provider's host for the turn), and the platform hosts (the api).
+Install boxes get the organization's entries plus `install.egress` plus the platform hosts.
+
+The box's only route is the door. Self-hosted: a per-box internal Docker network whose only other member is the
+door container. SaaS: sandboxes in private subnets with no internet route and a security group permitting only the
+door. A process that ignores its proxy variables reaches nothing.
+
+### 8.3 Secrets
+
+- Each organization has a data key, wrapped by the key wrapper (local AES-GCM under `HG_SECRET_KEY`, or AWS KMS).
+  Provider keys, harness secret values, the OIDC client secret and a turn's caller credentials are sealed under it
+  with the owning record as associated data.
+- A box holds **placeholders**. The door holds, per box token and only while a turn runs, the bindings
+  `{placeholder, value, hosts}`: the provider key bound to the provider's host (`HG_PROVIDER_TOKEN`), each harness
+  secret bound to its declared hosts and its catalog MCP hosts, each caller MCP credential bound to its server's
+  host. The door intercepts TLS only for bound hosts, with a certificate from its CA, verifies the real server, and
+  replaces placeholders in request header values. Bodies, URLs and responses are never touched; a placeholder sent
+  anywhere else is sent as the random string it is.
+- The door's CA is derived deterministically from `HG_SECRET_KEY`, so every door replica has the same CA with no
+  shared file, and the api can hand its certificate to boxes.
+- The **box token** (`hgb_…`) authenticates a box to the api and to the door (as the proxy credential). It can do
+  nothing but report for its own session and fetch its own session's objects. It is useless outside the sandbox
+  network, where the door is the only listener. The api keeps its digest.
+- The **door key** (`HG_DOOR_KEY`) authenticates doors to the api's door routes.
+- The api keeps **digests** of every secret token it issues (keys, sign-ins, invitations, box tokens).
+
+### 8.4 Access
+
+Two roles, `admin` and `developer`, plus `run_only` keys. One table decides every action
+(`domain/access.py`); a refusal names who may. Run-only keys see only the sessions, files, usage and traces they
+made. A platform scope (the operator key or a platform-admin account) sees the organization's health and
+configuration. Every change of standing is audited.
+
+### 8.5 Platform limits
+
+Request body 32 MiB; a file upload 512 MiB; a package upload 64 MiB; any other JSON body 1 MiB; one stdout line
+64 MiB; a box report 8 MiB; a blob 4 GiB; a manifest 64 MiB. None of these limits what a harness does.
+
+---
+
+## 9. Lifecycle of a turn
+
+### 9.1 Create (`POST /v1/responses`)
+
+1. Authenticate (§10.5). Validate the body against the SDK's request type. Reject `conversation`.
+2. `Idempotency-Key`: replay the stored turn for the same body digest; 409 for a different body.
+3. Resolve the harness by `model`'s first segment. Check required settings and secrets are set.
+4. Resolve the session (§9.3). Resolve the provider (§9.4) and the model name.
+5. Resolve MCP: the catalog narrowed or extended by the request; caller credentials become placeholders, the values
+   sealed into `turn_bindings`. The stored request holds placeholders.
+6. `extensions.admit(principal, admission)` may refuse.
+7. Write the request object, the turn row (`queued`), `response.created` to the durable log and the stream.
+8. Ensure a box: if the session has a live box, publish on `hg:wake:<sid>`; else insert a `starting` box with a
+   fresh token and queue `launch`. Check `max_concurrent_turns` here: a turn over the limit stays queued and the
+   box is ensured when a turn ends.
+9. Reply: the stream, the queued `Response` (background), or wait for the terminal event (foreground; cancel on
+   disconnect).
+
+### 9.2 Run (the box)
+
+1. The runner starts with `HG_BOX_ID`, `HG_BOX_TOKEN`, `HG_API_URL`, `HG_DOOR`. It sets its proxy variables to the
+   door, fetches `GET /internal/boxes/{id}` (session, package digest, limits, CA certificate, install archive id),
+   downloads the package archive and the install archive through the api, extracts them, writes the trust bundle,
+   seeds the home, restores the session's snapshot (§9.5), and reports `ready`.
+2. `GET /internal/boxes/{id}/next?wait=…` long-polls for the session's next turn (the api waits on `hg:wake:<sid>`
+   and re-checks Postgres). The reply is the **job**: turn id, seq, model, timeout, grace, the request, history,
+   files and staged ops to download, the environment, the MCP list, the provider, the log links, and whether to
+   persist. The api marks the turn `in_progress` with `started_at`, emits `response.in_progress`, and gives the
+   door the turn's policy version.
+3. The runner writes `/run/hg`, applies staged file operations to the workspace, and starts `run` under `setsid`
+   with the request on stdin and §5.3's environment. It pumps stdout in batches (about 1 MiB or every 200 ms,
+   whole lines) to `POST /internal/boxes/{id}/turns/{rid}/events`; the reply says whether the turn has concluded
+   and whether to stop. It heartbeats every 3 s (`POST …/heartbeat`), which renews the box lease and returns
+   `cancel`. Stderr is tailed (and written whole when observability is `full`).
+4. The turn ends when: stdout reaches EOF (exited); the api says stop (invalid output); the heartbeat says cancel;
+   the terminal event was seen and `stop_grace_s` passed; or the timeout passed. In every case but a plain exit the
+   runner SIGTERMs the group, waits the grace, then SIGKILLs every process in the box but itself. **After every
+   turn, whatever its outcome, the runner kills every process it did not start**, so standby holds nothing.
+5. The runner reports `POST …/finish` with the outcome, exit code, stderr tail, byte counts, the box's cgroup CPU
+   seconds and memory high-water mark, and whether it holds state to persist. The api concludes the turn if no
+   terminal event did (§4.2), records usage, revokes the policy version (the door drops the bindings), writes the
+   harness trace.
+6. Snapshot (§9.5), then `POST …/saved`. Then back to step 2. If no turn arrives within the organization's
+   `standby_s`, the runner reports `bye` and exits. The box is `gone`.
+
+### 9.3 Sessions, forks, switches
+
+- No `previous_response_id`: a new session on the harness's current package.
+- `previous_response_id` naming the session's last turn, same harness: the next turn of that session, serial after
+  any turn still running.
+- Naming an earlier turn of the session: a **fork**: a new session whose `snapshot_id` is that turn's checkpoint
+  and whose `forked_from` is that turn. No bytes copy. The parent keeps its own line.
+- Naming a turn of another harness: a **switch**: a fork whose first snapshot is the checkpoint reduced to its
+  workspace entries (a new manifest listing only `workspace/…` paths, sharing the blobs), on the new harness's
+  package, starting from its home seeds. The conversation carries as the history every turn receives.
+- A turn whose checkpoint was never saved (lost before saving) cannot be forked from: 409 naming the reason.
+- A session pins the package digest it started on; reinstalling a harness changes only new sessions.
+
+Rewind and branch in the chat are forks; nothing in the platform is specific to them.
+
+### 9.4 Providers
+
+Named in `model`, else the session's, else the harness's `default_provider`, else the organization's only provider
+of an API the package speaks. The provider's API must be among the package's `apis`. The turn gets
+`HG_PROVIDER_URL` = the provider's base URL and `HG_PROVIDER_TOKEN` = a placeholder bound to the provider's host
+with the sealed key as value.
+
+### 9.5 Snapshots: content-addressed, incremental
+
+**Manifest.** JSON Lines, one object per entry, sorted by path, paths relative to the box root
+(`workspace/…`, `home/hg/…`, `state/…`):
+
+```
+{"p": "workspace/src/a.py", "t": "f", "m": 420, "mt": 1730000000, "s": 1234, "h": ["<sha256>"]}
+{"p": "workspace/big.bin",  "t": "f", "m": 420, "mt": 1730000000, "s": 9000000, "h": ["<sha256 of chunk 1>", "<chunk 2>", "<chunk 3>"]}
+{"p": "workspace/empty",    "t": "d", "m": 493}
+{"p": "home/hg/.config/x",  "t": "l", "target": "../y"}
+```
+
+Files over 4 MiB are split into 4 MiB chunks; each chunk is a blob. Blobs are stored raw under their SHA-256.
+Sockets, devices and anything else are not persisted. Included roots: `workspace`, `state`, and `home/hg/<p>` for
+each `persist` entry (`.` is the whole home).
+
+**Save (the runner, after a turn).** Walk the included roots; compare each entry with the restored manifest by
+type, size and mtime; hash only what changed; build the new manifest; if it equals the restored one, report
+`unchanged`. Otherwise `POST …/blobs` with the set of hashes new to this manifest → the api answers which it lacks;
+upload each missing blob with `PUT …/blobs/<hash>` (the api verifies the hash of what it receives, refuses a
+mismatch, stores it, records its size); then `PUT …/turns/{rid}/manifest` with the manifest itself. The api checks
+that it holds every hash the manifest names, increments `refs` for each, stores the manifest, inserts the snapshot,
+sets `turns.snapshot_id` and advances `sessions.snapshot_id`. A turn whose state was unchanged reports
+`POST …/turns/{rid}/saved` and gets the session's current snapshot as its checkpoint; a save that failed reports the
+same with an `error`, logged, and the session's snapshot stays as it was.
+
+**Restore (the runner, at box start or on a switch).** Fetch the manifest, create directories, fetch every blob
+not already present in the box's local cache (`/tmp/hg/blobs`, kept for the box's life), write files and symlinks,
+set modes and mtimes. Fetches run with a small concurrency.
+
+**Delete.** Deleting a session decrements `refs` for every hash in each of its manifests (read from the store)
+and deletes the manifests. `gc` removes blobs at zero.
+
+**Metering.** Live bytes for an organization = `sum(bytes) of blobs with refs > 0` + `sum(bytes) of live objects`.
+
+**Why not an archive, git or a backup tool.** An archive re-uploads everything each turn and makes a fork a copy.
+Git keeps no mtimes, handles binaries and the home badly, and collides with the agent's own git use. A backup tool
+would need store credentials in the box. The manifest is three hundred lines and gives deduplication across every
+session of an organization.
+
+### 9.6 Installs
+
+The first time a harness is installed in an organization, and whenever the sandbox image changes, an `installs`
+row is `pending` and an `install` job is queued. The worker launches an install box (no session, no snapshot, the
+install egress); the runner downloads the package, runs `install` into the tools directory, archives it
+(`tar | zstd` into `installs/<digest>-<image>.tar.zst` through the api), and reports. A turn whose install is
+`pending` waits in `queued`; a `failed` install fails the turn with `hg_reason: install_failed` and the tail. Installs
+are metered as agent-seconds of kind `install`.
+
+### 9.7 Cancel, delete
+
+`POST /v1/responses/{id}/cancel`: a queued turn ends now as `cancelled`; a running one is marked, the runner learns
+on its next heartbeat or batch. `DELETE /v1/responses/{id}` removes an ended turn's record and objects (its
+snapshot stays if it is the session's current one; its blob references are released otherwise). `DELETE
+/v1/containers/{id}` ends a session: refuses while a turn runs; queues `delete_session`.
+
+---
+
+## 10. Identity
+
+### 10.1 Accounts
+
+A person has one account (email is the login), memberships in organizations with a role, invitations that activate
+the account by setting a password (one-time, seven days), sign-ins (opaque bearer tokens, twelve hours, revoked by
+logout, password change, disabling). Passwords are scrypt; ten failures lock fifteen minutes. The last active admin
+of an organization cannot be demoted or disabled. `init` creates the first admin (a platform admin) with its
+invitation and an admin key, printed once.
+
+### 10.2 Keys
+
+`hg_` + 40 characters, kept as an HMAC digest. A key is named after the application it is for, has a role, may be
+`run_only`, may expire. A developer creates developer keys; an admin any key.
+
+### 10.3 SSO (OIDC)
+
+One identity provider per organization, configured by an admin at `PUT /v1/sso`:
+
+| Field | Meaning |
+|---|---|
+| `issuer` | the OpenID issuer; discovery at `<issuer>/.well-known/openid-configuration` |
+| `client_id`, `client_secret` | the registered client; the secret is sealed |
+| `domains` | email domains allowed to sign in through it |
+| `auto_provision` | create an account on first sign-in (else the person must be invited first) |
+| `default_role` | `developer` or `admin` for auto-provisioned accounts |
+| `role_claim`, `admin_values` | a claim (e.g. `groups`) whose values grant `admin`; others are `developer` |
+| `required` | password sign-in disabled for everyone but platform admins |
+
+Flow: `GET /v1/auth/sso/start?redirect=<console url>` → the api stores state, nonce and a PKCE verifier in Redis and
+redirects to the provider → the provider redirects to the console's `/sso/callback?code&state` → the console posts
+them to `POST /v1/auth/sso/exchange` → the api exchanges the code, verifies the ID token (signature via JWKS,
+issuer, audience, nonce, expiry), maps claims (email, name, role), provisions or finds the account, updates the
+membership role when the claim says so, and returns a sign-in. Library: Authlib. Local accounts remain for the first
+admin and break-glass.
+
+### 10.4 Audit
+
+Every change of standing (accounts, keys, providers, egress, harnesses, SSO, sign-ins and their failures) is a row
+with actor, action, target and detail, never a secret value. Admins read their organization's; the platform scope
+reads all.
+
+### 10.5 Principals
+
+A request runs as a principal: organization, actor (`account:<id>` or `key:<id>`), role, `run_only`,
+`platform_admin`. Resolved from an extension (`authenticate`), an API key, or a sign-in token, in that order.
+
+---
+
+## 11. The door
+
+A single program with one listener, `:3128`, a CONNECT proxy with proxy authentication: `Proxy-Authorization:
+Basic base64("box:<box token>")`.
+
+Per connection: read the CONNECT line and the credential; fetch the policy for the token from the api
+(`POST /internal/door/policy`, door key; cached by token for 30 s and dropped when the policy version changes);
+refuse (403) a host the policy does not allow or a credential the api does not know; resolve the host itself and
+connect only to an address it checked (public only unless `HG_ALLOW_PRIVATE_EGRESS`; platform hosts always);
+tunnel untouched unless the host is bound, in which case intercept: TLS with the box as the server for that host
+(a certificate from the door's CA, HTTP/1.1 only), TLS to the real server verified normally, one request head read
+and rewritten (placeholders replaced in header values, `Connection: close`), everything after spliced until either
+side closes. Count bytes each way. Record one line per connection (host, port, verdict, intercepted, bytes,
+duration; for intercepted hosts also method, path and the response status), batched to
+`POST /internal/door/records` every few seconds, with the box token's digest.
+
+`HG_UPSTREAM_PROXY` sends outbound connections through an operator's proxy; `HG_CA_FILE` adds an operator CA to
+what the door trusts upstream.
+
+The policy the api returns: `{version, org_id, turn_id, allow: [entries], bindings: [{placeholder, value, hosts}],
+platform: [host:port, …]}`. Between turns (standby) the policy has no bindings and allows only platform hosts.
+
+---
+
+## 12. Metering
+
+### 12.1 Meters
+
+| Meter | Unit | Kind | Source |
+|---|---|---|---|
+| `agent_seconds` | seconds | `turn`, `standby`, `install` | the api: `started_at` to `ended_at` of a turn; standby from the box's `finish` to its next `next` or `bye`; install from launch to report |
+| `cpu_seconds` | seconds of CPU used | `turn`, `install` | the runner's cgroup reading, reported at finish |
+| `memory_gib_seconds` | GiB × seconds allocated | `turn`, `standby`, `install` | `memory_mb + tmp_mb` × duration, the api |
+| `ingress_bytes`, `egress_bytes` | bytes through the door | `turn`, `standby` | the door's records |
+| `storage_gib_hours` | GiB × hours held | `storage` | the `accrue` duty |
+
+Ids are generated where measured; the ledger is append-only and idempotent by id. `extensions.meter` sees every
+batch after it is stored. The customer-facing figures are `agent_seconds` (turn) and `storage_gib_hours`; the rest
+is the operator's cost record and the extension's to rate.
+
+### 12.2 Storage accrual
+
+Hourly, per organization: `(live blob bytes + live object bytes) / GiB × hours since the last accrual`.
+
+### 12.3 Summary
+
+`GET /v1/usage?start&end&group_by=harness|session|day|created_by|user` sums the organization's usage; a run-only
+key sees its own sessions'. The platform scope sums across organizations by organization or day.
+
+---
+
+## 13. The extension seam
+
+`HG_EXTENSIONS=module:Class,…`. Each class is instantiated once per process and may implement any of:
+
+```python
+class Extension:
+    migrations: str | None = None                         # an importable package of NNNN_*.sql, applied after the core's
+    def bind(self, platform: Platform) -> None: ...      # the composition root, once
+    def router(self) -> APIRouter | None: ...            # mounted on the api
+    async def authenticate(self, request) -> Principal | None: ...   # before keys and sign-ins
+    async def admit(self, principal, turn: Admission) -> None: ...    # raise Refused (429) or any ApiError
+    async def meter(self, records: list[UsageRecord]) -> None: ...    # after the core stores them; never fails a turn
+    async def observe(self, record: TraceRecord) -> None: ...
+    async def turn_ended(self, summary: TurnSummary) -> None: ...
+    def launcher(self, settings) -> Launcher | None: ...               # a substrate of its own (a container service)
+```
+
+Services the extension may call through `Platform`: `orgs` (create, get, update limits and status, egress),
+`accounts`, `keys`, `sso`, `usage.summary`, `harnesses`, `providers`. The SaaS adds organizations and their
+identity providers, plans as limits, admission, rating of the ledger, billing, an operator surface, and its own
+launcher. It never reads a secret value, never bypasses row-level security, never changes a turn's behaviour.
+
+---
+
+## 14. The HTTP API
+
+All routes answer JSON in OpenAI's shapes; lists are `{"object": "list", "data", "first_id", "last_id", "has_more"}`.
+
+### 14.1 OpenAI-shaped (any key or sign-in; run-only keys see their own)
+
+| Route | Does |
+|---|---|
+| `POST /v1/responses` | create a turn (§9.1) |
+| `GET /v1/responses/{id}` | the Response; `?stream=true&starting_after=N` follows |
+| `POST /v1/responses/{id}/cancel`, `DELETE /v1/responses/{id}` | §9.7 |
+| `GET /v1/responses/{id}/input_items` | the request's input items |
+| `POST /v1/files`, `GET /v1/files`, `GET /v1/files/{id}`, `GET /v1/files/{id}/content`, `DELETE /v1/files/{id}` | uploads for `file_id` references |
+| `GET /v1/containers`, `GET /v1/containers/{id}`, `DELETE /v1/containers/{id}` | sessions; `?user=` filters by end user |
+| `GET /v1/containers/{id}/responses` | the session's turns in order |
+| `GET /v1/containers/{id}/files`, `POST …/files`, `GET …/files/{fid}`, `GET …/files/{fid}/content`, `DELETE …/files/{fid}` | the workspace as the current snapshot lists it, plus staged operations applied before the next turn |
+| `GET /v1/containers/{id}/traces`, `GET /v1/traces/{response_id}` | observability records |
+| `GET /v1/models`, `GET /v1/models/{id}` | every `harness/provider[/model]` the organization can send |
+
+### 14.2 Management
+
+| Route | Who | Does |
+|---|---|---|
+| `GET /v1/platform` | anyone | version, extensions |
+| `GET /v1/organization` | any | the organization, its limits, the caller's principal |
+| `GET/POST /v1/keys`, `DELETE /v1/keys/{id}` | developer+ | keys |
+| `GET /v1/providers`, `PUT/GET/DELETE /v1/providers/{name}` | read: any; write: admin | providers |
+| `GET/PUT /v1/egress` | read: developer; write: admin | the organization's entries |
+| `GET/POST /v1/harnesses`, `GET/PATCH/DELETE /v1/harnesses/{name}`, `GET …/files`, `GET …/files/{path}`, `GET …/install` | developer+ | install (multipart `package`), configure settings, secrets and defaults, read the package, the install's status |
+| `GET /v1/usage` | any | §12.3 |
+| `POST /v1/auth/login`, `/accept`, `/logout`, `GET /v1/auth/me`, `POST /v1/auth/password` | people | §10.1 |
+| `GET /v1/auth/sso`, `GET /v1/auth/sso/start`, `POST /v1/auth/sso/exchange` | anyone / people | §10.3 (`GET /v1/auth/sso` says whether SSO is configured and its display name) |
+| `GET/PUT/DELETE /v1/sso` | admin | the identity provider |
+| `GET/POST /v1/accounts`, `GET/PATCH /v1/accounts/{id}`, `POST …/reset` | admin | people |
+| `GET /v1/audit` | admin | the organization's audit log |
+
+### 14.3 Internal
+
+Boxes (box token): `GET /internal/boxes/{id}`, `POST …/ready`, `GET …/next?wait=`, `POST …/turns/{rid}/events`,
+`POST …/turns/{rid}/heartbeat`, `POST …/turns/{rid}/finish`, `GET …/objects/{key}` (package archive, install
+archive, request, history, files, ops, manifests), `GET …/blobs/{hash}`, `POST …/blobs` (which are missing),
+`PUT …/blobs/{hash}`, `PUT …/turns/{rid}/manifest` (the snapshot after the turn), `POST …/turns/{rid}/saved`
+(unchanged, or the save failed), `PUT …/turns/{rid}/logs/{stdout|stderr}`, `POST …/installed` (an install box's
+result, with the archive streamed to `PUT …/archive`), `POST …/bye`.
+
+`GET …/objects/{key}` serves a session box only its own session's objects, its own session's turns' objects, its
+organization's install archives and uploaded files, and the shared package archives; an install box, package archives
+only. Anything else is 403.
+
+Doors (door key): `POST /internal/door/policy`, `POST /internal/door/records`.
+
+Platform scope (operator key or platform admin): `GET /internal/health`, `GET /internal/metrics` (Prometheus text),
+`GET /internal/boxes`, `GET /internal/config`, `GET /internal/versions`, `GET /internal/audit`, `GET /internal/usage`,
+`GET/PATCH /internal/orgs/{id}` (limits, status, egress), `POST /internal/orgs/{id}/accounts` (invite an admin),
+`POST /internal/boxes/{id}/stop`.
+
+### 14.4 Health
+
+`GET /healthz` (process up), `GET /readyz` (Postgres and Redis reachable).
+
+---
+
+## 15. Repository layout and build order
 
 ```
 harnessgateway/
-  domain/      pure rules: the Responses contract, manifests, packages, egress entries, capacity, meters, ids
-  ports/       interfaces: BlobStore, KeyWrapper, SandboxRuntime
-  adapters/    blob_fs, blob_s3, keys_local, keys_kms, sandbox_docker (vendor SDKs only here)
-  services/    orgs, keys, providers, harnesses, files, sessions, turns, scheduler, secrets, traces, usage, sweeper
-  api/         FastAPI routers: OpenAI-shaped, management, internal
-  gateway/     the provider relay
-  node/        the node agent, the door, the turn runtime script
-  extensions.py, config.py, db.py (+ migrations), __main__.py
-sandbox/       the sandbox image and hgkit (the Responses contract in Python; its validator is the platform's own)
-packages/      the two shipped packages: shell (the template) and harness-package-builder (the built-in)
-console/       the consoles and the chat: an application on the public API, served by one small server
-deploy/        compose.yaml, install.sh, node.env.example
-docs/          architecture, API, the Responses wire, packages, operations, extensions, security
-tests/         unit, packages, integration (a live stack, driven by the OpenAI SDK)
+  __main__.py            the command: api | worker | door | migrate | init | keygen
+  config.py              HG_* settings, validated at start, every problem reported at once
+  errors.py  ids.py  limits.py  crypto.py  netguard.py
+  contract/              the Responses reader and writer (re-exports hgkit's validator) and routing
+  domain/                names, egress, manifest, package, mcp, access, limits, meters, turn states — pure
+  ports/                 blob store, key wrapper, mailer, launcher
+  adapters/              blob_fs, blob_s3, keys_local, keys_kms, mail_smtp, launch_docker
+  store/                 db.py (Postgres, scoped transactions, migrations), redis.py (streams, queue, pubsub), objects.py (the ledger over the blob store)
+  services/              orgs, accounts, sso, keys, audit, vault, providers, harnesses, installs, files, containers, turns, boxes, snapshots, traces, usage, operations, platform (composition root)
+  api/                   http.py (principals, body limits, envelope), responses, storage, manage, identity, internal, app.py
+  worker/                jobs (launch, install, stop, delete_session), duties, main loop
+  door/                  the proxy
+  extensions.py
+  migrations/0001_core.sql
+sandbox/
+  Dockerfile             the sandbox image: runtimes, hgkit, the runner
+  runner.py              standard library only
+  hgkit/                 __init__.py, validate.py, __main__.py
+packages/shell, packages/harness-package-builder
+console/                 server.py, static/, chat/
+deploy/                  compose.yaml, install.sh, postgres-init.sh, .env.example
+docs/                    operations.md, api.md, packages.md, console.md, security.md, extensions.md
+tests/unit, tests/services, tests/runner, tests/integration, tests/e2e
+scripts/version-check, scripts/sync-builder-seeds
+Dockerfile, pyproject.toml, README.md, CHANGELOG.md, AGENTS.md, LICENSE
+.github/workflows/ci.yml, release.yml
 ```
 
-- Python 3.12; FastAPI, psycopg 3, httpx, pydantic, the `openai` SDK (types only), `cryptography`. The door uses only
-  the standard library and `cryptography`.
-- One class or module per responsibility; no module that knows two things (the turn runner does not know HTTP; the API
-  does not know Docker).
-- Negative space: every boundary (request, manifest, settings, egress entry, path, archive, node report) is validated
-  and refused with a message naming what is allowed. Invariants are asserted, not handled.
-- Ports and adapters: vendor SDKs only in `adapters/`; standards (Postgres, OCI, HTTP, Responses) used directly.
-- CI: `ruff`, `mypy --strict`, unit and package tests on every push; integration tests on a compose stack.
+Build in this order; each step is shippable and tested on its own:
 
-## 19. Build plan
+1. **Foundations**: `pyproject`, `config`, `errors`, `ids`, `limits`, `crypto`, `netguard`, `contract`, `domain`,
+   `hgkit`. Unit tests.
+2. **Snapshots**: the manifest format, walk and diff, hashing and chunking, negotiation, restore — as a module
+   usable by both the runner (stdlib) and the api. Unit tests over a directory tree with a fake store.
+3. **Store and services**: schema with RLS, Redis streams and queue, the ledger, every service, the composition
+   root. Service tests on a real Postgres and Redis with the directory store, driving the box routes with a fake
+   runner.
+4. **API**: routers, principals, SSO. Service tests through the ASGI app.
+5. **Runner**: run by hand in a container against a local api; `tests/runner` runs it against an in-process fake
+   api with the shell package.
+6. **Door**: unit tests with local TLS echo servers.
+7. **Worker and Docker launcher**: the self-hosted stack from compose; integration tests against it.
+8. **Console and chat**: ported onto the API; SSO login; the boxes page replaces nodes. Browser tests.
+9. **Packages, docs, deploy, CI, release.**
 
-Each step ends when its check passes.
+---
 
-1. **Domain**: contract (in/out validation, envelope, final Response), manifests, packages, egress entries,
-   capacity, ids. → unit tests for every refusal.
-2. **Persistence and ports**: schema with RLS, migrations, BlobStore (fs, s3), KeyWrapper (local, kms). → tests prove an
-   org cannot read another's rows or objects.
-3. **Services and API**: orgs, keys, providers, harnesses (package upload), files, responses
-   (queue, stream, cancel, idempotency), containers, usage, traces, extensions. → API tests with a fake node.
-4. **Gateway**: token + node credential → grant, path allowlist, key swap, streaming, capture. → tests against a stub
-   provider, including a token presented without its node credential.
-5. **Node, box and door**: claim, install cache, box lifecycle, seeds, inputs, run, stop, snapshot/restore, metering;
-   door allowlist, private-address refusal, interception and header injection, counters. → integration: a secret
-   reaches a test HTTPS server and is absent from the box (`env`, files, `/proc`), the request, the response, traces.
-6. **Sandbox image and hgkit.** → hgkit unit tests; image scan.
-7. **The template package**, shell, with its fixture tests; then, for each coding-agent CLI, a package written in the
-   console from the template and verified live: a file-creating first turn, recall on a new sandbox, streaming,
-   instructions, cancel, a provider error.
-8. **Deploy**: images, compose, `install.sh`. → a clean Linux host goes from nothing to a completed turn with one
-   command; a second node host joins and takes turns; two API replicas behind a load balancer stream the same turn.
-9. **Docs**: architecture, API, Responses wire, packages (the builder guide), operations, extensions, security.
+## 16. Checks
 
-## 20. Not in this version
+CI on every push: `ruff check .`, `mypy`, `pytest tests/unit packages tests/runner`, `scripts/version-check`, no
+forbidden words; then `tests/services tests/e2e` on a real Postgres and Redis; then the two images build.
+Integration (`HG_TEST_STACK=1`) runs against a live stack: a turn in a sandbox, continuation, fork, switch, stream,
+cancel, egress allow and deny, secrets never leaving, container files, the operator view.
 
-Kubernetes runtime; per-request egress narrowing (`network_policy`); request-borne skills, hooks or config files
-(`environment.skills`, `environment.file_ids`); `POST /v1/containers`; the Conversations API; live steering of a
-running turn; secret injection into bodies or URLs; a web console. Each is refused or ignored and reported as such, not
-half-built. Next in identity: OIDC single sign-on with just-in-time accounts and group-to-role mapping; audited, time-boxed support access by the platform scope into an organization.
+Done means: `sudo ./deploy/install.sh` on a Linux host with Docker brings up Postgres, Redis, api, worker, door and
+console; `init` prints the first admin's invitation and a key; the console installs `shell` from the template and
+the builder is already there; a turn runs, continues, forks, switches, streams and cancels through the chat; usage
+shows agent-seconds and storage; SSO signs a person in against a real provider.
+
+---
+
+## 17. Settings
+
+Every setting is an environment variable with the `HG_` prefix. Secrets never appear in logs or the config route.
+
+| Variable | Role | Meaning |
+|---|---|---|
+| `HG_DATABASE_URL` | api, worker | Postgres, an ordinary role |
+| `HG_REDIS_URL` | api, worker | `redis://host:6379/0` |
+| `HG_BLOB_URL` | api, worker | `file:///path` or `s3://bucket/prefix?region=&endpoint=` |
+| `HG_SECRET_KEY` | api, worker, door | 32+ random bytes, base64. Derives the local master key, the token pepper, the door CA |
+| `HG_KMS_KEY` | api, worker | AWS KMS key for wrapping instead of the local master key |
+| `HG_OPERATOR_KEY` | api | `hgo_…`: the platform scope's key |
+| `HG_DOOR_KEY` | api, door | `hgd_…`: doors to the api |
+| `HG_API_URL` | worker, door, boxes | the api as boxes and doors reach it |
+| `HG_DOOR` | worker | `host:port` of the door as boxes reach it (self-hosted: `hg-door:3128`) |
+| `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE` | worker | images |
+| `HG_SANDBOX_RUNTIME` | worker | `runsc` (default) or `runc` |
+| `HG_LAUNCHER` | worker | `docker` (default); an extension may register another |
+| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher) |
+| `HG_BOX_DIR` | worker | where the Docker launcher keeps each box's writable directories, mounted at the same path inside and out |
+| `HG_UPSTREAM_PROXY`, `HG_CA_FILE`, `HG_ALLOW_PRIVATE_EGRESS` | door, api | an operator's proxy and CA; private addresses allowed |
+| `HG_CONSOLE_URL` | api | where people open the console; invitation and SSO links |
+| `HG_SMTP_URL`, `HG_MAIL_FROM` | api | mail: invitations are sent by the api that creates them |
+| `HG_DEFAULT_*` | api | §7.4 defaults |
+| `HG_EXTENSIONS` | all | §13 |
+| `HG_HOST`, `HG_PORT`, `HG_LOG_LEVEL` | all | listening and logging |
+
+---
+
+## 18. What this version removes from the previous platform
+
+Nodes, pools, join tokens, slots, warm limits, node-local caches, the gateway as a separate role and its second
+token, the per-node CA files, tar snapshots and copied forks, the `vcpu_seconds` meter, `capacity.node_pool` and
+`max_sandboxes`, the chat's own key. Replaced by boxes, the worker and launcher, the door as the one secret
+mechanism, content-addressed snapshots, `agent_seconds`, `standby_s`, `max_concurrent_turns`, and SSO.

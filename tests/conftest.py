@@ -1,6 +1,7 @@
 """What every suite that needs a database shares: scratch databases on the Postgres HG_TEST_DATABASE_URL names (a
-superuser URL), each owned by an ordinary role as a deploy connects (no superuser, no BYPASSRLS), dropped afterwards.
-Without the variable, the suites that need one skip."""
+superuser URL), each owned by an ordinary role as a deploy connects (no superuser, no BYPASSRLS), dropped afterwards;
+and the Redis HG_TEST_REDIS_URL names (default localhost). Without the database variable, the suites that need one
+skip."""
 from __future__ import annotations
 
 import os
@@ -37,3 +38,8 @@ def scratch_database() -> Iterator[Callable[[], str]]:
     with psycopg.connect(admin, autocommit=True) as cx:
         for name in made:
             cx.execute(f"DROP DATABASE {name} WITH (FORCE)")
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> str:
+    return os.environ.get("HG_TEST_REDIS_URL", "redis://localhost:6379/15")

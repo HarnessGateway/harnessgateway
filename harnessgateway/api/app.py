@@ -1,8 +1,7 @@
-"""The API role's application: the core's routers and every extension's, the error envelope, the body-size guard, and
-the background loops (event bus, sweeper), all bound to one Platform."""
+"""The api role's application: the core's routers and every extension's, the error envelope and the body-size guard,
+bound to one Platform. The api runs no loops of its own: boxes call in, the worker does the rest."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -38,20 +37,13 @@ def install_handlers(app: FastAPI) -> None:
                                        "code": None}}, status_code=500)
 
 
-def create_api(plat: Platform, *, background: bool = True) -> FastAPI:
+def create_app(plat: Platform) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await plat.open()
-        if plat.settings.node_join_token:
-            await plat.scheduler.ensure_token(plat.settings.node_join_token)
-        plat.bus.start()
-        tasks = [asyncio.create_task(plat.sweeper.run())] if background else []
         try:
             yield
         finally:
-            for t in tasks:
-                t.cancel()
-            await plat.bus.stop()
             await plat.close()
 
     app = FastAPI(title="HarnessGateway", version=__version__, lifespan=lifespan, docs_url="/v1/docs", redoc_url=None,
@@ -65,12 +57,8 @@ def create_api(plat: Platform, *, background: bool = True) -> FastAPI:
 
     @app.get("/readyz", include_in_schema=False)
     async def readyz() -> JSONResponse:
-        try:
-            async with plat.db.platform() as tx:
-                await tx.value("SELECT 1")
-        except Exception as e:
-            return JSONResponse({"ok": False, "database": type(e).__name__}, status_code=503)
-        return JSONResponse({"ok": True})
+        ready = await plat.operations.ready()
+        return JSONResponse({"ok": all(ready.values()), **ready}, status_code=200 if all(ready.values()) else 503)
 
     for module in (responses, storage, manage, identity, internal):
         app.include_router(module.router)

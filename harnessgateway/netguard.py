@@ -1,4 +1,4 @@
-"""Where the platform itself connects on an organization's behalf (provider endpoints, git package sources): public
+"""Where the platform itself connects on an organization's behalf (provider endpoints, identity providers): public
 addresses only, checked after resolution, unless the operator allows private ones (HG_ALLOW_PRIVATE_EGRESS)."""
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def resolve(host: str, port: int) -> list[str]:
         return []
 
 
-def check_url(url: str, *, allow_private: bool, param: str = "url") -> str:
+def check_url(url: object, *, allow_private: bool, param: str = "url") -> str:
     """The URL without a trailing slash, if it is https (http too with private addresses allowed), names a host, carries
     no credentials, query or fragment, and resolves only to addresses the platform may reach."""
     parts = urlsplit(url.strip() if isinstance(url, str) else "")
@@ -37,4 +37,5 @@ def check_url(url: str, *, allow_private: bool, param: str = "url") -> str:
         raise Invalid(f"{parts.hostname} does not resolve", param=param)
     if not allow_private and not all(is_public(a) for a in addresses):
         raise Invalid(f"{parts.hostname} resolves to a private address", param=param)
+    assert isinstance(url, str)
     return url.strip().rstrip("/")

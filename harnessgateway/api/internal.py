@@ -1,200 +1,157 @@
-"""The nodes' routes and the platform scope's (SPEC §14.4). A node joins once with a join token, then authenticates
-with its own credential. Object transfers use the signed links its job carried: a link is the only authorization they
-need. The platform scope is the operator key or a platform admin's sign-in; what it changes is audited."""
+"""The boxes' routes, the doors' and the platform scope's (SPEC §14.3). A box authenticates every call with the token
+its launch gave it; a door with the door key; the platform scope is the operator key or a platform admin's sign-in,
+and what it changes is audited."""
 from __future__ import annotations
 
-import tempfile
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
-from ..errors import Forbidden, Invalid
-from ..services.principal import NodeIdentity
-from .http import bearer, node, operator, platform, read_json
+from ..errors import Invalid
+from .http import box, door, integer, only, operator, platform, read_json, strings
+from .manage import period
 
 router = APIRouter(prefix="/internal")
 
 
-def _strings(body: dict[str, Any], key: str) -> list[str]:
-    value = body.get(key, [])
-    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        raise Invalid(f"{key} is a list of strings", param=key)
-    return value
+# ── a box's calls ─────────────────────────────────────────────────────────────────────────────────────────────────
+@router.get("/boxes/{box_id}")
+async def box_info(request: Request, b: dict[str, Any] = Depends(box)) -> Any:
+    return await platform(request).boxes.info(b)
 
 
-def _int(body: dict[str, Any], key: str, default: int) -> int:
-    value = body.get(key, default)
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise Invalid(f"{key} is an integer", param=key)
-    return value
-
-
-@router.post("/nodes/join")
-async def join(request: Request) -> Any:
-    body = await read_json(request)
-    return await platform(request).scheduler.join(bearer(request), str(body.get("name", "node")),
-                                                  _int(body, "slots", 1), str(body.get("version", "")))
-
-
-@router.post("/nodes/heartbeat")
-async def heartbeat(request: Request, n: NodeIdentity = Depends(node)) -> Any:
-    body = await read_json(request)
-    return await platform(request).scheduler.heartbeat(n, _strings(body, "running"), _strings(body, "boxes"),
-                                                       _strings(body, "saving"), _int(body, "slots", 0),
-                                                       str(body.get("version", "")))
-
-
-@router.post("/nodes/claim")
-async def claim(request: Request, n: NodeIdentity = Depends(node)) -> Any:
-    job = await platform(request).scheduler.claim(n)
-    return Response(status_code=204) if job is None else job
-
-
-@router.post("/turns/{rid}/events")
-async def events(request: Request, rid: str, n: NodeIdentity = Depends(node)) -> Any:
-    body = await read_json(request)
-    return await platform(request).delivery.events(n.node_id, rid, _int(body, "batch", -1), _strings(body, "lines"))
-
-
-@router.post("/turns/{rid}/finish")
-async def finish(request: Request, rid: str, n: NodeIdentity = Depends(node)) -> Any:
-    return await platform(request).delivery.finish(n.node_id, rid, await read_json(request))
-
-
-@router.post("/turns/{rid}/saved")
-async def saved(request: Request, rid: str, n: NodeIdentity = Depends(node)) -> Any:
-    await platform(request).delivery.saved(n.node_id, rid, await read_json(request))
+@router.post("/boxes/{box_id}/ready")
+async def box_ready(request: Request, b: dict[str, Any] = Depends(box)) -> Any:
+    await platform(request).boxes.ready(b)
     return {"ok": True}
 
 
-@router.get("/turns/{rid}/snapshot")
-async def snapshot(request: Request, rid: str, n: NodeIdentity = Depends(node)) -> Any:
-    return await platform(request).scheduler.snapshot(n, rid)
+@router.get("/boxes/{box_id}/next")
+async def box_next(request: Request, wait: float = 0, b: dict[str, Any] = Depends(box)) -> Any:
+    job = await platform(request).boxes.next(b, wait)
+    return Response(status_code=204) if job is None else job
 
 
-@router.post("/usage")
-async def usage(request: Request, n: NodeIdentity = Depends(node)) -> Any:
-    records = (await read_json(request)).get("records", [])
-    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
-        raise Invalid("records is a list of usage records", param="records")
-    plat = platform(request)
-    await plat.scheduler.check_orgs(n, {str(r.get("org_id")) for r in records})
-    return {"recorded": await plat.usage.record(records)}
+@router.post("/boxes/{box_id}/turns/{rid}/events")
+async def box_events(request: Request, rid: str, b: dict[str, Any] = Depends(box)) -> Any:
+    body = await read_json(request)
+    return await platform(request).boxes.events(b, rid, integer(body, "batch", -1), strings(body, "lines"))
 
 
-@router.get("/blobs/{token}")
-async def blob_get(request: Request, token: str) -> Any:
-    plat = platform(request)
-    key = plat.signer.verify(token, "GET")
-    if key is None:
-        raise Forbidden("the link is invalid or expired")
-    return StreamingResponse(plat.objects.stream(key), media_type="application/octet-stream")
+@router.post("/boxes/{box_id}/turns/{rid}/heartbeat")
+async def box_heartbeat(request: Request, rid: str, b: dict[str, Any] = Depends(box)) -> Any:
+    return await platform(request).boxes.heartbeat(b, rid)
 
 
-@router.put("/blobs/{token}")
-async def blob_put(request: Request, token: str) -> Any:
-    """A file-store upload through its signed link (an S3 store's links go to the store itself)."""
-    plat = platform(request)
-    key = plat.signer.verify(token, "PUT")
-    if key is None:
-        raise Forbidden("the link is invalid or expired")
-    with tempfile.NamedTemporaryFile(prefix="hg-blob-") as tmp:
-        async for chunk in request.stream():
-            tmp.write(chunk)
-        tmp.flush()
-        await plat.store.put_file(key, Path(tmp.name))
-    return {"key": key}
+@router.post("/boxes/{box_id}/turns/{rid}/finish")
+async def box_finish(request: Request, rid: str, b: dict[str, Any] = Depends(box)) -> Any:
+    return await platform(request).boxes.finish(b, rid, await read_json(request))
 
 
-@router.post("/node-tokens")
-async def node_token(request: Request, actor: str = Depends(operator)) -> Any:
-    plat, body = platform(request), await read_json(request)
-    ttl = body.get("ttl_days")
-    pool = str(body.get("pool", ""))
-    token = await plat.scheduler.create_token(pool, str(body.get("label", "")), _int(body, "uses", 1),
-                                              ttl if isinstance(ttl, int) else None)
-    await plat.audit.write(None, actor, "node_token.create", pool, {"uses": _int(body, "uses", 1)})
-    return {"object": "node_token", "token": token}
+@router.put("/boxes/{box_id}/turns/{rid}/manifest")
+async def box_manifest(request: Request, rid: str, b: dict[str, Any] = Depends(box)) -> Any:
+    """The manifest of the state after the turn, as JSON Lines; its blobs were put first."""
+    return await platform(request).boxes.put_snapshot(b, rid, (await request.body()).decode("utf-8", "replace"))
 
 
-@router.post("/nodes/{node_id}/drain")
-async def drain(request: Request, node_id: str, actor: str = Depends(operator)) -> Any:
-    plat = platform(request)
-    await plat.scheduler.drain(node_id)
-    await plat.audit.write(None, actor, "node.drain", node_id)
-    return {"id": node_id, "object": "node", "status": "draining"}
+@router.post("/boxes/{box_id}/turns/{rid}/saved")
+async def box_saved(request: Request, rid: str, b: dict[str, Any] = Depends(box)) -> Any:
+    await platform(request).boxes.saved(b, rid, await read_json(request))
+    return {"ok": True}
 
 
-# ── the platform scope's view (SPEC §9.4): health, metrics, nodes, organizations, usage, configuration, audit ─────
-@router.get("/metrics", dependencies=[Depends(operator)])
-async def metrics(request: Request) -> Any:
-    return PlainTextResponse(await platform(request).operations.metrics(), media_type="text/plain; version=0.0.4")
+@router.put("/boxes/{box_id}/turns/{rid}/logs/{name}")
+async def box_log(request: Request, rid: str, name: str, b: dict[str, Any] = Depends(box)) -> Any:
+    await platform(request).boxes.put_log(b, rid, name, request.stream())
+    return {"ok": True}
 
 
-@router.get("/audit", dependencies=[Depends(operator)])
-async def audit_all(request: Request, limit: int = 50, after: str | None = None) -> Any:
-    return await platform(request).audit.list(None, limit, after)
+@router.get("/boxes/{box_id}/objects/{key:path}")
+async def box_object(request: Request, key: str, b: dict[str, Any] = Depends(box)) -> Any:
+    stream = await platform(request).boxes.object_stream(b, key)
+    return StreamingResponse(stream, media_type="application/octet-stream")
 
 
+@router.post("/boxes/{box_id}/blobs")
+async def box_blobs_missing(request: Request, b: dict[str, Any] = Depends(box)) -> Any:
+    body = await read_json(request)
+    only(body, "hashes")
+    return {"missing": await platform(request).boxes.blobs_missing(b, body.get("hashes"))}
+
+
+@router.get("/boxes/{box_id}/blobs/{digest}")
+async def box_blob_get(request: Request, digest: str, b: dict[str, Any] = Depends(box)) -> Any:
+    return StreamingResponse(platform(request).boxes.blob_stream(b, digest), media_type="application/octet-stream")
+
+
+@router.put("/boxes/{box_id}/blobs/{digest}")
+async def box_blob_put(request: Request, digest: str, b: dict[str, Any] = Depends(box)) -> Any:
+    return {"hash": digest, "bytes": await platform(request).boxes.put_blob(b, digest, request.stream())}
+
+
+@router.put("/boxes/{box_id}/archive")
+async def box_archive(request: Request, b: dict[str, Any] = Depends(box)) -> Any:
+    if b["kind"] != "install":
+        raise Invalid("only an install box uploads an archive")
+    return {"bytes": await platform(request).boxes.put_archive(b, request.stream())}
+
+
+@router.post("/boxes/{box_id}/installed")
+async def box_installed(request: Request, b: dict[str, Any] = Depends(box)) -> Any:
+    if b["kind"] != "install":
+        raise Invalid("only an install box reports an install")
+    await platform(request).boxes.installed(b, await read_json(request))
+    return {"ok": True}
+
+
+@router.post("/boxes/{box_id}/bye")
+async def box_bye(request: Request, b: dict[str, Any] = Depends(box)) -> Any:
+    await platform(request).boxes.bye(b)
+    return {"ok": True}
+
+
+# ── a door's questions ────────────────────────────────────────────────────────────────────────────────────────────
+@router.post("/door/policy", dependencies=[Depends(door)])
+async def door_policy(request: Request) -> Any:
+    body = await read_json(request)
+    only(body, "token")
+    return await platform(request).boxes.policy(str(body.get("token", "")))
+
+
+@router.post("/door/records", dependencies=[Depends(door)])
+async def door_records(request: Request) -> Any:
+    body = await read_json(request)
+    only(body, "token", "records")
+    records = body.get("records", [])
+    if not isinstance(records, list):
+        raise Invalid("records is a list", param="records")
+    await platform(request).boxes.door_records(str(body.get("token", "")), records)
+    return {"ok": True}
+
+
+# ── the platform scope's view ─────────────────────────────────────────────────────────────────────────────────────
 @router.get("/health", dependencies=[Depends(operator)])
 async def health(request: Request) -> Any:
     return await platform(request).operations.health()
 
 
-@router.get("/nodes", dependencies=[Depends(operator)])
-async def nodes(request: Request) -> Any:
-    return await platform(request).operations.nodes()
+@router.get("/metrics", dependencies=[Depends(operator)])
+async def metrics(request: Request) -> Any:
+    return PlainTextResponse(await platform(request).operations.metrics(), media_type="text/plain; version=0.0.4")
 
 
-@router.get("/orgs", dependencies=[Depends(operator)])
-async def orgs(request: Request) -> Any:
-    return await platform(request).operations.orgs()
+@router.get("/boxes", dependencies=[Depends(operator)])
+async def boxes(request: Request) -> Any:
+    return {"object": "list", "data": await platform(request).boxes.listing()}
 
 
-@router.get("/orgs/{org_id}", dependencies=[Depends(operator)])
-async def org(request: Request, org_id: str) -> Any:
-    return await platform(request).operations.org(org_id)
-
-
-@router.patch("/orgs/{org_id}")
-async def configure_org(request: Request, org_id: str, actor: str = Depends(operator)) -> Any:
-    """{"capacity": {...}, "status": "active|suspended", "egress": [...]}: each given part replaces the stored one."""
-    plat, body = platform(request), await read_json(request)
-    unknown = sorted(set(body) - {"capacity", "status", "egress"})
-    if unknown:
-        raise Invalid(f"an organization is configured with capacity, status and egress, not {', '.join(unknown)}")
-    if "capacity" in body or "status" in body:
-        capacity = body.get("capacity")
-        if capacity is not None and not isinstance(capacity, dict):
-            raise Invalid("capacity is an object of capacity fields", param="capacity")
-        await plat.orgs.update(org_id, capacity=capacity, status=body.get("status"))
-    if "egress" in body:
-        await plat.orgs.set_egress(org_id, body["egress"])
-    await plat.audit.write(org_id, actor, "org.configure", org_id, {k: v for k, v in body.items() if k != "egress"})
-    return await plat.operations.org(org_id)
-
-
-@router.post("/orgs/{org_id}/accounts")
-async def invite_admin(request: Request, org_id: str, actor: str = Depends(operator)) -> Any:
-    """{email, name}: an admin for the organization, invited (the link once; mailed when mail is set). How the
-    deployer hands an organization to its people."""
-    plat, body = platform(request), await read_json(request)
-    unknown = sorted(set(body) - {"email", "name"})
-    if unknown:
-        raise Invalid(f"an invitation takes email and name, not {', '.join(unknown)}")
-    await plat.operations.org(org_id)
-    return await plat.accounts.create(org_id, actor, body.get("email"), body.get("name"), "admin")
-
-
-@router.get("/usage", dependencies=[Depends(operator)])
-async def usage_all(request: Request, start: int | None = None, end: int | None = None, group_by: str | None = None) -> Any:
-    now = datetime.now(UTC)
-    s = datetime.fromtimestamp(start, UTC) if start else now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    e = datetime.fromtimestamp(end, UTC) if end else now
-    return await platform(request).operations.usage(s, e, group_by)
+@router.post("/boxes/{box_id}/stop")
+async def stop_box(request: Request, box_id: str, actor: str = Depends(operator)) -> Any:
+    plat = platform(request)
+    out = await plat.boxes.stop_requested(box_id, actor)
+    await plat.audit.write(None, actor, "box.stop", box_id)
+    return out
 
 
 @router.get("/config", dependencies=[Depends(operator)])
@@ -207,9 +164,42 @@ async def versions(request: Request) -> Any:
     return await platform(request).operations.versions()
 
 
-@router.post("/sessions/{sid}/evict")
-async def evict(request: Request, sid: str, actor: str = Depends(operator)) -> Any:
-    plat = platform(request)
-    out = await plat.operations.evict(sid)
-    await plat.audit.write(None, actor, "session.evict", sid)
+@router.get("/audit", dependencies=[Depends(operator)])
+async def audit_all(request: Request, limit: int = 50, after: str | None = None) -> Any:
+    return await platform(request).audit.list(None, limit, after)
+
+
+@router.get("/usage", dependencies=[Depends(operator)])
+async def usage_all(request: Request, start: int | None = None, end: int | None = None, group_by: str | None = None) -> Any:
+    return await platform(request).usage.platform_summary(*period(start, end), group_by)
+
+
+@router.get("/orgs", dependencies=[Depends(operator)])
+async def orgs(request: Request) -> Any:
+    return await platform(request).operations.list_orgs()
+
+
+@router.get("/orgs/{org_id}", dependencies=[Depends(operator)])
+async def org(request: Request, org_id: str) -> Any:
+    return await platform(request).operations.org(org_id)
+
+
+@router.patch("/orgs/{org_id}")
+async def configure_org(request: Request, org_id: str, actor: str = Depends(operator)) -> Any:
+    """{"limits": {...}, "status": "active|suspended", "egress": [...]}: each given part replaces the stored one."""
+    plat, body = platform(request), await read_json(request)
+    only(body, "limits", "status", "egress")
+    if "limits" in body and not isinstance(body["limits"], dict):
+        raise Invalid("limits is an object of limit fields", param="limits")
+    out = await plat.operations.patch_org(org_id, body)
+    await plat.audit.write(org_id, actor, "org.configure", org_id, body)
     return out
+
+
+@router.post("/orgs/{org_id}/accounts")
+async def invite_admin(request: Request, org_id: str, actor: str = Depends(operator)) -> Any:
+    """{email, name}: an admin for the organization, invited (the link once; mailed when mail is set). How the
+    deployer hands an organization to its people."""
+    body = await read_json(request)
+    only(body, "email", "name")
+    return await platform(request).operations.invite_admin(org_id, actor, body.get("email"), body.get("name"))

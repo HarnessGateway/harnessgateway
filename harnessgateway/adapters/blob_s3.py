@@ -56,7 +56,12 @@ class S3Blobs:
         return await asyncio.to_thread(run)
 
     async def stream(self, key: str) -> AsyncIterator[bytes]:
-        body = (await asyncio.to_thread(self._s3.get_object, Bucket=self.bucket, Key=self._k(key)))["Body"]
+        try:
+            body = (await asyncio.to_thread(self._s3.get_object, Bucket=self.bucket, Key=self._k(key)))["Body"]
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+                raise KeyError(key) from None
+            raise
         try:
             while chunk := await asyncio.to_thread(body.read, CHUNK):
                 yield chunk
@@ -80,11 +85,3 @@ class S3Blobs:
                 if keys:
                     self._s3.delete_objects(Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True})
         await asyncio.to_thread(run)
-
-    def link_get(self, key: str, ttl_s: int) -> str:
-        return str(self._s3.generate_presigned_url("get_object", Params={"Bucket": self.bucket, "Key": self._k(key)},
-                                                   ExpiresIn=ttl_s))
-
-    def link_put(self, key: str, ttl_s: int) -> str:
-        return str(self._s3.generate_presigned_url("put_object", Params={"Bucket": self.bucket, "Key": self._k(key)},
-                                                   ExpiresIn=ttl_s))

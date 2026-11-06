@@ -1,11 +1,11 @@
-// The platform console (SPEC §9.4): the platform as infrastructure, for platform admins.
+// The platform console (SPEC §14.3): the platform as infrastructure, for platform admins.
 import { api, esc, when } from "./api.js";
-import { $, card, confirm, copy, fail, field, input, kv, modal, pill, pre, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { $, card, confirm, fail, field, input, kv, modal, pill, rerender, reveal, select, stat, statusPill, table, then, toast } from "./ui.js";
 import { auditPage, usagePage } from "./pages_user.js";
 
 export function nav() {
   const mods = [{ mod: "Platform", items: [
-    { id: "health", label: "Health", icon: "grid" }, { id: "nodes", label: "Nodes & pools", icon: "nodes" },
+    { id: "health", label: "Health", icon: "grid" }, { id: "boxes", label: "Boxes", icon: "nodes" },
     { id: "orgs", label: "Organizations", icon: "org" }, { id: "usage", label: "Platform usage", icon: "usage" },
     { id: "versions", label: "Versions", icon: "tag" }, { id: "config", label: "Configuration", icon: "cfg" },
     { id: "audit", label: "Audit log", icon: "log" }] }];
@@ -21,57 +21,50 @@ const apiGuess = () => `${location.protocol}//${location.hostname}:8000`;
 // ── Health ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const health = { title: "Health", async render(el) {
   const h = await api("GET", "/internal/health");
-  const t = h.turns_24h || {}, f = Object.entries(h.failures_24h || {});
-  el.innerHTML = top("Health", "The platform as infrastructure: processes, stores, nodes, the queue.", `<button class="btn2" id="re">Refresh</button>`) +
+  const t = h.turns_24h || {}, f = Object.entries(h.failures_24h || {}), b = h.boxes || {}, q = h.turns || {};
+  const count = prefix => Object.entries(b).filter(([k]) => k.startsWith(prefix)).reduce((n, [, v]) => n + v, 0);
+  el.innerHTML = top("Health", "The platform as infrastructure: the stores, the queue, the boxes.", `<button class="btn2" id="re">Refresh</button>`) +
     `<div class="grid">${stat("API", ok(true, "ready"), `v${h.version}${h.extensions.length ? " · " + h.extensions.join(", ") : ""}`)}` +
-    `${stat("Database", ok(h.database.ok, h.database.ok ? "ok" : h.database.error))}${stat("Objects", ok(h.objects?.ok, h.objects?.ok ? "ok" : h.objects?.error || "?"), h.objects?.url || "")}` +
-    `${stat("Queue", h.queue.queued, h.queue.queued ? `oldest ${h.queue.oldest_s} s` : "empty")}</div>` +
-    `<div class="grid">${stat("Nodes", `${h.nodes.live}<small>of ${h.nodes.count} live</small>`)}${stat("Slots", h.nodes.slots, `${h.nodes.running} running`)}${stat("Warm sandboxes", h.nodes.warm)}` +
+    `${stat("Database", ok(h.database.ok, h.database.ok ? "ok" : h.database.error))}${stat("Redis", ok(h.redis?.ok, h.redis?.ok ? "ok" : h.redis?.error || "?"), h.redis?.ok ? `${h.redis.jobs} jobs queued` : "")}` +
+    `${stat("Objects", ok(h.objects?.ok, h.objects?.ok ? "ok" : h.objects?.error || "?"), h.objects?.url || "")}</div>` +
+    `<div class="grid">${stat("Turns running", q.running || 0)}${stat("Turns queued", q.queued || 0, q.queued ? `oldest ${q.oldest_queued_s} s` : "none waiting")}` +
+    `${stat("Session boxes", count("session."), `${b["session.running"] || 0} running · ${b["session.standby"] || 0} standing by · ${b["session.starting"] || 0} starting`)}${stat("Install boxes", count("install."))}` +
     `${stat("Turns (24 h)", (t.completed || 0) + (t.failed || 0) + (t.cancelled || 0) + (t.incomplete || 0), `${t.failed || 0} failed`)}</div>` +
     `<div class="grid two">${card("Turns in the last 24 hours", table([{ h: "Status", cell: ([s]) => statusPill(s) }, { h: "Count", cell: ([, n]) => n }], Object.entries(t), "No turns yet."))}` +
     `${card("Failures by reason (24 h)", table([{ h: "Reason", cell: ([r]) => `<span class="mono">${esc(r)}</span>` }, { h: "Count", cell: ([, n]) => n }], f, "No failures."))}</div>`;
   $("#re", el).addEventListener("click", () => rerender());
 } };
 
-// ── Nodes & pools ─────────────────────────────────────────────────────────────────────────────────────────────────
-const nodes = { title: "Nodes & pools", async render(el, params, me) {
-  const rows = (await api("GET", "/internal/nodes")).data;
-  const pools = [...new Set(rows.map(n => n.pool))];
-  el.innerHTML = top("Nodes & pools", "Every node that joined: what it holds and whether it is alive. A node joins a pool with a join token.",
-    `<button class="btn" id="token">New join token</button>`) +
-    `<div class="card">${table([{ h: "Node", cell: n => `<b>${esc(n.name)}</b><br><span class="mono">${esc(n.id)}</span>` }, { h: "Pool", cell: n => pill(n.pool || "default", "b") },
-      { h: "Slots", cell: n => `${n.running} / ${n.slots}` }, { h: "Warm", cell: n => n.warm }, { h: "Version", cell: n => esc(n.version || "—") },
-      { h: "Heartbeat", cell: n => `${n.live ? ok(true, "") : ok(false, "")}${when(n.last_seen_at)}` }, { h: "Status", cell: n => statusPill(n.status) },
-      { h: "", cls: "acts", cell: n => n.status === "active" ? `<button class="btn2" data-drain="${n.id}">Drain</button>` : "" }], rows, "No node has joined yet.")}</div>` +
-    (pools.length > 1 ? `<p class="muted small" style="margin-top:10px">Pools: ${pools.map(p => esc(p || "default")).join(", ")}. An organization pinned to a pool runs only there.</p>` : "");
-  $("#token", el).addEventListener("click", () => modal({ title: "Join token", submit: "Create", body:
-    field("Pool", input("pool", "", 'placeholder="(default)"'), "the pool the node joins; empty for the default pool") + field("Label", input("label", "", 'placeholder="rack-2"')) +
-    `<div class="row">${field("Uses", input("uses", "1", 'type="number" min="1"'))}${field("Valid for (days)", input("ttl_days", "7", 'type="number" min="1"'))}</div>` +
-    field("API URL", input("api", apiGuess(), 'type="url" required'), "the API as the new host reaches it: this host's address and HG_HTTP_PORT"),
-    onSubmit: async d => {
-      const base = d.api.trim().replace(/\/$/, "");
-      const r = await api("POST", "/internal/node-tokens", { pool: d.pool, label: d.label, uses: +d.uses, ttl_days: +d.ttl_days });
-      const line = `docker run -d --name harnessgateway-node --restart unless-stopped --user 0:0 \\\n  -e HG_API_URL=${base} -e HG_GATEWAY_URL=${base}/gateway \\\n  -e HG_NODE_JOIN_TOKEN=${r.token}${d.pool ? ` -e HG_NODE_POOL=${d.pool}` : ""} -e HG_UPLINK_NETWORK=bridge \\\n  -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \\\n  ghcr.io/harnessgateway/harnessgateway:${me.platform.version || "latest"} node`;
-      then(() => modal({ title: "Run this on the new host", wide: true, body: `<p>Docker and gVisor must be installed (deploy/install.sh does both). The token is shown once.</p>${pre(line)}`, submit: "Copy", onSubmit: () => copy(line) }));
-    } }));
+// ── Boxes ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+const boxes = { title: "Boxes", async render(el) {
+  const rows = (await api("GET", "/internal/boxes")).data;
+  el.innerHTML = top("Boxes", "Every live sandbox: one per session while it runs or stands by for its next turn, and one per install in progress. A box that stops answering is lost after a minute; stopping one fails its turn.",
+    `<button class="btn2" id="re">Refresh</button>`) +
+    `<div class="card">${table([{ h: "Box", cell: b => `<span class="mono">${esc(b.id)}</span><br><span class="muted small">${esc(b.launcher_ref || "not launched yet")}</span>` },
+      { h: "Kind", cell: b => pill(b.kind, "b") }, { h: "Organization", cell: b => `<span class="mono">${esc(b.org_id)}</span>` },
+      { h: "Harness", cell: b => esc(b.harness || "—") }, { h: "Session", cell: b => b.session_id ? `<span class="mono">${esc(b.session_id)}</span>` : "—" },
+      { h: "Turn", cell: b => b.turn_id ? `<span class="mono">${esc(b.turn_id)}</span>` : "—" }, { h: "Status", cell: b => statusPill(b.status) },
+      { h: "Seen", cell: b => when(b.last_seen_at) }, { h: "Started", cell: b => when(b.created_at) },
+      { h: "", cls: "acts", cell: b => `<button class="btn2 danger" data-stop="${b.id}">Stop</button>` }], rows, "No box is live.")}</div>`;
+  $("#re", el).addEventListener("click", () => rerender());
   el.addEventListener("click", async e => {
-    const d = e.target.closest("[data-drain]");
-    if (d && await confirm("Drain node", "The node finishes its running turns and takes no new ones. Its warm sandboxes are removed when it stops.", "Drain")) {
-      try { await api("POST", `/internal/nodes/${d.dataset.drain}/drain`); toast("Draining", "ok"); rerender(); } catch (err) { fail(err); }
+    const s = e.target.closest("[data-stop]");
+    if (s && await confirm("Stop box", "The box ends now. A turn running in it fails as cancelled; the session keeps its last saved state and gets a new box on its next turn.", "Stop")) {
+      try { await api("POST", `/internal/boxes/${s.dataset.stop}/stop`); toast("Stopped", "ok"); rerender(); } catch (err) { fail(err); }
     }
   });
 } };
 
 // ── Organizations ─────────────────────────────────────────────────────────────────────────────────────────────────
-const CAP = [["vcpus", "vCPUs per sandbox", "number", "0.5"], ["memory_mb", "Memory (MB)", "number", "256"], ["pids", "Processes", "number", "64"], ["tmp_mb", "/tmp (MB)", "number", "64"],
-  ["max_sandboxes", "Max sandboxes (0: none)", "number", "1"], ["max_running_turns", "Max running turns (0: none)", "number", "1"], ["idle_ttl_s", "Warm idle TTL (s)", "number", "1"],
-  ["turn_timeout_s", "Turn timeout (s, 0: none)", "number", "1"], ["retention_days", "Retention (days, 0: keep)", "number", "1"], ["node_pool", "Node pool", "text", ""]];
-const orgs = { title: "Organizations", async render(el, params, me) {
+const LIMITS = [["vcpus", "vCPUs per box", "number", "0.5"], ["memory_mb", "Memory (MB)", "number", "256"], ["tmp_mb", "/tmp (MB)", "number", "64"], ["pids", "Processes", "number", "64"],
+  ["max_concurrent_turns", "Concurrent turns (0: no ceiling)", "number", "1"], ["standby_s", "Standby after a turn (s)", "number", "1"],
+  ["turn_timeout_s", "Turn timeout (s, 0: none)", "number", "1"], ["retention_days", "Retention (days, 0: keep)", "number", "1"]];
+const orgs = { title: "Organizations", async render(el) {
   const rows = (await api("GET", "/internal/orgs")).data;
-  el.innerHTML = top("Organizations", "Every organization on this platform: what it may use and what it is using. Its capacity is what each of its sandboxes gets. Self-hosted runs one.") +
+  el.innerHTML = top("Organizations", "Every organization on this platform: what each of its boxes gets, how many turns may run at once, and what it is using. Self-hosted runs one.") +
     `<div class="card">${table([{ h: "Organization", cell: o => `<b>${esc(o.name)}</b><br><span class="mono">${esc(o.id)}</span>` },
-      { h: "Capacity", cell: o => `${o.capacity.vcpus} vCPU · ${o.capacity.memory_mb} MB · ${o.capacity.max_sandboxes || "∞"} sandboxes · ${o.capacity.max_running_turns || "∞"} turns${o.capacity.node_pool ? ` · pool ${esc(o.capacity.node_pool)}` : ""}` },
-      { h: "Sessions", cell: o => o.sessions }, { h: "Running", cell: o => o.running }, { h: "Warm", cell: o => o.boxes }, { h: "Observability", cell: o => pill(o.capacity.observability, "b") },
+      { h: "Limits", cell: o => `${o.limits.vcpus} vCPU · ${o.limits.memory_mb} MB · ${o.limits.max_concurrent_turns || "∞"} turns · standby ${o.limits.standby_s} s` },
+      { h: "Sessions", cell: o => o.sessions }, { h: "Running", cell: o => o.running }, { h: "Boxes", cell: o => o.boxes }, { h: "Observability", cell: o => pill(o.limits.observability, "b") },
       { h: "Status", cell: o => statusPill(o.status) },
       { h: "", cls: "acts", cell: o => `<button class="btn2" data-invite="${o.id}" data-name="${esc(o.name)}">Invite admin</button><button class="btn2" data-edit="${o.id}">Edit</button>` +
         (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>` +
@@ -91,44 +84,44 @@ const orgs = { title: "Organizations", async render(el, params, me) {
     const ed = e.target.closest("[data-edit]");
     if (ed) { editOrg(rows.find(o => o.id === ed.dataset.edit), () => rerender()); return; }
     const st = e.target.closest("[data-status]");
-    if (st && (st.dataset.status === "active" || await confirm("Suspend organization", "New turns are refused until it is unsuspended; running turns finish.", "Suspend"))) {
+    if (st && (st.dataset.status === "active" || await confirm("Suspend organization", "New turns are refused and queued ones fail until it is unsuspended; running turns finish.", "Suspend"))) {
       try { await api("PATCH", `/internal/orgs/${st.dataset.id}`, { status: st.dataset.status }); rerender(); } catch (err) { fail(err); }
     }
   });
 } };
 function editOrg(o, done) {
   modal({ title: `Organization ${o.name}`, wide: true, submit: "Save", body:
-    `<div class="grid two" style="margin-bottom:0">${CAP.map(([k, l, t, step]) => field(l, input(k, o.capacity[k], `type="${t}"${step ? ` step="${step}"` : ""}`), k in o.capacity_set ? "set for this organization" : "the platform default")).join("")}` +
-    `${field("Observability", select("observability", [["metadata", "metadata — timings, sizes, outcomes"], ["full", "full — request and response bodies too"]], o.capacity.observability))}</div>` +
+    `<div class="grid two" style="margin-bottom:0">${LIMITS.map(([k, l, t, step]) => field(l, input(k, o.limits[k], `type="${t}"${step ? ` step="${step}"` : ""}`), k in o.limits_set ? "set for this organization" : "the platform default")).join("")}` +
+    `${field("Observability", select("observability", [["metadata", "metadata — timings, sizes, outcomes"], ["full", "full — request and response bodies too"]], o.limits.observability))}</div>` +
     field("Egress entries (one per line)", `<textarea name="egress">${esc(o.egress.join("\n"))}</textarea>`, "host · *.domain · host:port · !host to deny · * for everything"),
     onSubmit: async d => {
-      const capacity = {};
-      for (const [k, , t] of CAP) capacity[k] = t === "number" ? Number(d[k]) : d[k];
-      capacity.observability = d.observability;
-      await api("PATCH", `/internal/orgs/${o.id}`, { capacity, egress: d.egress.split("\n").map(s => s.trim()).filter(Boolean) });
+      const limits = {};
+      for (const [k] of LIMITS) limits[k] = Number(d[k]);
+      limits.observability = d.observability;
+      await api("PATCH", `/internal/orgs/${o.id}`, { limits, egress: d.egress.split("\n").map(s => s.trim()).filter(Boolean) });
       toast("Saved", "ok"); done();
     } });
 }
 
 // ── Platform usage ────────────────────────────────────────────────────────────────────────────────────────────────
 const usage = usagePage("/internal/usage", [["", "total"], ["org", "organization"], ["day", "day"]],
-  "What every organization's sandboxes used, together: the figures a bill is made from.");
+  "What every organization's boxes used, together: agent time, the resources behind it, bytes through the door, storage held.");
 
 // ── Versions, configuration ───────────────────────────────────────────────────────────────────────────────────────
 const versions = { title: "Versions", async render(el) {
   const v = await api("GET", "/internal/versions");
-  el.innerHTML = top("Versions", "What is running, and what the nodes run sandboxes with.") +
+  el.innerHTML = top("Versions", "What is running, and the image every box runs.") +
     `<div class="grid two">${card("Platform", kv([["Platform", esc(v.platform)], ["Platform image", `<span class="mono">${esc(v.platform_image)}</span>`], ["Sandbox image", `<span class="mono">${esc(v.sandbox_image)}</span>`],
       ...Object.entries(v.migrations).map(([p, n]) => [`Schema ${p}`, `migration ${n}`])]))}</div>`;
 } };
 const config = { title: "Configuration", async render(el) {
   const c = await api("GET", "/internal/config");
-  el.innerHTML = top("Configuration", "The settings this API process runs with (secrets are never shown), and the capacity every organization starts from.") +
+  el.innerHTML = top("Configuration", "The settings this API process runs with (secrets are never shown), and the limits every organization starts from.") +
     `<div class="grid two">${card("Settings (HG_*)", kv(Object.entries(c.settings).map(([k, v]) => [`HG_${k.toUpperCase()}`, `<span class="mono">${esc(v)}</span>`])))}` +
-    `${card("Capacity defaults (HG_DEFAULT_*)", kv(Object.entries(c.defaults).map(([k, v]) => [k, esc(String(v))])))}</div>`;
+    `${card("Limit defaults (HG_DEFAULT_*)", kv(Object.entries(c.defaults).map(([k, v]) => [k, esc(String(v))])))}</div>`;
 } };
 
 // ── Audit log ─────────────────────────────────────────────────────────────────────────────────────────────────────
-const audit = auditPage("/internal/audit", "Every change of standing across the platform, newest first: the organizations' and the platform's own (node tokens, draining, capacity).");
+const audit = auditPage("/internal/audit", "Every change of standing across the platform, newest first: the organizations' and the platform's own (limits, stopped boxes).");
 
-export const pages = { health, nodes, orgs, usage, versions, config, audit };
+export const pages = { health, boxes, orgs, usage, versions, config, audit };

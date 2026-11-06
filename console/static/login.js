@@ -9,6 +9,18 @@ async function post(path, body) {
   if (!r.ok) throw new Error(typeof d.error === "string" ? d.error : (d.error && d.error.message) || r.statusText);
   return d;
 }
+// SSO, when the organization configured it: the button goes to the identity provider and comes back signed in.
+if (!token) fetch("/api/sso").then(r => r.ok ? r.json() : null).then(sso => {
+  if (!sso || !sso.enabled) return;
+  const local = q.get("local") === "1" || q.get("error");
+  document.getElementById("sso").hidden = false;
+  document.getElementById("ssogo").textContent = `Sign in with ${sso.name || "SSO"}`;
+  document.getElementById("ssogo").href = "/api/sso/start?next=" + encodeURIComponent(next);
+  document.getElementById("ssohelp").textContent = sso.required && !local ? "Passwords are turned off for this organization." : "or with a password:";
+  if (sso.required && !local) { document.getElementById("signin").hidden = true; go.hidden = true; document.getElementById("local").hidden = false;
+    for (const name of ["email", "password"]) f.elements[name].disabled = true; }
+}).catch(() => {});
+if (q.get("error")) say(q.get("error"), "bad");
 if (token) {
   document.getElementById("signin").hidden = true; document.getElementById("setup").hidden = false;
   for (const name of ["email", "password"]) f.elements[name].disabled = true;      // hidden fields take no part in validation

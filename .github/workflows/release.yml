@@ -1,9 +1,9 @@
 name: release
 # The changelog is the release. On every push to main this reads the top entry of CHANGELOG.md; when its version has
 # no tag yet, it builds the platform and sandbox images for amd64 and arm64, pushes them to GHCR as
-# ghcr.io/harnessgateway/harnessgateway:<version> and ghcr.io/harnessgateway/sandbox:<version> (and :latest) — the
-# names deploy/install.sh, compose and the node default to — then tags v<version> and publishes the entry as the
-# release notes. A push to main whose top entry is already tagged does nothing.
+# ghcr.io/harnessgateway/harnessgateway:<version> and ghcr.io/harnessgateway/sandbox:<version> (and :latest), the
+# names deploy/install.sh and compose default to, then tags v<version> and publishes the entry as the release notes.
+# A push to main whose top entry is already tagged does nothing.
 on:
   push:
     branches: [main]
@@ -48,9 +48,9 @@ jobs:
       matrix:
         include:
           - name: harnessgateway
-            context: .
+            file: Dockerfile
           - name: sandbox
-            context: sandbox
+            file: sandbox/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -62,7 +62,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
+          file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
@@ -78,21 +79,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: release notes from the changelog entry
+      - name: release notes from the changelog's top entry
         run: |
-          awk -v v="${{ needs.version.outputs.version }}" '
-            $0 ~ "^## \\[" v "\\]" { on=1; next }
-            on && /^## \[/ { exit }
-            on { print }' CHANGELOG.md > notes.md
-          test -s notes.md
-      - name: tag and release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f -a "v$VERSION" -m "HarnessGateway $VERSION" "$GITHUB_SHA"
-          git push -f origin "refs/tags/v$VERSION"
-          gh release delete "v$VERSION" --yes 2>/dev/null || true   # left by a deleted tag, or being reissued
-          gh release create "v$VERSION" --title "HarnessGateway $VERSION" --notes-file notes.md --verify-tag
+          awk '/^## \[/{n++} n==1' CHANGELOG.md | tail -n +2 > notes.md
+      - run: |
+          git tag -f "v${{ needs.version.outputs.version }}"
+          git push -f origin "v${{ needs.version.outputs.version }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
+          body_path: notes.md

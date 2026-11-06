@@ -1,3 +1,3 @@
-"""HarnessGateway: coding-agent harnesses as an API (see SPEC.md)."""
+"""HarnessGateway: any coding-agent harness as an API (see SPEC.md)."""
 
-__version__ = "2.4.0"
+__version__ = "3.0.0"

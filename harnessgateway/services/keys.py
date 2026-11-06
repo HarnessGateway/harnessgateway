@@ -1,4 +1,4 @@
-"""API keys (SPEC §9.2): `hg_` + 40 characters, kept as an HMAC under the server's pepper. A key is what an
+"""API keys (SPEC §10.2): `hg_` + 40 characters, kept as an HMAC under the server's pepper. A key is what an
 application is built around: it is named after the application, carries a role (`admin`: the organization's;
 `developer`: a developer's), and with `run_only` it only runs. A key may expire; revocation is immediate."""
 from __future__ import annotations
@@ -8,9 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .. import ids
-from ..db import Database
 from ..domain.access import ADMIN, DEVELOPER, ROLES, Principal
 from ..errors import Forbidden, Invalid, NotFound
+from ..store.db import Database
 from .audit import Audit
 from .pages import ts
 

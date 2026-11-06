@@ -76,7 +76,7 @@ every harness, the package's add to them (or deny).
 
 ## Install
 
-`install` runs once per package digest on a node, in a sandbox with a writable `$HG_TOOLS` and egress
+`install` runs once per package digest and sandbox image, in an install box with a writable `$HG_TOOLS` and egress
 `install.egress`, no provider and no secrets. Install the CLI by its vendor's documented method, pinned to the
 manifest's version (`${HG_PACKAGE_VERSION%-*}` in bash), and verify the version. Never name a CPU architecture (the
 package manager picks the build); never edit installed files afterwards. The result is mounted read-only into every
@@ -136,7 +136,7 @@ A secret's value never enters the sandbox. The CLI sees a placeholder (`hgs_…`
 the egress door replaces it in request headers to the hosts the secret is bound to, and nowhere else. So put the
 placeholder exactly where the CLI would put the token (an `Authorization` header, an `X-Api-Key` header) and bind the
 secret to that host in the manifest. The provider key is the same idea: `HG_PROVIDER_TOKEN` is a per-turn token the
-gateway exchanges for the organization's real key.
+door swaps for the organization's real key, on the provider's host only.
 
 ## Persistence and continuity
 

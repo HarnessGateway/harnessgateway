@@ -1,5 +1,5 @@
 """The secrets invariant on a live stack (SPEC §8): a provider key, a harness secret and a caller's MCP credential go
-in, and come out nowhere: not in the sandbox (its environment, its request, its MCP file), not in any response, event
+in, and come out nowhere: not in the box (its environment, its request, its MCP file), not in any response, event
 stream, trace, listing or audit row the API returns."""
 import json
 import os
@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from .conftest import seeded_archive
+from .conftest import installed, seeded_archive
 
 pytestmark = pytest.mark.skipif(not os.environ.get("HG_TEST_STACK"), reason="needs a live stack (HG_TEST_STACK=1)")
 
@@ -15,7 +15,7 @@ PROVIDER_KEY = "sk-provider-key-9f3e1c7ab2d4"
 HARNESS_SECRET = "harness-secret-value-5a6b7c8d"
 CALLER_TOKEN = "caller-mcp-token-1e2f3a4b"
 SECRETS = (PROVIDER_KEY, HARNESS_SECRET, CALLER_TOKEN)
-# everything in the sandbox a secret could have reached: its environment, the request, the MCP file, the inputs folder
+# everything in the box a secret could have reached: its environment, the request, the MCP file, the inputs folder
 LOOK = "env; cat $HG_REQUEST $HG_MCP; ls -R /run/hg; cat $HG_HISTORY"
 
 
@@ -28,6 +28,7 @@ def test_no_secret_comes_back_out(api):
             ).raise_for_status()
     assert api.post("/v1/harnesses", files={"package": ("seeds.tgz", seeded_archive())}).status_code == 200
     try:
+        installed(api, "hg-test-seeds")
         api.patch("/v1/harnesses/hg-test-seeds", json={"secrets": {"T": HARNESS_SECRET}}).raise_for_status()
         tools = [{"type": "mcp", "server_label": "caller", "server_url": "https://mcp.hg-test.dev/mcp",
                   "authorization": CALLER_TOKEN, "headers": {"X-Key": CALLER_TOKEN}}]
@@ -52,9 +53,9 @@ def test_no_secret_comes_back_out(api):
         seen["trace"] = json.dumps(trace)
         seen["session_traces"] = api.get(f"/v1/containers/{sid}/traces").text
         assert {where: leaked(text) for where, text in seen.items() if leaked(text)} == {}
-        # what the sandbox saw stands in for the placeholders, never the values
-        sandbox = "".join(c["text"] for o in response["output"] if o["type"] == "message" for c in o["content"])
-        assert "T=hgs_" in sandbox and "Bearer hgs_" in sandbox and sandbox.count("hgs_") >= 3
+        # what the box saw stands in for the placeholders, never the values
+        box = "".join(c["text"] for o in response["output"] if o["type"] == "message" for c in o["content"])
+        assert "T=hgs_" in box and "Bearer hgs_" in box and box.count("hgs_") >= 3
     finally:
         api.delete("/v1/harnesses/hg-test-seeds")
         api.delete("/v1/providers/hg-test-secret")

@@ -1,6 +1,6 @@
 """The console in a real browser, on a real API: the processes a deploy runs, started from this checkout on a scratch
-database (tests/conftest.py) with the file object store, and Playwright's Chromium driving the pages. Needs
-HG_TEST_DATABASE_URL and `playwright install chromium`; skips without either."""
+database and Redis (tests/conftest.py) with the file object store, and Playwright's Chromium driving the pages. Needs
+HG_TEST_DATABASE_URL and Playwright's Chromium; skips without either. No worker runs: nothing here needs a box."""
 from __future__ import annotations
 
 import base64
@@ -20,6 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 EMAIL = "deployer@example.test"
 START_S = 60
+CHROMIUM = Path(os.environ.get("HG_TEST_CHROMIUM", "/opt/pw-browsers/chromium"))
 
 
 def free_port() -> int:
@@ -45,18 +46,20 @@ class Stack:
     api: str
     console: str
     invitation: str                     # the first admin's setup link, as `init` printed it
+    admin_key: str
     email: str = EMAIL
 
 
 @pytest.fixture(scope="session")
-def stack(scratch_database, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
+def stack(scratch_database, redis_url, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
     api_port, console_port = free_port(), free_port()
     api, console = f"http://127.0.0.1:{api_port}", f"http://127.0.0.1:{console_port}"
     blobs, state = tmp_path_factory.mktemp("blobs"), tmp_path_factory.mktemp("console")
-    env = {**os.environ, "HG_DATABASE_URL": scratch_database(), "HG_BLOB_URL": f"file://{blobs}",
-           "HG_SECRET_KEY": base64.b64encode(b"e2e-secret-key-of-thirty-two-bytes").decode(), "HG_HOST": "127.0.0.1",
-           "HG_PORT": str(api_port), "HG_API_URL": api, "HG_CONSOLE_URL": console, "HG_LOG_LEVEL": "warning"}
-    procs = [subprocess.Popen([sys.executable, "-m", "harnessgateway", "serve", "--role", "api"], env=env, cwd=ROOT)]
+    env = {**os.environ, "HG_DATABASE_URL": scratch_database(), "HG_REDIS_URL": redis_url, "HG_BLOB_URL": f"file://{blobs}",
+           "HG_SECRET_KEY": base64.b64encode(b"e2e-secret-key-of-thirty-two-bytes").decode(), "HG_DOOR_KEY": "hgd_e2e",
+           "HG_OPERATOR_KEY": "hgo_e2e", "HG_HOST": "127.0.0.1", "HG_PORT": str(api_port), "HG_API_URL": api,
+           "HG_CONSOLE_URL": console, "HG_LOG_LEVEL": "warning"}
+    procs = [subprocess.Popen([sys.executable, "-m", "harnessgateway", "api"], env=env, cwd=ROOT)]
     try:
         wait_for(f"{api}/readyz")
         out = subprocess.run([sys.executable, "-m", "harnessgateway", "init", "--admin-email", EMAIL], env=env, cwd=ROOT,
@@ -64,7 +67,8 @@ def stack(scratch_database, tmp_path_factory: pytest.TempPathFactory) -> Iterato
         procs.append(subprocess.Popen([sys.executable, str(ROOT / "console" / "server.py"), "--api", api, "--host", "127.0.0.1",
                                        "--port", str(console_port), "--state", str(state)], cwd=ROOT))
         wait_for(f"{console}/login")
-        yield Stack(api, console, json.loads(out)["invitation"])
+        doc = json.loads(out)
+        yield Stack(api, console, doc["invitation"], doc["admin_key"])
     finally:
         for p in procs:
             p.terminate()
@@ -80,9 +84,9 @@ def browser():
         pytest.skip("needs the playwright package")
     with sync_playwright() as p:
         try:
-            b = p.chromium.launch()
+            b = p.chromium.launch(**({"executable_path": str(CHROMIUM)} if CHROMIUM.is_file() else {}))
         except Error:
-            pytest.skip("needs Playwright's Chromium (playwright install chromium)")
+            pytest.skip("needs Playwright's Chromium (playwright install chromium, or HG_TEST_CHROMIUM)")
         yield b
         b.close()
 

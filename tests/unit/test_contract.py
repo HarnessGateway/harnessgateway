@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from harnessgateway.domain.contract import ModelPath, OutputError, Routing, history_entry, outcome, read_line, response
+from harnessgateway.contract import ModelPath, OutputError, Routing, history_entry, outcome, read_line, response
 from harnessgateway.errors import Invalid
 
 
@@ -18,7 +18,7 @@ def test_routing_reads_only_what_routes_a_turn():
     r = Routing.parse({"model": "shell", "input": [{"role": "user", "content": [
         {"type": "input_file", "file_id": "file_a"}, {"type": "input_file", "file_id": "file_a"}]}],
         "tools": [{"type": "mcp", "server_label": "x"}], "stream": True, "store": False})
-    assert (r.path.harness, r.stream, r.store, r.file_ids, len(r.mcp_tools)) == ("shell", True, False, ("file_a",), 1)
+    assert (r.path.harness, r.stream, r.store, r.file_ids) == ("shell", True, False, ("file_a",))
 
 
 @pytest.mark.parametrize("body, match", [

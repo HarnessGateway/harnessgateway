@@ -1,25 +1,30 @@
-"""Sealing secrets and signing short-lived links (SPEC §8.1, §16).
+"""Sealing secrets and the door's certificate authority (SPEC §8.3).
 
 Each organization has a data key, wrapped by the key wrapper port. A value is sealed with AES-256-GCM under its
 organization's data key, with the record it belongs to as associated data, so a sealed value cannot be moved to
 another record or another organization. HG_SECRET_KEY derives, by HKDF with a label each, the local master key, the
-pepper for token digests and the link-signing key."""
+pepper for token digests, and the door's CA key, so every door and api process computes the same CA with no shared
+file."""
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
-import json
+import datetime
 import secrets
 import time
 
-from cryptography.hazmat.primitives import hashes
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.x509.oid import NameOID
 
 from .ports.keys import KeyWrapper
 
 SEALED = "v1:"
+CA_NOT_BEFORE = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+CA_NOT_AFTER = datetime.datetime(2046, 1, 1, tzinfo=datetime.UTC)
+_P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 
 def derive(secret_key: bytes, label: str) -> bytes:
@@ -65,25 +70,29 @@ def unseal(data_key: bytes, sealed: str, context: str) -> str:
     return AESGCM(data_key).decrypt(raw[:12], raw[12:], context.encode()).decode()
 
 
-class Signer:
-    """Capability tokens for blob transfers: an HMAC over the key, the method and the expiry."""
+class DoorCA:
+    """The certificate authority doors issue interception certificates from: a P-256 key derived from the secret key,
+    and a self-signed certificate with fixed dates. Every process derives the same key, subject and public key, which
+    is what chain validation in a box depends on; the self-signature itself is randomized and may differ (SPEC §8.3)."""
 
     def __init__(self, secret_key: bytes):
-        self._key = derive(secret_key, "harnessgateway/links")
+        scalar = int.from_bytes(derive(secret_key, "harnessgateway/door-ca"), "big") % (_P256_ORDER - 1) + 1
+        self.key = ec.derive_private_key(scalar, ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "HarnessGateway door")])
+        self.cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(self.key.public_key())
+                     .serial_number(1).not_valid_before(CA_NOT_BEFORE).not_valid_after(CA_NOT_AFTER)
+                     .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+                     .add_extension(x509.KeyUsage(digital_signature=True, key_cert_sign=True, crl_sign=True,
+                                                  content_commitment=False, key_encipherment=False, data_encipherment=False,
+                                                  key_agreement=False, encipher_only=False, decipher_only=False), critical=True)
+                     .add_extension(x509.SubjectKeyIdentifier.from_public_key(self.key.public_key()), critical=False)
+                     .sign(self.key, hashes.SHA256()))
 
-    def sign(self, key: str, method: str, ttl_s: int) -> str:
-        body = json.dumps({"k": key, "m": method, "e": int(time.time()) + ttl_s}, separators=(",", ":")).encode()
-        return _b64(body) + "." + _b64(hmac.new(self._key, body, hashlib.sha256).digest())
+    @property
+    def cert_pem(self) -> bytes:
+        return self.cert.public_bytes(serialization.Encoding.PEM)
 
-    def verify(self, token: str, method: str) -> str | None:
-        try:
-            body_b64, mac_b64 = token.split(".", 1)
-            body = _unb64(body_b64)
-            if not hmac.compare_digest(_unb64(mac_b64), hmac.new(self._key, body, hashlib.sha256).digest()):
-                return None
-            doc = json.loads(body)
-        except (ValueError, TypeError):
-            return None
-        if doc.get("m") != method or doc.get("e", 0) < time.time():
-            return None
-        return str(doc["k"])
+    @property
+    def key_pem(self) -> bytes:
+        return self.key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                      serialization.NoEncryption())

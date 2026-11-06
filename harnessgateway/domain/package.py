@@ -1,4 +1,4 @@
-"""A harness package on disk and in transit (SPEC §5.1): validation of its folder, its digest, and its canonical archive.
+"""A harness package on disk and in transit (SPEC §5.5): validation of its folder, its digest, and its canonical archive.
 
 The platform reads `harness.json`, runs `install` and `run` (two executables, in any language), and copies
 `seeds/home` and `seeds/workspace`. Everything else in a package is the package's own."""
@@ -93,9 +93,6 @@ def entries(folder: Path) -> list[tuple[str, Path]]:
                   if p.is_file() and "__pycache__" not in p.parts)
 
 
-_entries = entries
-
-
 def clean_member(rel: object) -> str:
     """A path inside a package, or Invalid: relative, normalized, never leaving the root."""
     if not isinstance(rel, str) or not rel or len(rel) > 1024 or "\0" in rel or rel.startswith("/"):
@@ -108,7 +105,7 @@ def clean_member(rel: object) -> str:
 
 def digest(folder: Path) -> str:
     """SHA-256 over every file's path, executable bit and bytes."""
-    lines = (f"{rel}\0{1 if p.stat().st_mode & 0o111 else 0}\0{sha256(p.read_bytes())}\n" for rel, p in _entries(folder))
+    lines = (f"{rel}\0{1 if p.stat().st_mode & 0o111 else 0}\0{sha256(p.read_bytes())}\n" for rel, p in entries(folder))
     return sha256("".join(lines).encode())
 
 
@@ -116,11 +113,10 @@ def pack(folder: Path) -> bytes:
     """The canonical gzipped tar: sorted, owned by root, dated 0, so the same files give the same bytes."""
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w") as tar:
-        for rel, p in _entries(folder):
+        for rel, p in entries(folder):
             info = tarfile.TarInfo(rel)
             info.size, info.mtime, info.uid, info.gid = p.stat().st_size, 0, 0, 0
             info.mode = 0o755 if p.stat().st_mode & 0o111 else 0o644
             with p.open("rb") as f:
                 tar.addfile(info, f)
     return gzip.compress(raw.getvalue(), mtime=0)
-

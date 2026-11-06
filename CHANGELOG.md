@@ -7,6 +7,69 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.0.0]
+
+A rebuild of the platform around one idea: a session is a box that exists only while a turn runs or waits for the
+next one, and everything a box needs comes from the api and goes back to it. Nothing else holds state. No part of
+the earlier platform is kept for compatibility: there were no deployments to keep compatible with.
+
+### Added
+
+- **Boxes** (SPEC §6, §9.2): one ephemeral container per session, launched by a worker when a turn is queued, gone
+  when no turn arrives within the organization's `standby_s`. A box authenticates every call with its own token,
+  long-polls the api for its session's next turn, runs the package's `run`, streams the output, reports how it
+  ended, saves what changed and kills every process it did not start. A lost box fails its turn as `box_lost`; the
+  session resumes from its last snapshot in a new box anywhere.
+- **The worker** (SPEC §7.5, §7.6): jobs from a Redis stream (`launch`, `install`, `stop`, `delete_session`), each
+  acknowledged only when done, and duties on a clock under advisory locks (`lost`, `reconcile`, `retention`, `purge`,
+  `gc`, `accrue`, `reap`). Any number of workers run. The **Docker launcher** starts boxes under gVisor on an
+  internal network of their own, joined only by the door.
+- **The door** (SPEC §11): one CONNECT proxy with proxy authentication by box token, a policy per box fetched from
+  the api and cached briefly, interception of bound hosts with certificates from a CA derived from the secret key,
+  placeholders replaced in request headers only, byte counts and one record per connection sent back in batches.
+  The provider key is one more binding: no gateway, no second token, no per-node CA.
+- **Content-addressed, incremental snapshots** (SPEC §9.5, `sandbox/hgsnapshot`): a manifest of paths with 4 MiB
+  chunk hashes; blobs stored once per organization under their SHA-256 with reference counts; a turn uploads only the
+  blobs the store lacks; a fork or a switch of harness derives a manifest without copying a byte; `gc` removes blobs
+  nothing references.
+- **Installs** (SPEC §9.6): an organization's own run of a package's `install`, once per package digest and sandbox
+  image, in an install box, archived in the organization's storage and restored into each box; never placed in an
+  image. A turn waits while its install is pending and fails with `install_failed` and the log tail when it failed;
+  `POST /v1/harnesses/{name}/install` runs it again.
+- **Redis** for moments: turn event streams (followers reconnect to any api replica with `starting_after`), the job
+  queue (a consumer group), wake signals for standing boxes, and SSO state in flight.
+- **SSO** (SPEC §10.3): one OIDC identity provider per organization (`PUT /v1/sso`), PKCE, nonce, JWKS verification,
+  email-domain allow list, auto-provisioning with a default role, a role claim that grants admin, and `required`,
+  which turns passwords off for everyone but platform admins. The console signs in through it.
+- **Meters** `agent_seconds` (turn, standby, install), `cpu_seconds`, `memory_gib_seconds`, `ingress_bytes`,
+  `egress_bytes`, `storage_gib_hours`; storage accrues from referenced blobs and live objects.
+- **Organization limits** (SPEC §7.4): `vcpus`, `memory_mb`, `tmp_mb`, `pids`, `max_concurrent_turns`, `standby_s`,
+  `turn_timeout_s`, `retention_days`, `observability`, with `HG_DEFAULT_*` defaults.
+- The platform scope's view of boxes (`GET /internal/boxes`, `POST /internal/boxes/{id}/stop`), Redis health and queue
+  depth in `GET /internal/health` and the metrics.
+- The console's **Boxes** page (replacing Nodes & pools), limits instead of capacity, the install's state on each
+  harness card with a retry, and a sign-in button for the organization's identity provider.
+
+### Changed
+
+- The command is `harnessgateway api | worker | door | migrate | init | keygen`. `keygen` prints `HG_SECRET_KEY`,
+  `HG_OPERATOR_KEY` and `HG_DOOR_KEY`.
+- The compose stack is `postgres`, `redis`, `api`, `worker`, `door` (container `hg-door`) and `console`. The worker
+  needs the Docker socket and `HG_BOX_DIR` mounted at the same path inside and out.
+- Settings: `HG_REDIS_URL`, `HG_DOOR_KEY`, `HG_DOOR`, `HG_BOX_DIR`, `HG_SANDBOX_RUNTIME`, `HG_LAUNCHER`,
+  `HG_DOOR_CONTAINER` added; `HG_GATEWAY_URL`, `HG_NODE_*`, `HG_UPLINK_NETWORK`, `HG_UNSAFE_RUNTIME` removed.
+- A box reads objects through the api with its token: no signed object links, no `/internal/blobs/{token}`.
+- The sandbox image carries the runner (`/opt/hg/runner.py`), `hgsnapshot` and `zstd`, and is built from the
+  repository root (`-f sandbox/Dockerfile .`).
+- Traces of kind `gateway` are now kind `provider`, recorded by the door for intercepted provider connections
+  (host, port, method, path, status, bytes, duration).
+
+### Removed
+
+Nodes, pools, join tokens, slots, warm limits, node-local caches, the gateway role and its door token, per-node CAs,
+tar snapshots and copied forks, `vcpu_seconds`, `capacity`, `node_pool`, `max_sandboxes`, `max_running_turns`,
+`idle_ttl_s`, `HG_NODE_WARM_MAX`, eviction, the chat's own key.
+
 ## [2.4.0]
 
 ### Added

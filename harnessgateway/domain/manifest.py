@@ -1,4 +1,4 @@
-"""The package manifest, `harness.json` (SPEC §5.2)."""
+"""The package manifest, `harness.json` (SPEC §5.1)."""
 from __future__ import annotations
 
 import json
@@ -15,6 +15,7 @@ from . import egress
 from .names import NAME, NAME_PATTERN, env_name_ok
 
 PROVIDER_APIS = ("anthropic", "openai", "google")
+WHOLE_HOME = "."
 _PATH = re.compile(r"[A-Za-z0-9._@+-][A-Za-z0-9._@+/-]{0,254}")
 _REF = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
 
@@ -34,8 +35,11 @@ def _persist(values: list[str]) -> list[str]:
     if len(values) > PERSIST_MAX:
         raise ValueError(f"persist names at most {PERSIST_MAX} paths")
     for v in values:
+        if v == WHOLE_HOME:
+            continue
         if not _PATH.fullmatch(v) or posixpath.normpath(v) != v or v.split("/")[0] in ("..", "."):
-            raise ValueError(f"a persist entry is a normalized path relative to $HOME, without '..': {v!r}")
+            raise ValueError(f"a persist entry is a normalized path relative to $HOME, without '..', or '.' for the "
+                             f"whole home: {v!r}")
     return sorted(set(values))
 
 
@@ -117,7 +121,7 @@ class Manifest(_Strict):
     defaults: Defaults = Defaults()
     install: Install = Install()
     run: Run = Run()
-    persist: Annotated[list[str], AfterValidator(_persist)] = []
+    persist: Annotated[list[str], AfterValidator(_persist)] = [WHOLE_HOME]
     settings: dict[str, Setting] = {}
     secrets: dict[str, Secret] = {}
     mcp: dict[str, McpServer] = {}
@@ -139,7 +143,6 @@ class Manifest(_Strict):
             raise ValueError(f"mcp labels are names ([a-z0-9][a-z0-9._-]*): {', '.join(bad_labels)}")
         return self
 
-    # ── reading ────────────────────────────────────────────────────────────────────────────────────────────────────
     def check_references(self) -> None:
         """Every ${NAME} in an MCP header names a declared secret."""
         for label, server in self.mcp.items():
@@ -149,11 +152,10 @@ class Manifest(_Strict):
                               param="harness.json")
 
     def run_entries(self) -> list[str]:
-        """The harness level of run egress: its own entries, its catalog's hosts and its secrets' hosts."""
+        """The package's run egress: its own entries, its catalog's hosts and its secrets' hosts."""
         implied = [s.host() for s in self.mcp.values()] + [h for s in self.secrets.values() for h in s.hosts]
         return egress.entries([*self.run.egress, *implied])
 
-    # ── parsing ────────────────────────────────────────────────────────────────────────────────────────────────────
     @classmethod
     def parse(cls, text: str) -> Manifest:
         try:
@@ -168,4 +170,3 @@ class Manifest(_Strict):
             err = e.errors()[0]
             where = ".".join(str(p) for p in err.get("loc", ()))
             raise Invalid(f"harness.json: {where or 'body'}: {err.get('msg', 'invalid')}", param="harness.json") from None
-

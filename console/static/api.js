@@ -70,12 +70,13 @@ export const short = id => (id || "").length > 14 ? id.slice(0, 13) + "…" : id
 // A meter's quantity, shown in its natural unit; GiB-hours under one read in MiB-hours rather than as 0.
 const gibHours = g => g > 0 && g < 1 ? `${num(g * 1024)} MiB·h` : `${num(g)} GiB·h`;
 export function meter(name, q) {
-  if (name === "vcpu_seconds") return hours(q).replace(" h", " vCPU·h");
+  if (name === "agent_seconds") return hours(q);
+  if (name === "cpu_seconds") return hours(q).replace(" h", " CPU·h");
   if (name === "memory_gib_seconds") return gibHours((Number(q) || 0) / 3600);
   if (name === "storage_gib_hours") return gibHours(Number(q) || 0);
   return bytes(q);
 }
-export const METERS = { vcpu_seconds: "CPU", memory_gib_seconds: "Memory", egress_bytes: "Egress", ingress_bytes: "Ingress", storage_gib_hours: "Storage" };
+export const METERS = { agent_seconds: "Agent time", cpu_seconds: "CPU used", memory_gib_seconds: "Memory", ingress_bytes: "Ingress", egress_bytes: "Egress", storage_gib_hours: "Storage" };
 /** Who created a session or wrote an audit row: a key by its label, an account by its name or email, the rest (an
  * extension's principal, `platform:init`) as it is. */
 export function actorOf(keys = [], accounts = []) {

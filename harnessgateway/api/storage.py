@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from ..domain.access import Principal
 from ..errors import NotFound
@@ -94,8 +94,9 @@ async def get_container_file(request: Request, sid: str, fid: str, p: Principal 
 
 @router.get("/containers/{sid}/files/{fid}/content")
 async def container_file_content(request: Request, sid: str, fid: str, p: Principal = Depends(principal)) -> Any:
-    meta, data = await platform(request).containers.file_content(p, sid, fid)
-    return Response(data, media_type="application/octet-stream", headers=_attachment(meta["path"].rsplit("/", 1)[-1]))
+    meta, chunks = await platform(request).containers.file_content(p, sid, fid)
+    return StreamingResponse(chunks, media_type="application/octet-stream",
+                             headers=_attachment(meta["path"].rsplit("/", 1)[-1]))
 
 
 @router.delete("/containers/{sid}/files/{fid}")

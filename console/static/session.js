@@ -137,13 +137,13 @@ function duration(r) {
 
 function renderFooter(turn, records) {
   const r = turn.response, mine = records.filter(x => x.response_id === r.id);
-  const harness = mine.find(x => x.kind === "harness"), gw = mine.filter(x => x.kind === "gateway"), door = mine.find(x => x.kind === "door");
+  const harness = mine.find(x => x.kind === "harness"), gw = mine.filter(x => x.kind === "provider"), door = mine.find(x => x.kind === "door");
   const u = r.usage, cells = [];
   const cell = (k, v) => cells.push(`<span>${esc(k)} <b>${v}</b></span>`);
   cell("status", statusPill(r.status) + (r.metadata && r.metadata.hg_reason ? ` <span class="mono">${esc(r.metadata.hg_reason)}</span>` : ""));
   const d = duration(r); if (d) cell(r.completed_at ? "duration" : "elapsed", esc(d));
   if (u) cell("tokens", `${esc(Number(u.input_tokens || 0).toLocaleString())} in · ${esc(Number(u.output_tokens || 0).toLocaleString())} out`);
-  if (gw.length) cell("provider calls", `${gw.length} · ${bytes(gw.reduce((n, x) => n + (x.data.request_bytes || 0) + (x.data.response_bytes || 0), 0))}` +
+  if (gw.length) cell("provider calls", `${gw.length} · ${bytes(gw.reduce((n, x) => n + (x.data.out || 0) + (x.data.in || 0), 0))}` +
     (gw.some(x => x.data.status >= 400) ? ` · <span class="bad">${gw.filter(x => x.data.status >= 400).length} failed</span>` : ""));
   if (door) {
     const c = door.data.connections || [], denied = c.filter(x => x.verdict === "denied").length;
@@ -236,7 +236,7 @@ export const session = { title: "Session", async render(el, params, me) {
     } catch (e) { if (el.isConnected) fail(e); }
     turn.streaming = false;
     if (TERMINAL.has(`response.${turn.response.status}`) || turn.response.status === "cancelled") {
-      setTimeout(loadTraces, 1500);                     // the node's finish report lands after the terminal event
+      setTimeout(loadTraces, 1500);                     // the box's finish report lands after the terminal event
       refresh().catch(() => {});
     } else if (el.isConnected) setTimeout(() => follow(turn), 2000);
   };

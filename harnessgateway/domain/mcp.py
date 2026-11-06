@@ -1,4 +1,4 @@
-"""A turn's MCP servers: the package's catalog, narrowed or extended by the request (SPEC §3.3), with every
+"""A turn's MCP servers: the package's catalog, narrowed or extended by the request (SPEC §4.1), with every
 caller-supplied credential replaced by a placeholder (SPEC §8.3)."""
 from __future__ import annotations
 
@@ -16,10 +16,13 @@ from .names import NAME
 
 @dataclass(frozen=True)
 class Binding:
-    """A secret the door injects: where the sandbox has `placeholder`, the door sends `value`, only to `hosts`."""
+    """A secret the door injects: where the box has `placeholder`, the door sends `value`, only to `hosts`."""
     placeholder: str
     value: str
     hosts: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"placeholder": self.placeholder, "value": self.value, "hosts": list(self.hosts)}
 
 
 @dataclass(frozen=True)

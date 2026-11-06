@@ -1,6 +1,6 @@
 """What every router shares: who is asking (an extension's principal, an API key or a sign-in, the operator key or a
-platform admin, a node credential), bounded JSON bodies, uploads spooled to disk, the OpenAI error envelope, and the
-body-size guard."""
+platform admin, a box with its token, a door with the door key), bounded JSON bodies, uploads spooled to disk, the
+OpenAI error envelope, and the body-size guard."""
 from __future__ import annotations
 
 import contextlib
@@ -20,20 +20,21 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..domain.access import ADMIN, Principal
 from ..errors import ApiError, Forbidden, Invalid, TooLarge, Unauthenticated
 from ..limits import (
+    BOX_BODY_MAX,
+    BOX_EVENTS_BODY_MAX,
     CONTROL_BODY_MAX,
     FILE_UPLOAD_MAX,
     KB,
-    NODE_BODY_MAX,
-    NODE_EVENTS_BODY_MAX,
+    MANIFEST_MAX,
     PACKAGE_UPLOAD_MAX,
     REQUEST_BODY_MAX,
 )
-from ..services.platform import BLOB_ROUTE, Platform
-from ..services.principal import NodeIdentity
+from ..services.platform import Platform
 
 MULTIPART_OVERHEAD = 64 * KB
 OPERATOR = "operator"                  # the actor the operator key acts as
 UNKNOWN = "the credential is unknown, expired or revoked, or its organization is suspended"
+UNBOUNDED_SUFFIXES = ("/archive", "/logs/stdout", "/logs/stderr")
 
 
 def platform(request: Request) -> Platform:
@@ -62,7 +63,7 @@ async def signed_in(request: Request) -> dict[str, Any]:
 
 
 async def principal(request: Request) -> Principal:
-    """An extension's principal, an API key's, or a sign-in's in the organization it belongs to (SPEC §9.3)."""
+    """An extension's principal, an API key's, or a sign-in's in the organization it belongs to (SPEC §10.5)."""
     plat = platform(request)
     p = await plat.extensions.authenticate(request)
     if p is not None:
@@ -100,7 +101,7 @@ async def admin(request: Request) -> Principal:
 
 
 async def operator(request: Request) -> str:
-    """The platform scope (SPEC §9.4): the operator key, or a platform admin's sign-in. The actor, for the audit log."""
+    """The platform scope (SPEC §10.5): the operator key, or a platform admin's sign-in. The actor, for the audit log."""
     plat = platform(request)
     secret = bearer(request)
     key = plat.settings.operator_key
@@ -114,8 +115,15 @@ async def operator(request: Request) -> str:
     return f"account:{found['account']['id']}"
 
 
-async def node(request: Request) -> NodeIdentity:
-    return await platform(request).scheduler.authenticate(bearer(request))
+async def box(request: Request) -> dict[str, Any]:
+    """The live box the path names, proven by its token; its lease renewed."""
+    return await platform(request).boxes.authenticate(request.path_params["box_id"], bearer(request))
+
+
+def door(request: Request) -> None:
+    key = platform(request).settings.door_key
+    if not hmac.compare_digest(bearer(request).encode(), key.encode()):
+        raise Unauthenticated("the door key is required here")
 
 
 async def read_json(request: Request) -> dict[str, Any]:
@@ -132,6 +140,20 @@ def only(body: dict[str, Any], *fields: str) -> None:
     unknown = sorted(set(body) - set(fields))
     if unknown:
         raise Invalid(f"the fields are {', '.join(fields)}, not {', '.join(unknown)}", param=unknown[0])
+
+
+def integer(body: dict[str, Any], key: str, default: int) -> int:
+    value = body.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise Invalid(f"{key} is an integer", param=key)
+    return value
+
+
+def strings(body: dict[str, Any], key: str) -> list[str]:
+    value = body.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise Invalid(f"{key} is a list of strings", param=key)
+    return value
 
 
 @contextlib.asynccontextmanager
@@ -157,12 +179,15 @@ def error_response(e: ApiError) -> JSONResponse:
 
 
 def body_limit(path: str, method: str) -> int | None:
-    if path.startswith(BLOB_ROUTE):
-        return None                                  # a session's saved state: the platform never limits a harness
-    if path.startswith("/internal/turns/") and path.endswith("/events"):
-        return NODE_EVENTS_BODY_MAX
-    if path.startswith("/internal/"):
-        return NODE_BODY_MAX
+    """None is unbounded: what a box uploads (blobs, archives, logs) is the harness's own and never limited."""
+    if path.startswith("/internal/boxes/"):
+        if method == "PUT" and ("/blobs/" in path or path.endswith(UNBOUNDED_SUFFIXES)):
+            return None
+        if path.endswith("/events"):
+            return BOX_EVENTS_BODY_MAX
+        if path.endswith("/manifest"):
+            return MANIFEST_MAX
+        return BOX_BODY_MAX
     if path == "/v1/files" or (path.startswith("/v1/containers/") and path.endswith("/files")):
         return FILE_UPLOAD_MAX + MULTIPART_OVERHEAD
     if path == "/v1/harnesses" and method == "POST":

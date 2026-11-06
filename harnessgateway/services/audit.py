@@ -1,11 +1,11 @@
-"""The audit log (SPEC §9.5): every change of standing, as a row that never holds a secret. Admins read their
+"""The audit log (SPEC §10.4): every change of standing, as a row that never holds a secret. Admins read their
 organization's rows; the platform scope reads all."""
 from __future__ import annotations
 
 from typing import Any
 
 from .. import ids
-from ..db import Database
+from ..store.db import Database
 from .pages import check_limit, page, ts
 
 

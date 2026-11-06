@@ -9,7 +9,7 @@ import pytest
 from hgkit import Emitter, Request, check, validate
 from hgkit.validate import OutputError
 
-from harnessgateway.domain import contract
+from harnessgateway import contract
 
 
 def test_prompt_is_user_text_and_instructions_gather_system_and_developer_messages():
@@ -130,7 +130,7 @@ def out_after_end(buf):
 def test_hgkit_and_the_platform_read_output_alike():
     buf = io.StringIO()
     narrate(Emitter(buf))
-    assert check(buf.getvalue()) == contract.check_output(buf.getvalue())
+    assert check(buf.getvalue()) == contract.check(buf.getvalue())
     assert contract.read_line is validate.read_line and contract.OutputError is validate.OutputError
 
 

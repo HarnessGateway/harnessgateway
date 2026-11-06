@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1.7
-# The platform image: one image for every role: `harnessgateway serve --role api,gateway`, `harnessgateway node`, and
-# each sandbox's egress door (`harnessgateway door`, started by the node). The api and gateway run as an unprivileged
-# user; the node needs the Docker socket and root to hand bind mounts to the sandbox user. The console (console/, with
-# the chat) ships in /opt/harnessgateway/console; the two packages the platform ships, in /opt/harnessgateway/packages:
-# `shell`, the template the console starts every new harness from, and `harness-package-builder`, the built-in `init` installs.
+# The platform image: one image for every role: `harnessgateway api`, `harnessgateway worker` (the Docker socket
+# and root, to hand box directories to the sandbox user), `harnessgateway door`, and the admin commands. The console
+# (console/, with the chat) ships in /opt/harnessgateway/console; the two packages the platform ships, in
+# /opt/harnessgateway/packages: `shell`, the template the console starts every new harness from, and
+# `harness-package-builder`, the built-in `init` installs.
 #
 # Hardened like the sandbox image: Chainguard's Wolfi base pinned by digest, no package manager, BusyBox, /bin/sh or
-# setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
-# change and weekly (.github/workflows/images.yml).
+# setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy.
 #
-# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:2.4.0 .
+# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:3.0.0 .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret: --secret id=ca,src=/path/ca.pem
 FROM cgr.dev/chainguard/wolfi-base@sha256:360896efb0753a5701c48f860e17130c205eae5a264797aa3e7ea126ee2923a7
 
@@ -18,6 +17,7 @@ WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
 COPY harnessgateway ./harnessgateway
 COPY sandbox/hgkit ./sandbox/hgkit
+COPY sandbox/hgsnapshot ./sandbox/hgsnapshot
 COPY packages ./packages
 COPY console ./console
 RUN --mount=type=secret,id=ca,required=false sh -eu <<'EOF'
@@ -50,6 +50,6 @@ LABEL org.opencontainers.image.title="harnessgateway-platform" \
       org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /
 USER 10002
-EXPOSE 8000
+EXPOSE 8000 3128
 ENTRYPOINT ["/usr/bin/tini", "--", "harnessgateway"]
-CMD ["serve", "--role", "api,gateway"]
+CMD ["api"]

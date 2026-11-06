@@ -1,12 +1,11 @@
-"""The `harnessgateway` command (SPEC §10.1).
+"""The `harnessgateway` command (SPEC §6, §15).
 
-    harnessgateway serve --role api,gateway     the API and/or the provider gateway, in this process
-    harnessgateway node                         a node: runs sandboxes on this host's Docker with gVisor
-    harnessgateway door                         a sandbox's door (started by the node)
+    harnessgateway api                          the API: callers, boxes, doors and the console talk to it
+    harnessgateway worker                       jobs (launch, install, stop, mail, delete_session) and duties
+    harnessgateway door                         the egress proxy boxes reach the network through
     harnessgateway migrate                      apply the schema migrations
     harnessgateway init --admin-email EMAIL     the self-hosted organization, its first admin and an admin key (once)
-    harnessgateway node-token create            a join token for nodes of a pool
-    harnessgateway keygen                       fresh values for HG_SECRET_KEY, HG_OPERATOR_KEY, HG_NODE_JOIN_TOKEN
+    harnessgateway keygen                       fresh values for HG_SECRET_KEY, HG_OPERATOR_KEY, HG_DOOR_KEY
 
 Every setting comes from the environment (HG_*); see docs/operations.md.
 """
@@ -15,12 +14,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import contextlib
 import json
 import logging
 import os
 import secrets
-import signal
 import sys
 from typing import Any
 
@@ -45,67 +42,51 @@ def setup_logging(level: str) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-async def _until_signal(*tasks: asyncio.Task[Any]) -> None:
-    stop = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        asyncio.get_running_loop().add_signal_handler(sig, stop.set)
-    stopper = asyncio.create_task(stop.wait())
-    done, _ = await asyncio.wait([*tasks, stopper], return_when=asyncio.FIRST_COMPLETED)
-    for t in done:
-        if t is not stopper and not t.cancelled() and t.exception():
-            raise t.exception()  # type: ignore[misc]
-
-
-async def serve(roles: tuple[str, ...]) -> None:
+async def api() -> None:
     import uvicorn
 
+    from .api.app import create_app
     from .services.platform import Platform
-    settings = Settings.load(roles)
+    settings = Settings.load(("api",))
     setup_logging(settings.log_level)
     plat = Platform(settings)
-    if "api" in roles:
-        from .api.app import create_api
-        await plat.db.open()
-        try:
-            await plat.migrate()
-        finally:
-            await plat.db.close()
-        plat = Platform(settings)
-        app = create_api(plat)
-        if "gateway" in roles:
-            from .gateway.app import Gateway, gateway_router
-            gw = Gateway(plat)
-            app.include_router(gateway_router(gw))
-    else:
-        from .gateway.app import create_gateway
-        app = create_gateway(plat)
-    server = uvicorn.Server(uvicorn.Config(app, host=settings.host, port=settings.port, log_config=None,
+    await plat.open()
+    try:
+        await plat.migrate()
+    finally:
+        await plat.close()
+    plat = Platform(settings)
+    server = uvicorn.Server(uvicorn.Config(create_app(plat), host=settings.host, port=settings.port, log_config=None,
                                            proxy_headers=True, server_header=False, timeout_keep_alive=75))
-    logging.getLogger("harnessgateway").info("serving %s on %s:%s", ",".join(roles), settings.host, settings.port)
+    logging.getLogger("harnessgateway").info("api %s on %s:%s", __version__, settings.host, settings.port)
     await server.serve()
 
 
-async def run_node() -> None:
-    from .node.agent import Node
-    settings = Settings.load(("node",))
+async def worker() -> None:
+    from .services.platform import Platform
+    from .worker.main import Worker
+    settings = Settings.load(("worker",))
     setup_logging(settings.log_level)
-    node = asyncio.create_task(Node(settings).run())
-    await _until_signal(node)
-    node.cancel()                                  # its own shutdown runs before the loop cancels everything else
-    with contextlib.suppress(asyncio.CancelledError):
-        await node
+    await Worker(Platform(settings)).run()
+
+
+def door() -> None:
+    from .door.main import run
+    settings = Settings.load(("door",))
+    setup_logging(settings.log_level)
+    run(settings)
 
 
 async def admin(args: argparse.Namespace) -> None:
     from .services.platform import Platform
     setup_logging("warning")
     plat = Platform(Settings.load(("api",)))
-    await plat.db.open()
+    await plat.open()
     try:
         await plat.migrate()
         if args.command == "migrate":
             print(json.dumps({"ok": True}))
-        elif args.command == "init":
+        else:
             out = await plat.init(args.name, args.admin_email)
             doc = {"organization": out["organization"]["id"], "name": out["organization"]["name"]}
             if "admin" in out:
@@ -114,11 +95,13 @@ async def admin(args: argparse.Namespace) -> None:
             else:
                 doc["note"] = out["note"]
             print(json.dumps(doc, indent=2))
-        elif args.command == "node-token":
-            token = await plat.scheduler.create_token(args.pool, args.label, args.uses, args.ttl_days)
-            print(json.dumps({"token": token, "pool": args.pool}, indent=2))
     finally:
-        await plat.db.close()
+        await plat.close()
+
+
+def keygen() -> str:
+    return (f"HG_SECRET_KEY={base64.b64encode(secrets.token_bytes(32)).decode()}\n"
+            f"HG_OPERATOR_KEY=hgo_{secrets.token_urlsafe(32)}\nHG_DOOR_KEY=hgd_{secrets.token_urlsafe(32)}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -126,37 +109,21 @@ def main(argv: list[str] | None = None) -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(dest="command", required=True)
-    sub.add_parser("serve").add_argument("--role", default="api,gateway")
-    sub.add_parser("node")
-    sub.add_parser("door", add_help=False)
-    sub.add_parser("migrate")
-    sub.add_parser("keygen")
+    for name in ("api", "worker", "door", "migrate", "keygen"):
+        sub.add_parser(name)
     p = sub.add_parser("init")
     p.add_argument("--name", default="default")
     p.add_argument("--admin-email", default=os.environ.get("HG_ADMIN_EMAIL", ""),
                    help="the first admin's login (or HG_ADMIN_EMAIL); the invitation that activates it is printed once")
-    p = sub.add_parser("node-token")
-    p.add_argument("action", choices=["create"])
-    p.add_argument("--pool", default="")
-    p.add_argument("--label", default="")
-    p.add_argument("--uses", type=int, default=1)
-    p.add_argument("--ttl-days", type=int, default=7)
-    args, rest = ap.parse_known_args(argv)
-    if args.command == "door":
-        from .node import door
-        door.run(rest)
-    elif rest:
-        ap.error(f"unrecognized arguments: {' '.join(rest)}")
-    elif args.command == "keygen":
-        print(f"HG_SECRET_KEY={base64.b64encode(secrets.token_bytes(32)).decode()}\n"
-              f"HG_OPERATOR_KEY=hgo_{secrets.token_urlsafe(32)}\nHG_NODE_JOIN_TOKEN=hgj_{secrets.token_urlsafe(32)}")
-    elif args.command == "serve":
-        roles = tuple(sorted({r.strip() for r in args.role.split(",") if r.strip()}))
-        if not roles or set(roles) - {"api", "gateway"}:
-            ap.error("--role is api, gateway or api,gateway (a node runs with `harnessgateway node`)")
-        asyncio.run(serve(roles))
-    elif args.command == "node":
-        asyncio.run(run_node())
+    args = ap.parse_args(argv)
+    if args.command == "keygen":
+        print(keygen())
+    elif args.command == "api":
+        asyncio.run(api())
+    elif args.command == "worker":
+        asyncio.run(worker())
+    elif args.command == "door":
+        door()
     else:
         asyncio.run(admin(args))
 

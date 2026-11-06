@@ -1,4 +1,4 @@
-"""Accounts, sign-ins, keys and the audit log (SPEC §9.2, §9.3, §9.5)."""
+"""Accounts, sign-ins, keys, the audit log and `init` (SPEC §10)."""
 import pytest
 
 from harnessgateway.domain.access import Principal
@@ -86,6 +86,21 @@ async def test_disabling_an_account_revokes_its_sign_ins_and_keys(plat, org):
     assert enabled["status"] == "active"
 
 
+async def test_sso_signs_a_person_in_by_subject_and_keeps_the_last_admin(plat, org):
+    """What the SSO exchange ends with: an account by subject, provisioned when allowed, its role from the claims."""
+    email = f"sso-{org.id[-6:]}@example.test"
+    with pytest.raises(Unauthenticated, match="no account"):
+        await plat.accounts.sso_sign_in(org.id, subject="sub-1", email=email, name="Sam", role=None,
+                                        auto_provision=False, default_role="developer", client="test")
+    signed = await plat.accounts.sso_sign_in(org.id, subject="sub-1", email=email, name="Sam", role=None,
+                                             auto_provision=True, default_role="developer", client="test")
+    assert signed["token"].startswith("hgl_") and signed["memberships"] == [{"org_id": org.id, "role": "developer"}]
+    again = await plat.accounts.sso_sign_in(org.id, subject="sub-1", email="renamed@example.test", name="Sam", role="admin",
+                                            auto_provision=False, default_role="developer", client="test")
+    assert again["account"]["id"] == signed["account"]["id"] and again["memberships"][0]["role"] == "admin"
+    assert (await plat.accounts.get(org.id, signed["account"]["id"]))["email"] == email   # the subject is the identity
+
+
 async def test_keys_are_named_after_their_app_and_scoped_by_role(plat, org):
     with pytest.raises(Invalid, match="label"):
         await plat.keys.create(org.admin, "", "developer", True, None)
@@ -145,8 +160,8 @@ async def test_init_checks_the_email_before_it_creates_anything(settings, scratc
         assert out["admin"]["email"] == "deployer@example.test" and out["admin"]["platform_admin"] is True
         assert out["admin"]["invitation"].startswith("http://console.test:8800/setup?token=hgi_")
         assert out["admin_key"].startswith("hg_") and (await plat.keys.authenticate(out["admin_key"])).role == "admin"
-        assert [h["name"] for h in await plat.harnesses.list(await plat.keys.authenticate(out["admin_key"]))] == \
-            ["harness-package-builder"]
+        me = await plat.keys.authenticate(out["admin_key"])
+        assert [h["name"] for h in await plat.harnesses.list(me)] == ["harness-package-builder"]
         again = await plat.init("default", "someone-else@example.test")
         assert "admin" not in again and "already initialized" in again["note"]
     finally:

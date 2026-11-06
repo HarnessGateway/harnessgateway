@@ -1,15 +1,25 @@
-"""Identity (SPEC §9, §14.2): signing in, one's own account, the organization's accounts, and the audit log."""
+"""Identity (SPEC §10, §14.2): signing in with a password or through SSO, one's own account, the organization's
+accounts and identity provider, and the audit log. Self-hosted has one organization: the SSO routes that run before
+anyone is signed in act for it."""
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import RedirectResponse
 
 from ..domain.access import Principal
-from ..errors import Forbidden, Invalid
+from ..errors import Forbidden, Invalid, NotFound
 from .http import admin, client, only, platform, principal, read_json, signed_in
 
 router = APIRouter(prefix="/v1")
+
+
+async def _the_org(request: Request) -> str:
+    org = await platform(request).orgs.first()
+    if org is None:
+        raise NotFound("the platform is not initialized (harnessgateway init)")
+    return str(org["id"])
 
 
 # ── signing in ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -17,7 +27,15 @@ router = APIRouter(prefix="/v1")
 async def login(request: Request) -> Any:
     body = await read_json(request)
     only(body, "email", "password")
-    return await platform(request).accounts.login(body.get("email"), body.get("password"), client(request))
+    plat = platform(request)
+    sso = await plat.sso.status(await _the_org(request))
+    if sso["required"]:
+        found = await plat.accounts.login(body.get("email"), body.get("password"), client(request))
+        if not found["account"]["platform_admin"]:
+            await plat.accounts.logout(found["token"])
+            raise Forbidden("sign in through your organization's identity provider")
+        return found
+    return await plat.accounts.login(body.get("email"), body.get("password"), client(request))
 
 
 @router.post("/auth/accept")
@@ -53,6 +71,46 @@ async def password(request: Request, s: dict[str, Any] = Depends(signed_in)) -> 
     only(body, "current", "new")
     await platform(request).accounts.change_password(s["account"]["id"], body.get("current"), body.get("new"), s["token"])
     return {"object": "account", "id": s["account"]["id"], "password": "changed"}
+
+
+# ── SSO ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+@router.get("/auth/sso")
+async def sso_status(request: Request) -> Any:
+    """Whether SSO is configured, its display name, whether passwords are allowed: the sign-in page reads it."""
+    return await platform(request).sso.status(await _the_org(request))
+
+
+@router.get("/auth/sso/start")
+async def sso_start(request: Request, redirect: str = "") -> Any:
+    """Off to the identity provider; it returns to the console's /sso/callback, which posts to /exchange."""
+    url = await platform(request).sso.start(await _the_org(request), redirect)
+    return RedirectResponse(url, status_code=302)
+
+
+@router.post("/auth/sso/exchange")
+async def sso_exchange(request: Request) -> Any:
+    body = await read_json(request)
+    only(body, "code", "state")
+    return await platform(request).sso.exchange(body.get("code"), body.get("state"), client(request))
+
+
+@router.get("/sso")
+async def get_sso(request: Request, p: Principal = Depends(admin)) -> Any:
+    found = await platform(request).sso.get(p.org_id)
+    if found is None:
+        raise NotFound("no identity provider is configured")
+    return found
+
+
+@router.put("/sso")
+async def put_sso(request: Request, p: Principal = Depends(admin)) -> Any:
+    return await platform(request).sso.put(p.org_id, p.actor, await read_json(request))
+
+
+@router.delete("/sso")
+async def delete_sso(request: Request, p: Principal = Depends(admin)) -> Any:
+    await platform(request).sso.delete(p.org_id, p.actor)
+    return {"object": "identity_provider", "deleted": True}
 
 
 # ── accounts ──────────────────────────────────────────────────────────────────────────────────────────────────────

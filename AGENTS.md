@@ -5,9 +5,10 @@ How to work in this repository. It is written for coding agents and applies to p
 ## What this is
 
 HarnessGateway runs coding-agent CLIs as an API. A caller sends an OpenAI Responses request; the platform runs it
-through a **harness package** (a CLI with its configuration) in a gVisor sandbox and streams Responses events back,
-keeping the session so the next request continues it. The request serves the task; the package defines the agent.
-Self-hosted is one organization; the extension seam is where more is built, outside this repository.
+through a **harness package** (a CLI with its configuration) in a gVisor sandbox, a **box** that lives for one
+session, and streams Responses events back, keeping the session so the next request continues it. The request serves
+the task; the package defines the agent. Self-hosted is one organization; the extension seam is where more is built,
+outside this repository.
 
 A **harness package project** is a folder: `harness.json` (the manifest), `install` (the CLI, pinned, into `$HG_TOOLS`),
 `run` (one turn: the request in, Responses events out), optional `seeds/home` and `seeds/workspace`, a README and
@@ -21,19 +22,21 @@ The code is checked against it; a change the spec does not describe is a spec ch
 
 | Path | What it holds |
 |---|---|
-| `harnessgateway/domain/` | pure rules, no I/O: the Responses contract, manifests, packages (digest, archive), egress entries, MCP resolution, capacity, meters, turn states |
-| `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, Mailer, sandbox Runtime) and their implementations (file and S3 stores, local and KMS key wrapping, Docker with gVisor). Vendor SDKs live only in `adapters/` |
-| `harnessgateway/services/` | one class per responsibility: orgs, accounts, keys, audit, vault, providers, harnesses, files, containers, turns (the caller's side), delivery (the node's side), scheduler, usage, traces, sweeper, operations. `platform.py` is the composition root |
-| `harnessgateway/api/` | FastAPI routers: OpenAI-shaped (`responses.py`, `storage.py`), management (`manage.py`), the nodes' and operator's routes (`internal.py`); `http.py` is authentication, body limits and the error envelope |
-| `harnessgateway/gateway/` | the provider relay: turn token + door token → the organization's key |
-| `harnessgateway/node/` | the node agent (`agent.py`), its API client, snapshots (`state.py`), stdout batching (`pump.py`), the node CA (`trust.py`), the egress door (`door.py`), `runtime/turn.sh` |
+| `harnessgateway/domain/` | pure rules, no I/O: names, egress entries, manifests, packages (digest, archive), MCP resolution, access, limits, meters, turn states |
+| `harnessgateway/contract/` | the Responses reader and writer (re-exporting hgkit's validator) and request routing |
+| `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, Mailer, Launcher) and their implementations (file and S3 stores, local and KMS key wrapping, SMTP, Docker with gVisor). Vendor SDKs live only in `adapters/` |
+| `harnessgateway/store/` | `db.py` (Postgres, scoped transactions, migrations), `moments.py` (Redis: streams, queue, wake, SSO state), `objects.py` (the ledger over the blob store) |
+| `harnessgateway/services/` | one class per responsibility: orgs, accounts, sso, keys, audit, vault, providers, harnesses, installs, files, containers, turns (the caller's side), boxes (the box's and the door's side), snapshots, traces, usage, operations. `platform.py` is the composition root |
+| `harnessgateway/api/` | FastAPI routers: OpenAI-shaped (`responses.py`, `storage.py`), management (`manage.py`), identity and SSO (`identity.py`), the boxes', doors' and operator's routes (`internal.py`); `http.py` is authentication, body limits and the error envelope |
+| `harnessgateway/worker/` | jobs from the queue (launch, install, stop, delete_session) and duties on a clock |
+| `harnessgateway/door/` | the egress proxy: CONNECT with box tokens, policies from the api, interception of bound hosts |
 | `harnessgateway/migrations/` | SQL migrations, applied in order under an advisory lock |
-| `sandbox/` | the sandbox image and `hgkit`: the Responses contract in Python for packages, whose validator (`hgkit/validate.py`) is the one the platform reads package output with |
-| `packages/` | the two shipped packages: `shell`, the template the console copies for every new harness, and `harness-package-builder`, the built-in `init` installs (Claude Code seeded with the builder skill) |
-| `console/` | the organization and deployer consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
+| `sandbox/` | the sandbox image, `runner.py` (what runs in a box; standard library only), `hgkit` (the Responses contract in Python for packages, whose validator the platform reads output with) and `hgsnapshot` (manifests, walk, restore; shared by the runner and the api) |
+| `packages/` | the two shipped packages: `shell`, the template the console copies for every new harness, and `harness-package-builder`, the built-in `init` installs |
+| `console/` | the organization and platform consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
-| `docs/` | operations, consoles, packages, extensions |
-| `tests/unit`, `tests/services`, `tests/e2e`, `tests/integration` | unit tests; the services on a real Postgres (`HG_TEST_DATABASE_URL`); the console in a browser on a real API (the same, plus Playwright's Chromium); tests against a live stack (`HG_TEST_STACK=1`) |
+| `docs/` | operations, api, security, console, packages, extensions |
+| `tests/unit`, `tests/runner`, `tests/services`, `tests/e2e`, `tests/integration` | unit tests (the door included, on local servers); the runner against a fake api; the services and the API on a real Postgres and Redis (`HG_TEST_DATABASE_URL`, `HG_TEST_REDIS_URL`) with a fake runner; the console in a browser on a real API; tests against a live stack (`HG_TEST_STACK=1`) |
 | `scripts/version-check`, `scripts/sync-builder-seeds` | the one version, everywhere it is written; the builder's copies of the template and the packages guide, kept current |
 
 ## Checks
@@ -44,25 +47,27 @@ CI runs these on every push; run them before every commit, the whole suite, not 
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # once
 .venv/bin/ruff check .
 .venv/bin/mypy
-.venv/bin/pytest -q tests/unit packages
+.venv/bin/pytest -q tests/unit tests/runner packages
 scripts/version-check
-# with a scratch Postgres (a superuser URL; databases are created and dropped) and `.venv/bin/playwright install chromium`:
-HG_TEST_DATABASE_URL=postgresql://postgres:test@localhost:5432/postgres .venv/bin/pytest -q tests/services tests/e2e
+# with a scratch Postgres (a superuser URL; databases are created and dropped), a Redis, and Playwright's Chromium:
+HG_TEST_DATABASE_URL=postgresql://postgres:test@localhost:5432/postgres HG_TEST_REDIS_URL=redis://localhost:6379/15 \
+  .venv/bin/pytest -q tests/services
+HG_TEST_DATABASE_URL=... HG_TEST_REDIS_URL=... .venv/bin/pytest -q tests/e2e     # its own process (Playwright's sync API)
 ```
 
 Integration tests need a running stack: `HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_...
 .venv/bin/pytest -q tests/integration` (an admin key; the operator tests also need `HG_TEST_OPERATOR_KEY`). They
-install `shell`
-from `packages/shell`, install and remove a seeded test package and a test provider, and set the organization's egress.
+install `shell` from `packages/shell`, install and remove a seeded test package and a test provider, and set the
+organization's egress.
 
 ## Running it locally
 
 `sudo ./deploy/install.sh` on a Linux host with Docker is the supported way and takes a few minutes. For development
-without compose, run the processes from the checkout against a Postgres and a directory object store: `harnessgateway
-serve` (`HG_DATABASE_URL`, `HG_BLOB_URL=file:///...`, `HG_SECRET_KEY`, `HG_NODE_JOIN_TOKEN`), then `harnessgateway init`
-for the organization and admin key, then `harnessgateway node` as root with Docker and the `runsc` runtime
-(`HG_UNSAFE_RUNTIME=runc` only where gVisor is unavailable; nothing is isolated then). The console is `python3
-console/server.py` with `HG_KEY` (an admin key) and optionally `HG_OPERATOR_KEY`. Every setting is in
+without compose, run the processes from the checkout against a Postgres, a Redis and a directory object store:
+`harnessgateway api` (`HG_DATABASE_URL`, `HG_REDIS_URL`, `HG_BLOB_URL=file:///...`, `HG_SECRET_KEY`, `HG_DOOR_KEY`),
+then `harnessgateway init` for the organization and admin key, then `harnessgateway worker` as root with Docker and the
+`runsc` runtime (`HG_SANDBOX_RUNTIME=runc` only where gVisor is unavailable; nothing is isolated then) and
+`harnessgateway door`. The console is `python3 console/server.py --api http://localhost:8000`. Every setting is in
 `docs/operations.md`.
 
 ## Rules
@@ -70,24 +75,27 @@ console/server.py` with `HG_KEY` (an admin key) and optionally `HG_OPERATOR_KEY`
 - **The contract is the OpenAI Responses schema, in both directions** (SPEC §4). No HarnessGateway request or
   response schema; output is validated with the OpenAI SDK's own types.
 - **The platform knows no CLI.** Anything CLI-specific belongs in a package. Never change the platform for a harness:
-  if a harness cannot work within the contract, stop and report the exact blocker and what it would need.
+  if a harness cannot work within the contract, stop and report the exact blocker and what it would need. Nothing
+  CLI-specific is ever baked into an image: a package's `install` runs in the organization's own install box.
 - **The request serves the task; the package defines the agent** (SPEC §3). A request may select or narrow what a
   package offers, never widen it.
-- **No secret ever enters a sandbox** (SPEC §8): placeholders inside, values injected at the gateway or the door.
-  No secret in any file, log, commit, test fixture or error message either.
-- **Negative space.** Every boundary (request, manifest, settings, egress entry, path, archive, node report) refuses
+- **No secret ever enters a box** (SPEC §8): placeholders inside, values injected at the door. No secret in any file,
+  log, commit, test fixture or error message either.
+- **Nothing holds state but the stores.** The api, the worker and the door keep caches at most; a box keeps its
+  session's files only while it lives. Anything that must survive is in Postgres, Redis or the object store.
+- **Negative space.** Every boundary (request, manifest, settings, egress entry, path, archive, a box's report) refuses
   what is not allowed with a message that names what is. Invariants are asserted, not handled.
-- **Ports and adapters.** Vendor SDKs only in `harnessgateway/adapters/`; standards (Postgres, OCI images, HTTP, the
-  Responses wire) are used directly, not wrapped.
+- **Ports and adapters.** Vendor SDKs only in `harnessgateway/adapters/`; standards (Postgres, Redis, OCI images,
+  HTTP, the Responses wire) are used directly, not wrapped.
 - **The platform knows no language either.** A package is `harness.json` plus two executables, `install` and `run`,
   run as they are; the platform never looks inside them, never treats a file name specially, and the console never
   assumes Python. hgkit is an optional SDK for packages that happen to be Python, never a platform requirement.
-- **Packages** follow SPEC §5.8's layout: `harness.json`, `install`, `run`, `README.md` (Files, The command, Request
-  fields, Output mapping, Known limits, Tests), `tests/` with fixtures recorded from real runs. Install each CLI by
-  its official, documented method, pinned to the manifest's version (`HG_PACKAGE_VERSION`), and verify the version;
-  never name a CPU in a script; no post-install edits of installed files. The template seeds nothing an organization
-  would want to own, and neither does a package meant for others to start from. After changing `packages/shell` or
-  `docs/packages.md`, run `scripts/sync-builder-seeds` (a unit test holds the builder skill's copies to them).
+- **Packages** follow SPEC §5: `harness.json`, `install`, `run`, `README.md`, `tests/` with fixtures recorded from
+  real runs. Install each CLI by its official, documented method, pinned to the manifest's version
+  (`HG_PACKAGE_VERSION`), and verify the version; never name a CPU in a script; no post-install edits of installed
+  files. The template seeds nothing an organization would want to own, and neither does a package meant for others to
+  start from. After changing `packages/shell` or `docs/packages.md`, run `scripts/sync-builder-seeds` (a unit test
+  holds the builder skill's copies to them).
 - **Never mention "harnessrouter"** (any spelling) in any file. CI greps for it.
 
 ## Working style
@@ -104,7 +112,7 @@ console/server.py` with `HG_KEY` (an admin key) and optionally `HG_OPERATOR_KEY`
 ## Releasing
 
 `CHANGELOG.md`'s top entry is the version. `scripts/version-check` holds `pyproject.toml`, `harnessgateway/__init__.py`,
-`deploy/compose.yaml`, `deploy/install.sh` and `docs/operations.md` to it. A push to `main` whose version has no tag
-builds both images for amd64 and arm64, pushes them to GHCR, tags `v<version>` and publishes the entry as the
-release. Both images are versioned together with the platform; a package revision bumps the package's own version
-in its manifest.
+`deploy/compose.yaml`, `deploy/install.sh`, `docs/operations.md` and both Dockerfiles to it. A push to `main` whose
+version has no tag builds both images for amd64 and arm64, pushes them to GHCR, tags `v<version>` and publishes the
+entry as the release. Both images are versioned together with the platform; a package revision bumps the package's
+own version in its manifest.
