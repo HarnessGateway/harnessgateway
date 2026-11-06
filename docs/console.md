@@ -80,7 +80,8 @@ cancel a running turn, delete. *Usage*: the five meters by day, app or person, h
 
 **Platform.** The deployer's view: what is happening on the platform. *Health*: database and object store checks,
 nodes and slots, queue depth and age, turns and failures by reason over 24 hours. *Nodes & pools*: every node with
-pool, slots, warm boxes and heartbeat; mint a join token with the `docker run` line for a new host; drain.
+pool, slots, warm boxes and heartbeat; mint a join token with the `docker run` line for a new host (the dialog asks for
+the API's address as that host reaches it); drain.
 *Organizations*: capacity (vCPUs, memory, ceilings, idle TTL, retention, observability, node pool), egress, suspend,
 and **Invite admin**: how the deployer hands an organization to its people. *Platform usage*: all organizations by org or day. *Versions*,
 *Configuration* (settings as running, secrets omitted), *Audit log* (every organization's and the platform's own).

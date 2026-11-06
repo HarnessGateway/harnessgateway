@@ -60,10 +60,6 @@ class Principal:
             who = WHO[RUN_ONLY] if RUN_ONLY in allowed else WHO[DEVELOPER] if DEVELOPER in allowed else WHO[ADMIN]
             raise Forbidden(f"{who} may {action} {resource}")
 
-    def require_platform(self) -> None:
-        if not self.platform_admin:
-            raise Forbidden("the platform's operator does this")
-
     @property
     def owns_only(self) -> bool:
         """Whether reads of sessions, files, usage and traces are confined to what this principal itself made."""

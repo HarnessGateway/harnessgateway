@@ -60,6 +60,13 @@ def check_password(password: str, stored: str | None) -> bool:
     return hmac.compare_digest(hash_password(password, bytes.fromhex(salt)).split("$")[2], digest)
 
 
+def check_email(email: object) -> str:
+    """The login address, normalized; Invalid otherwise. Checked before anything is written for the account."""
+    if not isinstance(email, str) or not EMAIL.fullmatch(email.strip()):
+        raise Invalid("email is the account's login address", param="email")
+    return email.strip().lower()
+
+
 def check_new_password(password: object) -> str:
     if not isinstance(password, str) or len(password) < PASSWORD_MIN:
         raise Invalid(f"a password is at least {PASSWORD_MIN} characters", param="password")
@@ -105,11 +112,9 @@ class Accounts:
                      platform_admin: bool = False) -> dict[str, Any]:
         """A new account in the organization, invited: the result carries its one-time invitation token, shown once.
         An account that exists elsewhere (another organization) joins with a membership and no new token."""
-        if not isinstance(email, str) or not EMAIL.fullmatch(email.strip()):
-            raise Invalid("email is the account's login address", param="email")
+        email = check_email(email)
         if role not in ROLES:
             raise Invalid(f"role is one of {', '.join(ROLES)}", param="role")
-        email = email.strip().lower()
         async with self.db.platform() as tx:
             row = await tx.one("SELECT * FROM accounts WHERE email = %s", email)
             if row and await tx.one("SELECT 1 FROM memberships WHERE account_id = %s AND org_id = %s", row["id"], org_id):

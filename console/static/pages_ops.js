@@ -14,6 +14,9 @@ export function nav() {
 }
 const top = (title, lead, acts = "") => `<div class="top"><div><h1>${esc(title)}</h1><p class="lead">${esc(lead)}</p></div><div class="acts">${acts}</div></div>`;
 const ok = (b, text) => `<span class="dot" style="background:var(--${b ? "ok" : "bad"})"></span>${esc(text)}`;
+// The API as another host reaches it. The console knows only its own upstream (inside compose, a name no other host
+// resolves), so the guess is this page's host on the API's default port; the operator corrects it where it is used.
+const apiGuess = () => `${location.protocol}//${location.hostname}:8000`;
 
 // ── Health ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const health = { title: "Health", async render(el) {
@@ -43,10 +46,12 @@ const nodes = { title: "Nodes & pools", async render(el, params, me) {
     (pools.length > 1 ? `<p class="muted small" style="margin-top:10px">Pools: ${pools.map(p => esc(p || "default")).join(", ")}. An organization pinned to a pool runs only there.</p>` : "");
   $("#token", el).addEventListener("click", () => modal({ title: "Join token", submit: "Create", body:
     field("Pool", input("pool", "", 'placeholder="(default)"'), "the pool the node joins; empty for the default pool") + field("Label", input("label", "", 'placeholder="rack-2"')) +
-    `<div class="row">${field("Uses", input("uses", "1", 'type="number" min="1"'))}${field("Valid for (days)", input("ttl_days", "7", 'type="number" min="1"'))}</div>`,
+    `<div class="row">${field("Uses", input("uses", "1", 'type="number" min="1"'))}${field("Valid for (days)", input("ttl_days", "7", 'type="number" min="1"'))}</div>` +
+    field("API URL", input("api", apiGuess(), 'type="url" required'), "the API as the new host reaches it: this host's address and HG_HTTP_PORT"),
     onSubmit: async d => {
+      const base = d.api.trim().replace(/\/$/, "");
       const r = await api("POST", "/internal/node-tokens", { pool: d.pool, label: d.label, uses: +d.uses, ttl_days: +d.ttl_days });
-      const line = `docker run -d --name harnessgateway-node --restart unless-stopped --user 0:0 \\\n  -e HG_API_URL=${me.api} -e HG_GATEWAY_URL=${me.api}/gateway \\\n  -e HG_NODE_JOIN_TOKEN=${r.token}${d.pool ? ` -e HG_NODE_POOL=${d.pool}` : ""} -e HG_UPLINK_NETWORK=bridge \\\n  -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \\\n  ghcr.io/harnessgateway/harnessgateway:${me.platform.version || "latest"} node`;
+      const line = `docker run -d --name harnessgateway-node --restart unless-stopped --user 0:0 \\\n  -e HG_API_URL=${base} -e HG_GATEWAY_URL=${base}/gateway \\\n  -e HG_NODE_JOIN_TOKEN=${r.token}${d.pool ? ` -e HG_NODE_POOL=${d.pool}` : ""} -e HG_UPLINK_NETWORK=bridge \\\n  -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/harnessgateway:/var/lib/harnessgateway \\\n  ghcr.io/harnessgateway/harnessgateway:${me.platform.version || "latest"} node`;
       then(() => modal({ title: "Run this on the new host", wide: true, body: `<p>Docker and gVisor must be installed (deploy/install.sh does both). The token is shown once.</p>${pre(line)}`, submit: "Copy", onSubmit: () => copy(line) }));
     } }));
   el.addEventListener("click", async e => {
@@ -70,7 +75,7 @@ const orgs = { title: "Organizations", async render(el, params, me) {
       { h: "Status", cell: o => statusPill(o.status) },
       { h: "", cls: "acts", cell: o => `<button class="btn2" data-invite="${o.id}" data-name="${esc(o.name)}">Invite admin</button><button class="btn2" data-edit="${o.id}">Edit</button>` +
         (o.status === "active" ? `<button class="btn2 danger" data-status="suspended" data-id="${o.id}">Suspend</button>` : `<button class="btn2" data-status="active" data-id="${o.id}">Unsuspend</button>`) }], rows)}</div>` +
-    `<div class="card" style="margin-top:14px"><h2>Metrics</h2><p class="muted small">Prometheus scrapes <span class="mono">GET ${esc(me.api)}/internal/metrics</span> with the operator key (<span class="mono">HG_OPERATOR_KEY</span>) as the bearer.</p></div>`;
+    `<div class="card" style="margin-top:14px"><h2>Metrics</h2><p class="muted small">Prometheus scrapes <span class="mono">GET ${esc(apiGuess())}/internal/metrics</span> (the API as the scraper reaches it) with the operator key (<span class="mono">HG_OPERATOR_KEY</span>) as the bearer.</p></div>`;
   el.addEventListener("click", async e => {
     const inv = e.target.closest("[data-invite]");
     if (inv) {

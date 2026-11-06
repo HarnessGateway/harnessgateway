@@ -20,7 +20,7 @@ from ..domain import contract, egress
 from ..domain.capacity import Capacity
 from ..domain.manifest import Manifest
 from ..domain.turn import Reason, Status
-from ..errors import Forbidden, Invalid, Unauthenticated
+from ..errors import Forbidden, Unauthenticated
 from ..extensions import Extensions, TurnSummary
 from .harnesses import archive_key, secret_context
 from .objects import Objects, org_key
@@ -280,9 +280,3 @@ def _render_mcp(servers: list[dict[str, Any]], placeholders: dict[str, str]) -> 
                 headers[name] = _REF.sub(lambda m: placeholders[m.group(1)], value)
         out.append({**s, "headers": headers})
     return out
-
-
-def check_report(report: object) -> dict[str, Any]:
-    if not isinstance(report, dict):
-        raise Invalid("a report is a JSON object")
-    return report

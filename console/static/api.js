@@ -10,7 +10,6 @@ export async function api(method, path, body = undefined, { raw = false } = {}) 
   let doc = null;
   try { doc = text ? JSON.parse(text) : {}; } catch { doc = { error: text.slice(0, 300) }; }
   if (!r.ok) {
-    if (doc && doc.must_change) { location.href = "/login?change=1"; throw new Error("change the password first"); }
     const e = doc && doc.error;
     throw new Error(typeof e === "string" ? e : e && e.message ? e.message : `${r.status} ${r.statusText}`);
   }
@@ -68,11 +67,12 @@ export const date = ts => ts ? new Date(ts * 1000).toLocaleString() : "—";
 export const num = n => (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 export const hours = s => `${((Number(s) || 0) / 3600).toLocaleString(undefined, { maximumFractionDigits: 2 })} h`;
 export const short = id => (id || "").length > 14 ? id.slice(0, 13) + "…" : id || "";
-// A meter's quantity, shown in its natural unit.
+// A meter's quantity, shown in its natural unit; GiB-hours under one read in MiB-hours rather than as 0.
+const gibHours = g => g > 0 && g < 1 ? `${num(g * 1024)} MiB·h` : `${num(g)} GiB·h`;
 export function meter(name, q) {
   if (name === "vcpu_seconds") return hours(q).replace(" h", " vCPU·h");
-  if (name === "memory_gib_seconds") return hours(q).replace(" h", " GiB·h");
-  if (name === "storage_gib_hours") return `${num(q)} GiB·h`;
+  if (name === "memory_gib_seconds") return gibHours((Number(q) || 0) / 3600);
+  if (name === "storage_gib_hours") return gibHours(Number(q) || 0);
   return bytes(q);
 }
 export const METERS = { vcpu_seconds: "CPU", memory_gib_seconds: "Memory", egress_bytes: "Egress", ingress_bytes: "Ingress", storage_gib_hours: "Storage" };

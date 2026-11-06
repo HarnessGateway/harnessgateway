@@ -16,7 +16,7 @@ from ..extensions import Extensions
 from ..ports.blob import BlobStore
 from ..ports.keys import KeyWrapper
 from ..ports.mail import Mailer
-from .accounts import Accounts
+from .accounts import Accounts, check_email
 from .audit import Audit
 from .containers import Containers
 from .delivery import Delivery
@@ -101,10 +101,12 @@ class Platform:
     async def init(self, name: str, admin_email: str) -> dict[str, Any]:
         """Self-hosted's one organization (SPEC §10.4): the harness package builder installed, its first admin (the
         deployer: a platform admin too) with the invitation that activates the account, and an admin key for
-        automation. Both secrets are in the result once. Run again, it changes nothing and returns neither."""
+        automation. Both secrets are in the result once. Run again, it changes nothing and returns neither. The email is
+        checked first: nothing is created for an organization that could not get its admin."""
         org = await self.orgs.first()
         if org:
             return {"organization": org, "note": "already initialized: no new invitation or key"}
+        check_email(admin_email)
         org = await self.orgs.create(name)
         org_id = str(org["id"])
         builder = self.settings.builder_dir

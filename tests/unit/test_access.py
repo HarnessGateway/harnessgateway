@@ -39,5 +39,3 @@ def test_a_refusal_names_who_may():
         DEV.require("egress", "update")
     with pytest.raises(Forbidden, match="an admin or a developer may install harnesses"):
         APP.require("harnesses", "install")
-    with pytest.raises(Forbidden, match="the platform's operator"):
-        DEV.require_platform()

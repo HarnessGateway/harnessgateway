@@ -1,0 +1,95 @@
+"""The console in a real browser, on a real API: the processes a deploy runs, started from this checkout on a scratch
+database (tests/conftest.py) with the file object store, and Playwright's Chromium driving the pages. Needs
+HG_TEST_DATABASE_URL and `playwright install chromium`; skips without either."""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+
+import httpx
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+EMAIL = "deployer@example.test"
+START_S = 60
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def wait_for(url: str) -> None:
+    deadline = time.monotonic() + START_S
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(url, timeout=2).status_code < 500:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.3)
+    raise RuntimeError(f"{url} did not come up in {START_S}s")
+
+
+@dataclass(frozen=True)
+class Stack:
+    api: str
+    console: str
+    invitation: str                     # the first admin's setup link, as `init` printed it
+    email: str = EMAIL
+
+
+@pytest.fixture(scope="session")
+def stack(scratch_database, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Stack]:
+    api_port, console_port = free_port(), free_port()
+    api, console = f"http://127.0.0.1:{api_port}", f"http://127.0.0.1:{console_port}"
+    blobs, state = tmp_path_factory.mktemp("blobs"), tmp_path_factory.mktemp("console")
+    env = {**os.environ, "HG_DATABASE_URL": scratch_database(), "HG_BLOB_URL": f"file://{blobs}",
+           "HG_SECRET_KEY": base64.b64encode(b"e2e-secret-key-of-thirty-two-bytes").decode(), "HG_HOST": "127.0.0.1",
+           "HG_PORT": str(api_port), "HG_API_URL": api, "HG_CONSOLE_URL": console, "HG_LOG_LEVEL": "warning"}
+    procs = [subprocess.Popen([sys.executable, "-m", "harnessgateway", "serve", "--role", "api"], env=env, cwd=ROOT)]
+    try:
+        wait_for(f"{api}/readyz")
+        out = subprocess.run([sys.executable, "-m", "harnessgateway", "init", "--admin-email", EMAIL], env=env, cwd=ROOT,
+                             capture_output=True, text=True, check=True).stdout
+        procs.append(subprocess.Popen([sys.executable, str(ROOT / "console" / "server.py"), "--api", api, "--host", "127.0.0.1",
+                                       "--port", str(console_port), "--state", str(state)], cwd=ROOT))
+        wait_for(f"{console}/login")
+        yield Stack(api, console, json.loads(out)["invitation"])
+    finally:
+        for p in procs:
+            p.terminate()
+        for p in procs:
+            p.wait(timeout=15)
+
+
+@pytest.fixture(scope="session")
+def browser():
+    try:
+        from playwright.sync_api import Error, sync_playwright
+    except ImportError:
+        pytest.skip("needs the playwright package")
+    with sync_playwright() as p:
+        try:
+            b = p.chromium.launch()
+        except Error:
+            pytest.skip("needs Playwright's Chromium (playwright install chromium)")
+        yield b
+        b.close()
+
+
+@pytest.fixture
+def page(browser):
+    context = browser.new_context()
+    page = context.new_page()
+    yield page
+    context.close()

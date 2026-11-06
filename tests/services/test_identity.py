@@ -125,3 +125,29 @@ async def test_every_change_of_standing_is_audited_in_its_organization(plat, org
     assert page["has_more"] and len(page["data"]) == 2
     rest = await plat.audit.list(org.id, 100, page["last_id"])
     assert rows[2]["id"] == rest["data"][0]["id"]
+
+
+async def test_init_checks_the_email_before_it_creates_anything(settings, scratch_database):
+    """`init` on an empty platform: a bad email creates nothing; a good one creates the organization, the builder, the
+    admin's invitation and a key, once; a rerun changes nothing and returns neither secret."""
+    import dataclasses
+
+    from harnessgateway.services.platform import Platform
+
+    plat = Platform(dataclasses.replace(settings, database_url=scratch_database()))
+    await plat.open()
+    try:
+        await plat.migrate()
+        with pytest.raises(Invalid, match="email"):
+            await plat.init("default", "")
+        assert await plat.orgs.first() is None
+        out = await plat.init("default", "Deployer@Example.test")
+        assert out["admin"]["email"] == "deployer@example.test" and out["admin"]["platform_admin"] is True
+        assert out["admin"]["invitation"].startswith("http://console.test:8800/setup?token=hgi_")
+        assert out["admin_key"].startswith("hg_") and (await plat.keys.authenticate(out["admin_key"])).role == "admin"
+        assert [h["name"] for h in await plat.harnesses.list(await plat.keys.authenticate(out["admin_key"]))] == \
+            ["harness-package-builder"]
+        again = await plat.init("default", "someone-else@example.test")
+        assert "admin" not in again and "already initialized" in again["note"]
+    finally:
+        await plat.close()

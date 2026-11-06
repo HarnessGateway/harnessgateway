@@ -240,7 +240,7 @@ class Handler(chat.Handler):
         elif path == "/api/me" and method == "GET":
             r = http.get("/v1/auth/me")
             r.raise_for_status()
-            self._json(200, {**r.json(), "api": str(self.platform.base_url)})
+            self._json(200, r.json())
         elif path.startswith("/api/drafts"):
             self._drafts(method, path.removeprefix("/api/drafts").strip("/"), http)
         elif path.startswith("/api/v1/") or path.startswith("/api/internal/"):

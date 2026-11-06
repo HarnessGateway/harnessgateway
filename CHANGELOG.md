@@ -45,6 +45,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follo
 - `harnessgateway init --admin-email EMAIL` (or `HG_ADMIN_EMAIL`; `install.sh` asks) creates the first admin and prints
   its invitation link and an admin key, once.
 - The schema is one migration again, the model as it stands: a 2.4.0 install starts from an empty database.
+- `init` checks the admin's email before it creates anything, so a run without one leaves no organization that cannot
+  get its admin.
+- The platform console asks for the API's address as a new host reaches it when it writes the `docker run` line for a
+  join token, and names it for the Prometheus scrape; the console's own upstream is not that address.
+- Usage shows memory and storage under one GiB-hour in MiB-hours instead of rounding to 0.
+- Tests: the services on a real Postgres and the console in a browser on a real API run in CI (`tests/services`,
+  `tests/e2e`); `tests/integration/test_secrets.py` proves on a live stack that a provider key, a harness secret and a
+  caller's MCP credential come out nowhere.
 
 ## [2.3.2]
 

@@ -1,20 +1,16 @@
-"""The services on a real Postgres (HG_TEST_DATABASE_URL: a superuser URL of a scratch server), with the file object
-store in a temporary directory and no node: what the platform guarantees, without a deploy.
-
-A database is created for the session, owned by an ordinary role (no superuser, no BYPASSRLS, as a deploy connects),
-and migrated once; each test opens its own Platform on it and works in organizations of its own."""
+"""The services on a real Postgres (a scratch database from tests/conftest.py), with the file object store in a temporary
+directory and no node: what the platform guarantees, without a deploy. The database is migrated once; each test opens
+its own Platform on it and works in organizations of its own."""
 from __future__ import annotations
 
 import asyncio
 import io
-import os
 import secrets
 import tarfile
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit
 
-import psycopg
 import pytest
 import pytest_asyncio
 
@@ -22,7 +18,6 @@ from harnessgateway.config import Settings
 from harnessgateway.domain.access import ADMIN, DEVELOPER, Principal
 from harnessgateway.services.platform import Platform
 
-ROLE_PASSWORD = "hg-test"
 SHELL = Path(__file__).resolve().parents[2] / "packages" / "shell"
 
 
@@ -40,24 +35,8 @@ def pack(folder: Path) -> bytes:
 
 
 @pytest.fixture(scope="session")
-def database_url() -> Iterator[str]:
-    """A fresh database on the scratch server, owned by an ordinary role; dropped afterwards."""
-    admin = os.environ.get("HG_TEST_DATABASE_URL")
-    if not admin:
-        pytest.skip("the services tests need HG_TEST_DATABASE_URL (a superuser URL of a scratch Postgres)")
-    name = f"hg_test_{secrets.token_hex(4)}"
-    with psycopg.connect(admin, autocommit=True) as cx:
-        cx.execute("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'hg_test') THEN "
-                   f"CREATE ROLE hg_test LOGIN PASSWORD '{ROLE_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; "
-                   "END IF; END $$")
-        cx.execute(f"CREATE DATABASE {name} OWNER hg_test")
-    u = urlsplit(admin)
-    url = urlunsplit((u.scheme, f"hg_test:{ROLE_PASSWORD}@{u.hostname}:{u.port or 5432}", f"/{name}", "", ""))
-    try:
-        yield url
-    finally:
-        with psycopg.connect(admin, autocommit=True) as cx:
-            cx.execute(f"DROP DATABASE {name} WITH (FORCE)")
+def database_url(scratch_database) -> str:
+    return scratch_database()
 
 
 @pytest.fixture(scope="session")

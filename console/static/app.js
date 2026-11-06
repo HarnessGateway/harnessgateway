@@ -6,7 +6,7 @@ import { $, I, fail, field, ic, modal, toast } from "./ui.js";
 
 const APP = document.body.dataset.app;             // "user" | "ops"
 const SIDE = `hg-console-side-${APP}`;
-const me = { account: {}, role: "", organization: {}, platform: {}, api: "" };
+const me = { account: {}, role: "", organization: {}, platform: {} };
 let pages = {}, nav = [];
 
 async function boot() {

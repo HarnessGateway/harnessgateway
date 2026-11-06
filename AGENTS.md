@@ -33,7 +33,7 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | `console/` | the organization and deployer consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
 | `docs/` | operations, consoles, packages, extensions |
-| `tests/unit`, `tests/integration` | unit tests; tests against a live stack (`HG_TEST_STACK=1`) |
+| `tests/unit`, `tests/services`, `tests/e2e`, `tests/integration` | unit tests; the services on a real Postgres (`HG_TEST_DATABASE_URL`); the console in a browser on a real API (the same, plus Playwright's Chromium); tests against a live stack (`HG_TEST_STACK=1`) |
 | `scripts/version-check`, `scripts/sync-builder-seeds` | the one version, everywhere it is written; the builder's copies of the template and the packages guide, kept current |
 
 ## Checks
@@ -46,12 +46,14 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # once
 .venv/bin/mypy
 .venv/bin/pytest -q tests/unit packages
 scripts/version-check
+# with a scratch Postgres (a superuser URL; databases are created and dropped) and `.venv/bin/playwright install chromium`:
+HG_TEST_DATABASE_URL=postgresql://postgres:test@localhost:5432/postgres .venv/bin/pytest -q tests/services tests/e2e
 ```
 
 Integration tests need a running stack: `HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_...
 .venv/bin/pytest -q tests/integration` (an admin key; the operator tests also need `HG_TEST_OPERATOR_KEY`). They
 install `shell`
-from `packages/shell`, install and remove a seeded test package, and set the organization's egress.
+from `packages/shell`, install and remove a seeded test package and a test provider, and set the organization's egress.
 
 ## Running it locally
 
