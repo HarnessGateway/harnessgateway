@@ -8,9 +8,9 @@
 import { esc, ic, I, post, copyText, flash } from "./util.js";
 
 const CDN = "https://cdn.jsdelivr.net/npm";
-const HLJS = { src: `${CDN}/@highlightjs/cdn-assets@11.11.1/highlight.min.js`, integrity: "sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU", global: "hljs" };
-const KATEX = { src: `${CDN}/katex@0.16.22/dist/katex.min.js`, integrity: "sha384-cMkvdD8LoxVzGF/RPUKAcvmm49FQ0oxwDF3BGKtDXcEc+T1b2N+teh/OJfpU0jr6", global: "katex",
-  css: `${CDN}/katex@0.16.22/dist/katex.min.css`, cssIntegrity: "sha384-5TcZemv2l/9On385z///+d7MSYlvIEw9FuZTIdZ14vJLqWphw7e7ZPuOiCHJcFCP" };
+const HLJS = { src: `${CDN}/@highlightjs/cdn-assets@11.12.0/highlight.min.js`, integrity: "sha384-wjfDDhOPPdjtva8vWBhWeVprSpmxisEu5aYT3q1JyACqXpdKpo3PWZTMVq24MBix", global: "hljs" };
+const KATEX = { src: `${CDN}/katex@0.19.1/dist/katex.min.js`, integrity: "sha384-a1WQdjRj162i159OYq041X6I4K8NenkrI09LlPmiHg0YOb7CR+wJOraXwK9abpnE", global: "katex",
+  css: `${CDN}/katex@0.19.1/dist/katex.min.css`, cssIntegrity: "sha384-WwGtaC6ywCHxA5cstpj/3+xIZvTez8dq2IcBQaXRkenHZ7FVVq1ZROtURwfbtTlG" };
 const HIGHLIGHT_MAX = 256 * 1024;                    // longer code shows plain: highlighting it would stall the page
 
 const loading = new Map();

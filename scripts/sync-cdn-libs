@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""The chat loads highlight.js, KaTeX, Mermaid, mammoth and SheetJS from CDNs, each pinned by version and checked by an
+integrity hash in console/chat/static/rich.js and viewer.js. console/chat/package.json names the versions (so Dependabot
+proposes updates); this downloads each file at the version named there, computes its sha384, and rewrites the two
+scripts. SheetJS is not on npm: its version is read from viewer.js as it stands and its hash refreshed. Run it after a
+version changes; tests/unit/test_cdn_libs.py fails until the scripts match the manifest."""
+import base64
+import hashlib
+import json
+import re
+import ssl
+import sys
+import urllib.request
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+static = root / "console/chat/static"
+manifest = json.loads((root / "console/chat/package.json").read_text())["devDependencies"]
+JSDELIVR = "https://cdn.jsdelivr.net/npm"
+# (file, package, path in the package) for every URL the scripts load from jsDelivr; the regex finds the current line
+FILES = {
+    "rich.js": [("@highlightjs/cdn-assets", "highlight.min.js"), ("katex", "dist/katex.min.js"), ("katex", "dist/katex.min.css")],
+    "viewer.js": [("mermaid", "dist/mermaid.min.js"), ("mammoth", "mammoth.browser.min.js")],
+}
+SHEETJS = re.compile(r"https://cdn\.sheetjs\.com/xlsx-([0-9.]+)/package/dist/xlsx\.full\.min\.js")
+
+
+def sha384(url: str) -> str:
+    # cdn.sheetjs.com refuses a client without a User-Agent; both hosts are fixed above, never from input
+    req = urllib.request.Request(url, headers={"User-Agent": "harnessgateway/sync-cdn-libs"})  # noqa: S310
+    with urllib.request.urlopen(req, context=ssl.create_default_context(), timeout=60) as r:  # noqa: S310
+        if r.status != 200:
+            sys.exit(f"{url}: {r.status}")
+        return "sha384-" + base64.b64encode(hashlib.sha384(r.read()).digest()).decode()
+
+
+def rewrite(text: str, url_pattern: str, new_url: str, integrity: str) -> str:
+    """The `src: URL ... integrity: "..."` (or css/cssIntegrity) pair for one file, replaced in place."""
+    m = re.search(url_pattern, text)
+    if not m:
+        sys.exit(f"no line loads {url_pattern}")
+    key = "cssIntegrity" if new_url.endswith(".css") else "integrity"
+    line_start, line_end = text.rfind("\n", 0, m.start()) + 1, text.find("\n", m.end())
+    line = text[line_start:line_end]
+    line = line.replace(m.group(0), new_url)
+    line, n = re.subn(rf'({key}: ")sha384-[A-Za-z0-9+/=]+(")', rf"\g<1>{integrity}\g<2>", line)
+    if n != 1:
+        sys.exit(f"{m.group(0)}: no {key} on its line")
+    return text[:line_start] + line + text[line_end:]
+
+
+for name, files in FILES.items():
+    path = static / name
+    text = path.read_text()
+    for package, rel in files:
+        version = manifest[package]
+        url = f"{JSDELIVR}/{package}@{version}/{rel}"
+        pattern = re.escape(f"{JSDELIVR}/{package}@") + r"[0-9][0-9A-Za-z.\-]*" + re.escape(f"/{rel}")
+        pattern = pattern.replace(re.escape(JSDELIVR), r"\$\{CDN\}")           # the scripts write the host as ${CDN}
+        text = rewrite(text, pattern, url.replace(JSDELIVR, "${CDN}"), sha384(url))
+        print(f"{name}: {package}@{version}/{rel}")
+    if name == "viewer.js":
+        m = SHEETJS.search(text)
+        if not m:
+            sys.exit("viewer.js: no SheetJS URL")
+        text = rewrite(text, re.escape(m.group(0)), m.group(0), sha384(m.group(0)))
+        print(f"{name}: SheetJS {m.group(1)}")
+    path.write_text(text)

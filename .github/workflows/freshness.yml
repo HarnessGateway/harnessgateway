@@ -1,0 +1,24 @@
+name: freshness
+# What Dependabot cannot see: the built-in harness's CLI, pinned in packages/harness-package-builder/harness.json as
+# `<CLI version>-<revision>`. Weekly, this compares it with the registry's latest release and fails when it is behind,
+# so a stale built-in shows up in Actions like any other red check. Bumping is a package revision (AGENTS.md
+# §Releasing), tested by the package's own suite and the integration run.
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  builder-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: the built-in's CLI is the current release
+        run: |
+          pinned=$(python3 -c "import json; print(json.load(open('packages/harness-package-builder/harness.json'))['version'].rsplit('-', 1)[0])")
+          latest=$(npm view @anthropic-ai/claude-code version)
+          echo "pinned $pinned, latest $latest"
+          [ "$pinned" = "$latest" ] || { echo "::error::harness-package-builder pins Claude Code $pinned; $latest is current. Bump harness.json's version to $latest-1, run its tests, release."; exit 1; }

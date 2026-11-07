@@ -37,14 +37,14 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
 | `docs/` | operations, api, security, console, packages, extensions |
 | `tests/unit`, `tests/runner`, `tests/services`, `tests/e2e`, `tests/integration` | unit tests (the door included, on local servers); the runner against a fake api; the services and the API on a real Postgres and Redis (`HG_TEST_DATABASE_URL`, `HG_TEST_REDIS_URL`) with a fake runner; the console in a browser on a real API; tests against a live stack (`HG_TEST_STACK=1`) |
-| `scripts/version-check`, `scripts/sync-builder-seeds` | the one version, everywhere it is written; the builder's copies of the template and the packages guide, kept current |
+| `scripts/version-check`, `scripts/sync-builder-seeds`, `scripts/sync-cdn-libs` | the one version, everywhere it is written; the builder's copies of the template and the packages guide, kept current; the chat's CDN libraries written into its scripts at the versions `console/chat/package.json` pins, with fresh integrity hashes |
 
 ## Checks
 
 CI runs these on every push; run them before every commit, the whole suite, not only the part you changed:
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # once
+uv sync                                                        # once: .venv from uv.lock, Python 3.14, dev group included
 .venv/bin/ruff check .
 .venv/bin/mypy
 .venv/bin/pytest -q tests/unit tests/runner packages
@@ -61,7 +61,8 @@ install `shell` from `packages/shell`, install and remove a seeded test package 
 organization's egress. CI runs them too (`integration.yml`): the compose stack from both images built on the runner,
 boxes under runc. The other workflows: `ci.yml` (the checks above, the services and browser suites, the image
 builds), `security.yml` (Trivy on both images and a dependency audit, on change and weekly), `release.yml`
-(§Releasing), and Dependabot for Python packages, the base image digests and the actions.
+(§Releasing), `freshness.yml` (weekly: is the built-in harness's CLI the current release), and Dependabot for the
+Python lock (`uv`), the base image digests, the compose services, the chat's CDN libraries and the actions.
 
 ## Running it locally
 
@@ -99,6 +100,12 @@ then `harnessgateway init` for the organization and admin key, then `harnessgate
   files. The template seeds nothing an organization would want to own, and neither does a package meant for others to
   start from. After changing `packages/shell` or `docs/packages.md`, run `scripts/sync-builder-seeds` (a unit test
   holds the builder skill's copies to them).
+- **Versions are pinned where they are built from, and moved by Dependabot.** `uv.lock` is the Python environment of
+  both CI and the platform image (`uv sync --frozen`; never `pip install` a range); the base images are digests; the
+  compose services, the actions and the chat's CDN libraries (`console/chat/package.json`, then
+  `scripts/sync-cdn-libs`) are pinned too. The built-in's CLI is `harness.json`'s `version`; `freshness.yml` says
+  weekly whether it is current. Runtimes (Python, Node, Postgres, Redis) follow the current stable or LTS major;
+  Postgres moves for new installations only, with the operator's own data migration (docs/operations.md).
 - **Never mention "harnessrouter"** (any spelling) in any file. CI greps for it.
 
 ## Working style

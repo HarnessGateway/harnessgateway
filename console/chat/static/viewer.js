@@ -5,8 +5,8 @@
   "use strict";
   const CDN = "https://cdn.jsdelivr.net/npm";
   const LIBS = {
-    mermaid: { src: `${CDN}/mermaid@11.4.1/dist/mermaid.min.js`, integrity: "sha384-rbtjAdnIQE/aQJGEgXrVUlMibdfTSa4PQju4HDhN3sR2PmaKFzhEafuePsl9H/9I", global: "mermaid" },
-    docx: { src: `${CDN}/mammoth@1.8.0/mammoth.browser.min.js`, integrity: "sha384-/cXAMbzovUIKbBERjPmR3SnPTh8siWr5lsvFYj1Uq4XP0yaJUZJmsh0YXyGv5P0y", global: "mammoth" },
+    mermaid: { src: `${CDN}/mermaid@12.3.0/dist/mermaid.min.js`, integrity: "sha384-HHW54r639fK42Ip0coGF3mz8oSiGn0eEoWNTLs75X7H63pLSDBa0Tqs0RwGmLlXE", global: "mermaid" },
+    docx: { src: `${CDN}/mammoth@1.13.0/mammoth.browser.min.js`, integrity: "sha384-8NWE3bZDrmRI4IePMoQaEoLhAQ1MmRMJkdNgnGiHRFanTqsFKr0TmK6aSZvFJ/PO", global: "mammoth" },
     sheet: { src: "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js", integrity: "sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT", global: "XLSX" },
   };
   const SHEET_ROWS = 5000;                           // rows of a sheet drawn; the rest is in the download

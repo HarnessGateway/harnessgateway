@@ -1,8 +1,9 @@
-# What goes stale on its own: Python dependencies, the two images' pinned base digests, and the actions the
-# workflows run. One pull request a week per ecosystem; CI decides whether it merges.
+# What goes stale on its own: the Python lock, the two images' pinned base digests, the compose stack's service images,
+# the chat's CDN libraries, and the actions the workflows run. One pull request a week per ecosystem; CI decides
+# whether it merges. Not covered here: the built-in harness's CLI (.github/workflows/freshness.yml checks it).
 version: 2
 updates:
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
@@ -10,6 +11,16 @@ updates:
     groups:
       python:
         patterns: ["*"]
+  - package-ecosystem: docker-compose
+    directory: /deploy
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: npm
+    directory: /console/chat                           # a manifest of the CDN libraries; scripts/sync-cdn-libs applies a bump
+    schedule:
+      interval: weekly
+      day: monday
   - package-ecosystem: docker
     directories: ["/", "/sandbox"]
     schedule:
