@@ -30,7 +30,8 @@ travels as it is. Bodies, URLs and responses are never touched.
 
 Credentials the platform itself issues: API keys (`hg_`, hashed with a pepper), sign-ins (`hgl_`, expiring,
 revocable), invitations (`hgi_`, one-time), box tokens (`hgb_`, one per box, leased), the door key (`hgd_`), the
-operator key (`hgo_`). Each is shown once and stored as a digest. A box's token lets it read its own session's
+operator key (`hgo_`). The first four are shown once and stored as digests; the door and operator keys are
+configuration (`HG_DOOR_KEY`, `HG_OPERATOR_KEY`), compared in constant time and stored nowhere. A box's token lets it read its own session's
 objects, its organization's install archives and uploaded files, and the shared package archives; nothing else.
 
 ## Access

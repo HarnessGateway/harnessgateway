@@ -14,10 +14,11 @@ sudo ./deploy/install.sh
 
 The installer:
 
-1. checks Docker; installs gVisor (`runsc`) from gVisor's official repository (apt) or release binaries and registers
-   it with Docker; adds `default-address-pools` to `/etc/docker/daemon.json` if absent (each box gets a network of its
-   own, and Docker's default pools hold only about 30);
-2. pulls `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`, or builds them from the checkout;
+1. checks Docker; pulls `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`, or builds them
+   from the checkout;
+2. installs gVisor (`runsc`) from gVisor's official repository (apt) or release binaries and registers it with
+   Docker; adds `default-address-pools` to `/etc/docker/daemon.json` if absent (each box gets a network of its own, and
+   Docker's default pools hold only about 30);
 3. writes `/opt/harnessgateway/.env` with fresh secrets (never overwritten on a re-run);
 4. asks for the first admin's email (`HG_ADMIN_EMAIL`), starts the compose project (`postgres`, `redis`, `api`,
    `worker`, `door`, `console`) and runs `harnessgateway init`, which creates the organization with the built-in
@@ -67,8 +68,9 @@ pending, and a follower of a stream reconnects with `starting_after`.
 ## Networks that proxy or re-sign TLS
 
 Set `HG_UPSTREAM_PROXY` (the door reaches the internet through it with `CONNECT`) and `HG_CA_FILE` (a PEM the door
-trusts when verifying servers; mount it into the door container). The api's own outbound calls (provider URL checks,
-identity providers) honour the standard `HTTPS_PROXY` / `SSL_CERT_FILE` variables.
+trusts when verifying servers; mount it into the door container). The api's own outbound calls (the identity provider's
+discovery, JWKS and token endpoints) honour the standard `HTTPS_PROXY` / `SSL_CERT_FILE` variables; a provider's base
+URL is only resolved, never fetched, when it is set.
 
 ## Configuration
 
@@ -87,7 +89,7 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_DOOR` | worker, door | `hg-door:3128` | `host:port` of the door as boxes reach it; the door listens on that port |
 | `HG_HOST`, `HG_PORT` | api | `0.0.0.0`, `8000` | the api's listen address |
 | `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.0.1` | the image every box runs (installs are keyed by it) |
-| `HG_PLATFORM_IMAGE` | worker | `ghcr.io/harnessgateway/harnessgateway:3.0.1` | reported under versions |
+| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.0.1` | reported under `GET /internal/versions` |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` | the Docker runtime for boxes; `runc` runs them unisolated (logged) |
 | `HG_DOOR_CONTAINER` | worker | `hg-door` | the door container the Docker launcher joins to each box's network |
 | `HG_BOX_DIR` | worker | `/var/lib/harnessgateway/boxes` | each box's writable directories, mounted at the same path inside and out |
@@ -101,7 +103,7 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
 | `HG_ADMIN_EMAIL` | `init`, `install.sh` | — | the first admin's login; `init --admin-email` names it too |
 | `HG_CONSOLE_PORT` | compose `console` | `8800` | the console's port (it holds no key: people sign in with their account) |
-| `HG_DEFAULT_<FIELD>` | api | see below | an organization's limits unless the platform scope sets its own |
+| `HG_DEFAULT_<FIELD>` | api, worker | see below | an organization's limits unless the platform scope sets its own |
 
 Limit fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: the box's processes), `tmp_mb` (4096: its
 `/tmp`, a tmpfs charged to the box on top of `memory_mb`), `pids` (1024), `max_concurrent_turns` (0: no ceiling),
@@ -116,7 +118,8 @@ and stderr; `full`: the whole stdout and stderr of every turn, stored as objects
 ## Releasing
 
 The changelog is the release. `CHANGELOG.md`'s top entry names the version; `scripts/version-check` (run by CI) holds
-`pyproject.toml`, `harnessgateway/__init__.py`, compose, the installer, both Dockerfiles and this page to the same one.
+`pyproject.toml`, `harnessgateway/__init__.py`, compose, the installer, `.env.example`, both Dockerfiles and this page
+to the same one.
 When `main` carries a version that has no tag yet, the release workflow builds both images for amd64 and arm64, pushes
 them to GHCR as `:<version>` and `:latest` with a build provenance attestation beside each (`gh attestation verify
 oci://ghcr.io/harnessgateway/harnessgateway:<version> --owner harnessgateway` checks it), tags `v<version>` and
@@ -137,7 +140,7 @@ be redone, never for a change (that is a new version).
 | a host is refused inside the box | the door answers `403` to `CONNECT` for hosts outside the org's and the harness's egress; the trace lists each connection and its verdict |
 | `hg_reason: invalid_output` | the package printed an event the OpenAI schema rejects; the error names the field |
 | the api refuses to start | `HG_DOOR_KEY is required`, `HG_SECRET_KEY is at least 32 random bytes`: `harnessgateway keygen` prints both |
-| a lost invitation link, a locked or forgotten password | an admin: `POST /v1/accounts/{id}/reset` (console: Access → Accounts → Reset password) prints a new link; with no admin left, reset through the database (`UPDATE accounts SET password_hash = NULL, status = 'invited'`) and invite again |
-| SSO sign-in fails | `GET /v1/sso` (admin): issuer, client id, domains; the identity provider's redirect URI must be `HG_CONSOLE_URL/sso/callback`; the api logs the provider's error |
+| a lost invitation link, a locked or forgotten password | an admin: `POST /v1/accounts/{id}/reset` (console: Access → Accounts → Reset password) prints a new link; with no admin left, the operator invites a new one: `POST /internal/orgs/{id}/accounts` with the operator key (console: Platform → Organizations → Invite admin) |
+| SSO sign-in fails | `GET /v1/sso` (admin): issuer, client id, domains; the identity provider's redirect URI must be `HG_CONSOLE_URL/sso/callback`; the provider's refusal comes back in the api's error message, which the console shows on the sign-in page |
 | `403 … an admin or a developer may …` | the key or account lacks the role the route needs (SPEC §8.4) |
 | an invitation never arrives | `HG_SMTP_URL` unset (the link is in the API's response and the console's dialog instead), or `docker compose logs api` shows `sending the invitation … failed` with the SMTP error |

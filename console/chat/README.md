@@ -41,8 +41,9 @@ The side panel lists the session's workspace files and renders what the agent ma
   the web, so a document cannot send anything anywhere by being shown.
 - Word documents, spreadsheets and diagrams are parsed by their libraries in the viewer (`/viewer`), a sandboxed frame
   that receives only the bytes of the file it shows.
-- The page's own Content-Security-Policy allows scripts from this server and from `cdn.jsdelivr.net` only. Libraries
-  (highlight.js, KaTeX, Mermaid, mammoth, SheetJS) are pinned and checked by integrity hashes, and load on first use.
+- The page's own Content-Security-Policy allows scripts from this server and from `cdn.jsdelivr.net` only; the
+  sandboxed viewer also loads SheetJS from `cdn.sheetjs.com`. Libraries (highlight.js, KaTeX, Mermaid, mammoth,
+  SheetJS) are pinned and checked by integrity hashes, and load on first use.
   Offline, everything still reads: code unhighlighted, math as TeX, diagrams and documents as source or a download.
 - The server accepts JSON requests from its own page only (Content-Type and Origin are checked).
 

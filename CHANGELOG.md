@@ -18,7 +18,7 @@ actions. A base-image refresh only reaches a deployment as a version, so this is
 - `openai` 3.45.0 in the platform and the sandbox alike (hgkit and the platform validate output with the same SDK;
   `scripts/version-check` holds the two pins together); `redis-py` allowed up to 8.
 - The workflows run the current major of each action: `checkout` v7, `build-push-action` v7,
-  `attest-build-provenance` v4, `setup-qemu-action` and `setup-buildx-action` v4.
+  `attest-build-provenance` v4, `setup-qemu-action` and `setup-buildx-action` v4, `setup-python` v7.
 
 ### Fixed
 
