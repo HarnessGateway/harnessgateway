@@ -152,10 +152,12 @@ async def test_a_fork_waits_for_the_save_it_starts_from(plat, org, ready, runner
     job = await runner.next(box)
     await plat.boxes.events(box, job["turn_id"], 1, said("done"))
     assert (await plat.boxes.finish(box, job["turn_id"], {"outcome": "exited", "exit_code": 0}))["persist"]
-    with pytest.raises(Conflict, match="not saved yet"):
-        await plat.turns.create(org.developer, {"model": "shell", "input": "x", "previous_response_id": first["id"]})
+    second = await plat.turns.create(org.admin, {**BODY, "previous_response_id": first["id"]})   # the next turn, behind it
+    assert second["session_id"] == first["session_id"]
+    with pytest.raises(Conflict, match="not saved yet"):                      # a fork from the first: its save is in flight
+        await plat.turns.create(org.admin, {"model": "shell", "input": "x", "previous_response_id": first["id"]})
     await runner.save(box, job["turn_id"], {"workspace/a.txt": b"A"})
-    forked = await plat.turns.create(org.developer, {"model": "shell", "input": "x", "previous_response_id": first["id"]})
+    forked = await plat.turns.create(org.admin, {"model": "shell", "input": "x", "previous_response_id": first["id"]})
     assert forked["session_id"] != first["session_id"]
 
 
