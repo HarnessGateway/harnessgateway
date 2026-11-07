@@ -7,6 +7,30 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.1.0]
+
+Every version the platform is built from is now pinned where it is built from and moved by automation; the runtimes
+follow the current stable or long-term releases.
+
+### Changed
+
+- **A lockfile.** `uv.lock` is the Python environment of CI and the platform image alike (`uv sync --frozen`): two
+  builds of one commit install the same bytes, and Dependabot moves the lock. The dev tools are a dependency group.
+- **Python 3.14** in both images and CI (from 3.12); **Node 26 LTS** in the sandbox (from 24); **Redis 8** in the
+  compose stack and CI (from 7). **Postgres 18** for new installations: `HG_POSTGRES_IMAGE` names the major, the
+  installer writes the current one into a new `.env`, an existing installation keeps its own until its operator moves
+  the data (the operations page has the steps). Nothing an existing deployment runs changes under it.
+- The chat's CDN libraries: highlight.js 11.12.0, KaTeX 0.19.1, Mermaid 12.3.0, mammoth 1.13.0, each pinned in
+  `console/chat/package.json` (so Dependabot proposes updates) and written into the scripts with fresh integrity
+  hashes by `scripts/sync-cdn-libs`; a unit test holds the two together.
+- The built-in harness runs Claude Code 2.1.319; the integration suite now waits for its install on the sandbox image
+  under test, so Node, npm and the CLI's own installer are exercised on every run.
+- `openai` 3.46.0 in the platform and the sandbox.
+- Trivy runs from its action, pinned, instead of an unpinned install script fetched from a branch; pip-audit audits
+  the exported lock. Dependabot covers the compose services and the chat's libraries as well as the lock, the base
+  image digests and the actions. A weekly `freshness` workflow fails when the built-in's CLI is behind the registry.
+- The Dockerfiles use the `docker/dockerfile:1` syntax (the current 1.x frontend) instead of a fixed minor.
+
 ## [3.0.2]
 
 A review of every page of documentation against the code, and the three places where the code had to move instead.
