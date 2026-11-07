@@ -1,15 +1,15 @@
 [project]
 name = "harnessgateway"
-version = "3.0.2"
+version = "3.1.0"
 description = "Any coding-agent harness as an API: OpenAI Responses in, a sandboxed harness package, Responses out."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.30,<1",
     "pydantic>=2.7,<3",
-    "openai==3.45.0",                # the Responses schema requests and package output are validated against
+    "openai==3.46.0",                # the Responses schema requests and package output are validated against
     "psycopg[binary,pool]>=3.2,<4",
     "redis>=5.0,<9",
     "boto3>=1.34,<2",                # adapters only: the s3:// object store and the KMS key wrapper
@@ -19,8 +19,9 @@ dependencies = [
     "python-multipart>=0.0.9",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "playwright>=1.45", "types-redis"]
+[dependency-groups]
+# `uv sync` installs these with the project; `uv.lock` pins every version, and Dependabot moves the lock.
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "playwright>=1.45", "pip-audit>=2.9"]
 
 [project.scripts]
 harnessgateway = "harnessgateway.__main__:main"
@@ -42,7 +43,7 @@ markers = ["integration: needs a live stack (HG_TEST_STACK=1)"]
 
 [tool.ruff]
 line-length = 130
-target-version = "py312"
+target-version = "py314"
 extend-exclude = ["packages/*/seeds"]
 
 [tool.ruff.lint]
@@ -57,6 +58,6 @@ ignore = ["S101", "S104", "S603", "S607", "S608", "B008"]
 "harnessgateway/door/**" = ["S108"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 ignore_missing_imports = true
 files = ["harnessgateway", "sandbox/hgkit", "sandbox/runner.py"]

@@ -1,0 +1,11 @@
+{
+  "name": "harnessgateway-chat-cdn-libraries",
+  "private": true,
+  "description": "Not installed by anything: the manifest of the libraries the chat loads from its CDNs, pinned here so Dependabot proposes their updates. scripts/sync-cdn-libs writes these versions and fresh integrity hashes into static/rich.js and static/viewer.js; tests/unit/test_cdn_libs.py fails when they differ. SheetJS is not on npm (its npm package is years stale) and is bumped by hand in viewer.js.",
+  "devDependencies": {
+    "@highlightjs/cdn-assets": "11.12.0",
+    "katex": "0.19.1",
+    "mammoth": "1.13.0",
+    "mermaid": "12.3.0"
+  }
+}

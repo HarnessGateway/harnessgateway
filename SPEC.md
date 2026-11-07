@@ -816,8 +816,8 @@ deploy/                  compose.yaml, install.sh, postgres-init.sh, .env.exampl
 docs/                    operations.md, api.md, packages.md, console.md, security.md, extensions.md
 tests/unit, tests/services, tests/runner, tests/integration, tests/e2e
 scripts/version-check, scripts/sync-builder-seeds
-Dockerfile, pyproject.toml, README.md, CHANGELOG.md, AGENTS.md, LICENSE
-.github/workflows/ci.yml, integration.yml, security.yml, release.yml; .github/actions/setup; .github/dependabot.yml
+Dockerfile, pyproject.toml, uv.lock, README.md, CHANGELOG.md, AGENTS.md, LICENSE
+.github/workflows/ci.yml, integration.yml, security.yml, release.yml, freshness.yml; .github/actions/setup; .github/dependabot.yml
 ```
 
 Build in this order; each step is shippable and tested on its own:

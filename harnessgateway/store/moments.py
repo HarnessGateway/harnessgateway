@@ -68,7 +68,7 @@ class Moments:
         last = "0-0"
         key = turn_stream(rid)
         while True:
-            batch = await self.r.xread({key: last}, count=1000, block=int(keepalive_s * 1000))
+            batch: Any = await self.r.xread({key: last}, count=1000, block=int(keepalive_s * 1000))  # entries, not a str
             if not batch:
                 if not await self.r.exists(key):
                     return
@@ -103,7 +103,7 @@ class Moments:
                                                 count=10)
         out.extend(self._jobs(claimed))
         if not out:
-            fresh = await self.r.xreadgroup(GROUP, consumer, {JOBS: ">"}, count=10, block=block_ms)
+            fresh: Any = await self.r.xreadgroup(GROUP, consumer, {JOBS: ">"}, count=10, block=block_ms)
             for _, entries in fresh or []:
                 out.extend(self._jobs(entries))
         return out

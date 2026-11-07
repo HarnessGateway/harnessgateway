@@ -36,6 +36,7 @@ Day to day, from `/opt/harnessgateway`:
 | Status, logs | `docker compose ps`, `docker compose logs -f api worker door` |
 | Stop, start | `docker compose stop`, `docker compose up -d --wait` |
 | Upgrade | set `HG_PLATFORM_IMAGE` / `HG_SANDBOX_IMAGE` in `.env`, then `docker compose up -d --wait` (migrations run at the api's start; a new sandbox image re-runs every package's `install` once) |
+| Postgres major | `HG_POSTGRES_IMAGE` in `.env` names it; new installations start on the current major, an existing one stays on its own. To move: `docker compose exec postgres pg_dumpall -U postgres > all.sql`, `docker compose down`, remove the `postgres` volume, set the new image, `docker compose up -d postgres --wait`, restore with `psql -U postgres < all.sql`, then `up -d --wait`. Redis (`HG_REDIS_IMAGE`) holds nothing durable and changes freely |
 | Back up | `docker compose exec postgres pg_dump -U postgres harnessgateway`, plus the `objects` volume (or your bucket), plus `.env` |
 | A box's containers | `docker ps --filter label=harnessgateway.box`; the worker removes exited ones every minute |
 
@@ -48,8 +49,8 @@ copies nothing, and the object store grows with what actually changed. Deleting 
 Every process is stateless except Postgres, Redis and the object store, so scale is a matter of pointing more
 processes at them:
 
-1. **Postgres** 16+ (managed is fine), **Redis** 7 (managed is fine; event streams, the job queue, nothing durable
-   beyond a delay), and an **S3-compatible bucket**: `HG_DATABASE_URL`, `HG_REDIS_URL`, `HG_BLOB_URL=s3://…`. Connect
+1. **Postgres** 16 or later (18 for a new installation; managed is fine), **Redis** 8 (managed is fine; event
+   streams, the job queue, nothing durable beyond a delay), and an **S3-compatible bucket**: `HG_DATABASE_URL`, `HG_REDIS_URL`, `HG_BLOB_URL=s3://…`. Connect
    as an ordinary role that owns the database (`deploy/postgres-init.sh` shows the grants): the api refuses a
    superuser or a `BYPASSRLS` role.
 2. **api** replicas anywhere, behind a load balancer: `harnessgateway api`. Each needs the three URLs, `HG_SECRET_KEY`
@@ -88,8 +89,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_API_URL` | api, worker, door | `http://localhost:8000` | the api as boxes and doors reach it (its host is always allowed through the door) |
 | `HG_DOOR` | worker, door | `hg-door:3128` | `host:port` of the door as boxes reach it; the door listens on that port |
 | `HG_HOST`, `HG_PORT` | api | `0.0.0.0`, `8000` | the api's listen address |
-| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.0.2` | the image every box runs (installs are keyed by it) |
-| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.0.2` | reported under `GET /internal/versions` |
+| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.1.0` | the image every box runs (installs are keyed by it) |
+| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.1.0` | reported under `GET /internal/versions` |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` | the Docker runtime for boxes; `runc` runs them unisolated (logged) |
 | `HG_DOOR_CONTAINER` | worker | `hg-door` | the door container the Docker launcher joins to each box's network |
 | `HG_BOX_DIR` | worker | `/var/lib/harnessgateway/boxes` | each box's writable directories, mounted at the same path inside and out |
@@ -103,6 +104,7 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
 | `HG_ADMIN_EMAIL` | `init`, `install.sh` | — | the first admin's login; `init --admin-email` names it too |
 | `HG_CONSOLE_PORT` | compose `console` | `8800` | the console's port (it holds no key: people sign in with their account) |
+| `HG_POSTGRES_IMAGE`, `HG_REDIS_IMAGE` | compose `postgres`, `redis` | `postgres:16-alpine` (install.sh writes `postgres:18-alpine` for a new installation), `redis:8-alpine` | the store images; see Postgres major above |
 | `HG_DEFAULT_<FIELD>` | api, worker | see below | an organization's limits unless the platform scope sets its own |
 
 Limit fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: the box's processes), `tmp_mb` (4096: its

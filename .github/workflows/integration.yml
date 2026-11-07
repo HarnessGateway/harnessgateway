@@ -56,7 +56,7 @@ jobs:
         if: failure()
         run: |
           cd deploy && docker compose ps
-          docker compose logs --tail 200 api worker door
+          docker compose logs --tail 200 postgres api worker door
           docker ps -a --filter label=harnessgateway.box
       - name: stop the stack
         if: always()
