@@ -182,3 +182,12 @@ def test_a_package_adds_the_organizations_seeds_settings_secrets_and_mcp(api):
         assert sid != s1["metadata"]["session_id"] and c["harness"] == "hg-test-seeds" and c["forked_from"] == s2["id"]
     finally:
         api.delete("/v1/harnesses/hg-test-seeds")
+
+
+def test_the_built_in_harness_installs_on_this_sandbox_image(api):
+    """`init` installed harness-package-builder; its `install` (npm, the pinned Claude Code) ran in an install box on the
+    image this commit builds. Ready means Node, npm and the CLI's own install still fit the sandbox."""
+    installed(api, "harness-package-builder")
+    h = api.get("/v1/harnesses/harness-package-builder").json()
+    cli = h["version"].rsplit("-", 1)[0]                  # `install` ends with the CLI's own version line
+    assert h["install"]["status"] == "ready" and f"installed: {cli}" in h["install"]["log_tail"]
