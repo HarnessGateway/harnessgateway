@@ -58,7 +58,10 @@ HG_TEST_DATABASE_URL=... HG_TEST_REDIS_URL=... .venv/bin/pytest -q tests/e2e    
 Integration tests need a running stack: `HG_TEST_STACK=1 HG_TEST_URL=http://localhost:8000 HG_TEST_KEY=hg_...
 .venv/bin/pytest -q tests/integration` (an admin key; the operator tests also need `HG_TEST_OPERATOR_KEY`). They
 install `shell` from `packages/shell`, install and remove a seeded test package and a test provider, and set the
-organization's egress.
+organization's egress. CI runs them too (`integration.yml`): the compose stack from both images built on the runner,
+boxes under runc. The other workflows: `ci.yml` (the checks above, the services and browser suites, the image
+builds), `security.yml` (Trivy on both images and a dependency audit, on change and weekly), `release.yml`
+(§Releasing), and Dependabot for Python packages, the base image digests and the actions.
 
 ## Running it locally
 

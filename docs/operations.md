@@ -118,7 +118,9 @@ Limit fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: the 
 The changelog is the release. `CHANGELOG.md`'s top entry names the version; `scripts/version-check` (run by CI) holds
 `pyproject.toml`, `harnessgateway/__init__.py`, compose, the installer, both Dockerfiles and this page to the same one.
 When `main` carries a version that has no tag yet, the release workflow builds both images for amd64 and arm64, pushes
-them to GHCR as `:<version>` and `:latest`, tags `v<version>` and publishes the entry as the GitHub release. To release:
+them to GHCR as `:<version>` and `:latest` with a build provenance attestation beside each (`gh attestation verify
+oci://ghcr.io/harnessgateway/harnessgateway:<version> --owner harnessgateway` checks it), tags `v<version>` and
+publishes the entry as the GitHub release. To release:
 add the entry, bump the version everywhere the check names, merge to `main`. A manual run of the workflow with
 `reissue` rebuilds a version that is already tagged and moves its tag to the current commit: for a release that must
 be redone, never for a change (that is a new version).

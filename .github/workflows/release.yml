@@ -17,6 +17,8 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write          # build provenance, attested and pushed beside each image
+  attestations: write
 
 jobs:
   version:
@@ -61,6 +63,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           file: ${{ matrix.file }}
@@ -73,6 +76,11 @@ jobs:
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/harnessgateway/${{ matrix.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   publish:
     needs: [version, images]

@@ -6,7 +6,8 @@
 # `harness-package-builder`, the built-in `init` installs.
 #
 # Hardened like the sandbox image: Chainguard's Wolfi base pinned by digest, no package manager, BusyBox, /bin/sh or
-# setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy.
+# setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
+# change and weekly (.github/workflows/security.yml); a release attests its build provenance.
 #
 # Build: docker build -t ghcr.io/harnessgateway/harnessgateway:3.0.0 .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret: --secret id=ca,src=/path/ca.pem

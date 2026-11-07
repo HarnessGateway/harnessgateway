@@ -12,6 +12,7 @@
 #
 # Hardened: Chainguard's Wolfi base (glibc, rebuilt daily for CVE fixes) pinned by digest; no setuid or setgid files;
 # no package manager or BusyBox left in the image (the apk database stays, so scanners see every package); one user.
+# CI scans it with Trivy on every change and weekly (.github/workflows/security.yml).
 #
 # Build (from the repository root): docker build -t ghcr.io/harnessgateway/sandbox:3.0.0 -f sandbox/Dockerfile .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret (never baked in): --secret id=ca,src=/path/ca.pem

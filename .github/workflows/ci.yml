@@ -4,6 +4,13 @@ on:
     branches: [main, next]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -12,10 +19,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
       - run: scripts/version-check
       - run: .venv/bin/ruff check .
       - run: .venv/bin/mypy
+      - name: the console's scripts parse
+        run: for f in console/static/*.js console/chat/static/*.js; do node --input-type=module --check < "$f" || { echo "$f"; exit 1; }; done
       - run: .venv/bin/pytest -q tests/unit tests/runner packages
       - name: no forbidden words
         run: '! grep -rIil "harness""router" --exclude-dir=.git --exclude-dir=.venv . | grep -v "^./AGENTS.md$"'
@@ -40,6 +51,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
       - run: .venv/bin/playwright install --with-deps chromium
       - run: .venv/bin/pytest -q tests/services
