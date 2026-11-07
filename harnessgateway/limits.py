@@ -19,7 +19,6 @@ BLOB_MAX = 4 * GB                   # one content blob (a chunk is 4 MiB; a whol
 MANIFEST_MAX = 64 * MB              # one snapshot manifest
 INSTALL_ARCHIVE_MAX = 4 * GB        # one install archive
 LOG_TAIL = 16 * KB                  # what a turn keeps of its log lines and stderr without full observability
-CAPTURE_BODY_MAX = 4 * MB           # a captured provider request or response body, each side
 SETTINGS_MAX = 64                   # settings, and secrets, per harness
 SETTING_VALUE_MAX = 16 * KB
 EGRESS_MAX = 256                    # an org's egress entries

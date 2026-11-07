@@ -390,7 +390,7 @@ Boxes never hold store credentials: every byte a box reads or writes goes throug
 | `standby_s` | 120 | how long a box waits for the session's next turn after one ends |
 | `turn_timeout_s` | 0 (none) | the bound on a turn, with the package's own |
 | `retention_days` | 0 (keep) | sessions idle longer are deleted with their snapshots |
-| `observability` | `metadata` | `full` keeps bodies and whole logs |
+| `observability` | `metadata` | `metadata` keeps a 16 KiB tail of each turn's log lines and stderr; `full` keeps the whole stdout and stderr |
 
 ### 7.5 Jobs
 
@@ -869,8 +869,7 @@ Every setting is an environment variable with the `HG_` prefix. Secrets never ap
 | `HG_DOOR` | worker | `host:port` of the door as boxes reach it (self-hosted: `hg-door:3128`) |
 | `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE` | worker | images |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` (default) or `runc` |
-| `HG_LAUNCHER` | worker | `docker` (default); an extension may register another |
-| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher) |
+| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher). The launcher is Docker unless an extension's `launcher` hook returns another (§13) |
 | `HG_BOX_DIR` | worker | where the Docker launcher keeps each box's writable directories, mounted at the same path inside and out |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE`, `HG_ALLOW_PRIVATE_EGRESS` | door, api | an operator's proxy and CA; private addresses allowed |
 | `HG_CONSOLE_URL` | api | where people open the console; invitation and SSO links |

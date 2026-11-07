@@ -39,7 +39,6 @@ class Settings:
     sandbox_image: str = f"ghcr.io/harnessgateway/sandbox:{__version__}"
     platform_image: str = f"ghcr.io/harnessgateway/harnessgateway:{__version__}"
     sandbox_runtime: str = "runsc"
-    launcher: str = "docker"
     door_container: str = "hg-door"
     box_dir: Path = Path("/var/lib/harnessgateway/boxes")
     upstream_proxy: str = ""
@@ -104,9 +103,8 @@ class Settings:
                 api_url=get("API_URL", cls.api_url).rstrip("/"), door=get("DOOR", cls.door),
                 host=get("HOST", cls.host), port=number("PORT", cls.port, 1, 65535),
                 sandbox_image=get("SANDBOX_IMAGE", cls.sandbox_image), platform_image=get("PLATFORM_IMAGE", cls.platform_image),
-                sandbox_runtime=get("SANDBOX_RUNTIME", cls.sandbox_runtime), launcher=get("LAUNCHER", cls.launcher),
-                door_container=get("DOOR_CONTAINER", cls.door_container),
-                box_dir=Path(get("BOX_DIR", str(cls.box_dir))),
+                sandbox_runtime=get("SANDBOX_RUNTIME", cls.sandbox_runtime),
+                door_container=get("DOOR_CONTAINER", cls.door_container), box_dir=Path(get("BOX_DIR", str(cls.box_dir))),
                 upstream_proxy=get("UPSTREAM_PROXY"), ca_file=get("CA_FILE"),
                 allow_private_egress=_bool(get("ALLOW_PRIVATE_EGRESS")),
                 console_url=get("CONSOLE_URL", cls.console_url).rstrip("/"), smtp_url=get("SMTP_URL"),

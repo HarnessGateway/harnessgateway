@@ -89,7 +89,6 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.0.1` | the image every box runs (installs are keyed by it) |
 | `HG_PLATFORM_IMAGE` | worker | `ghcr.io/harnessgateway/harnessgateway:3.0.1` | reported under versions |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` | the Docker runtime for boxes; `runc` runs them unisolated (logged) |
-| `HG_LAUNCHER` | worker | `docker` | the launcher; an extension may register another |
 | `HG_DOOR_CONTAINER` | worker | `hg-door` | the door container the Docker launcher joins to each box's network |
 | `HG_BOX_DIR` | worker | `/var/lib/harnessgateway/boxes` | each box's writable directories, mounted at the same path inside and out |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | door, api | — | see above |
@@ -107,7 +106,8 @@ Environment variables only, validated at start with every problem reported at on
 Limit fields (`HG_DEFAULT_VCPUS=2`, …): `vcpus` (2.0), `memory_mb` (4096: the box's processes), `tmp_mb` (4096: its
 `/tmp`, a tmpfs charged to the box on top of `memory_mb`), `pids` (1024), `max_concurrent_turns` (0: no ceiling),
 `standby_s` (120: how long a box waits for the session's next turn), `turn_timeout_s` (0: none), `retention_days`
-(0: sessions are kept until deleted), `observability` (`metadata` or `full`: whether traces keep bodies and whole logs).
+(0: sessions are kept until deleted), `observability` (`metadata`: a turn's trace keeps the last 16 KiB of its log lines
+and stderr; `full`: the whole stdout and stderr of every turn, stored as objects under the turn).
 
 ## Commands
 

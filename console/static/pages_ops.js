@@ -92,7 +92,7 @@ const orgs = { title: "Organizations", async render(el) {
 function editOrg(o, done) {
   modal({ title: `Organization ${o.name}`, wide: true, submit: "Save", body:
     `<div class="grid two" style="margin-bottom:0">${LIMITS.map(([k, l, t, step]) => field(l, input(k, o.limits[k], `type="${t}"${step ? ` step="${step}"` : ""}`), k in o.limits_set ? "set for this organization" : "the platform default")).join("")}` +
-    `${field("Observability", select("observability", [["metadata", "metadata — timings, sizes, outcomes"], ["full", "full — request and response bodies too"]], o.limits.observability))}</div>` +
+    `${field("Observability", select("observability", [["metadata", "metadata — timings, sizes, outcomes"], ["full", "full — each turn's whole stdout and stderr too"]], o.limits.observability))}</div>` +
     field("Egress entries (one per line)", `<textarea name="egress">${esc(o.egress.join("\n"))}</textarea>`, "host · *.domain · host:port · !host to deny · * for everything"),
     onSubmit: async d => {
       const limits = {};
