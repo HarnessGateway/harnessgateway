@@ -126,7 +126,7 @@ def outcome(terminal: dict[str, Any], items: list[dict[str, Any]]) -> Outcome:
     usage = r.get("usage")
     if usage is not None:
         try:
-            usage = USAGE.validate_python(usage).model_dump(mode="json")
+            usage = USAGE.validate_python(usage).model_dump(mode="json", exclude_none=True)   # as the final Response is
         except ValidationError as e:
             raise OutputError(f"usage: {first_error(e)}") from None
     meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}

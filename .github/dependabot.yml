@@ -16,7 +16,7 @@ updates:
       interval: weekly
       day: monday
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/setup"]     # the workflows, and the composite action they share
     schedule:
       interval: weekly
       day: monday

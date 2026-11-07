@@ -25,7 +25,7 @@ apk update
 apk add --no-cache bash coreutils findutils grep sed gawk diffutils patch gnutar gzip xz zstd unzip file less procps \
   util-linux-misc debianutils flock git curl jq ripgrep python-3.12 py3.12-pip nodejs-24 npm libatomic tini ca-certificates-bundle
 [ -e /usr/bin/python3 ] || ln -s python3.12 /usr/bin/python3
-python3 -m pip install --no-cache-dir --disable-pip-version-check openai==3.37.0    # hgkit's validator
+python3 -m pip install --no-cache-dir --disable-pip-version-check openai==3.45.0    # hgkit's validator
 # one shell: bash serves as /bin/sh, then BusyBox and the package manager go
 ln -sf bash /bin/sh
 find / -xdev -lname '*busybox' -delete                    # its applet links are not the package's to remove
