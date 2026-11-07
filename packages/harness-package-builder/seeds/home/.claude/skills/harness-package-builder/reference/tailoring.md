@@ -42,7 +42,8 @@ ones allow.
 
 ## Finding each CLI's mechanisms
 
-You researched the CLI for the vanilla package; tailoring needs four more facts, from its current documentation:
+Research the CLI as for any package (its install, headless command and output); tailoring needs four more facts, from
+its current documentation:
 
 1. **Where it reads standing instructions under `$HOME`** (a user-level memory or instruction file), so the purpose
    is in place for every session regardless of the workspace.

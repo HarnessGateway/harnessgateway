@@ -164,9 +164,10 @@ Native resume is the richer path; the history is what makes every path work.
 ## Your organization's agent
 
 A package meant for others to start from stays vanilla: the CLI as its vendor ships it plus what it needs to run
-headless in the sandbox. Your organization's agent on that CLI is a package of its own: open the vanilla one in the
-console, **Edit**, give it a new `name`, and add what makes it yours: instruction files, skills, hooks and settings
-under `seeds/home`, an `mcp` catalog, `settings` and `secrets` in the manifest. Everything under `$HOME` is reseeded
+headless in the sandbox. Your organization's agent on that CLI is **one package**, complete on its own: it installs and
+runs the CLI itself and adds what makes it yours: instruction files, skills, hooks and settings under `seeds/home`, an
+`mcp` catalog, `settings` and `secrets` in the manifest. It does not depend on a vanilla package or sit beside one. Ask
+the builder for it directly, or start from an installed vanilla package (**Edit**, then a new `name`) if you have one. Everything under `$HOME` is reseeded
 from the package in every new sandbox, so the agent's configuration is always the package's and takes effect on
 upgrade without migration. Least privilege is two fences: the platform's, outside the sandbox (the door's egress
 allow-list, secrets injected only toward their hosts, gVisor), and the package's, inside it, in the CLI's own terms
