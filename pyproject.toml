@@ -9,9 +9,9 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.30,<1",
     "pydantic>=2.7,<3",
-    "openai==3.37.0",                # the Responses schema requests and package output are validated against
+    "openai==3.45.0",                # the Responses schema requests and package output are validated against
     "psycopg[binary,pool]>=3.2,<4",
-    "redis>=5.0,<6",
+    "redis>=5.0,<9",
     "boto3>=1.34,<2",                # adapters only: the s3:// object store and the KMS key wrapper
     "cryptography>=42",
     "httpx>=0.27,<1",
