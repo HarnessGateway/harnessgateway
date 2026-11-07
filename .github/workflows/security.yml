@@ -27,22 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t scan/${{ matrix.name }}:${{ github.sha }} -f ${{ matrix.file }} .
-      - uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: scan/${{ matrix.name }}:${{ github.sha }}
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+      - name: install Trivy
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      - run: trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 scan/${{ matrix.name }}:${{ github.sha }}
 
   dependencies:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]" pip-audit
+      - uses: ./.github/actions/setup
+      - run: .venv/bin/pip install -q pip-audit
       - run: .venv/bin/pip-audit --progress-spinner off --skip-editable

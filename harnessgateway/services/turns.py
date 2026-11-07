@@ -254,9 +254,8 @@ class Turns:
                          "model, store, forked_from) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                          sid, p.org_id, p.actor, user, path.harness, pinned["digest"], pinned["manifest"], provider_id,
                          model, routing.store, routing.previous_response_id)
-            if fork_from != "seeds":
-                made = await self.snapshots.derive(tx, p.org_id, fork_from, sid, "workspace" if switch else None)
-                await tx.run("UPDATE sessions SET snapshot_id = %s WHERE id = %s", made["id"], sid)
+            made = await self.snapshots.derive(tx, p.org_id, fork_from, sid, "workspace" if switch else None)
+            await tx.run("UPDATE sessions SET snapshot_id = %s WHERE id = %s", made["id"], sid)
             session = {"id": sid, "turns": 0}
         elif session is None:
             session = {"id": ids.new("session"), "turns": 0}
@@ -284,15 +283,15 @@ class Turns:
 
     @staticmethod
     def _checkpoint_of(prev: dict[str, Any], session: dict[str, Any]) -> str:
-        """The manifest key of the state after `prev`, or "seeds" when the session had no state yet."""
+        """The snapshot of the state after `prev`: what a fork starts from. A turn's save lands shortly after its end;
+        until then there is nothing to fork from yet, and a save that failed leaves nothing to fork from at all."""
         rid = prev["id"]
         if not Status(prev["status"]).final:
             raise Conflict(f"{rid} is still running; continue from it once it has ended", param="previous_response_id")
         if prev["snapshot_id"] is None:
-            if session["snapshot_seq"] > prev["seq"] or (session["snapshot_id"] and session["snapshot_seq"] >= prev["seq"]):
-                raise Conflict(f"the state after {rid} was not saved, so nothing can continue from it",
-                               param="previous_response_id")
-            return "seeds"
+            if session["snapshot_seq"] < prev["seq"]:
+                raise Conflict(f"the state after {rid} is not saved yet; try again shortly", param="previous_response_id")
+            raise Conflict(f"the state after {rid} was not saved, so nothing can continue from it", param="previous_response_id")
         return str(prev["snapshot_id"])
 
     @staticmethod

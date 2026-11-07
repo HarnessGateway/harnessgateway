@@ -108,8 +108,9 @@ def test_egress_follows_the_organization_and_deny_entries_win(api):
             break
         time.sleep(0.2)
     assert door, trace
-    verdicts = {c["host"]: c["verdict"] for c in door["data"]["connections"]}
-    assert verdicts == {"registry.npmjs.org": "allowed", "evil.npmjs.org": "denied", "example.com": "denied"}
+    verdicts = {c["host"]: c["verdict"] for c in door["data"]["connections"]}   # the box's own api calls are in there too
+    assert {h: verdicts.get(h) for h in ("registry.npmjs.org", "evil.npmjs.org", "example.com")} == \
+        {"registry.npmjs.org": "allowed", "evil.npmjs.org": "denied", "example.com": "denied"}
 
 
 def test_a_caller_mcp_token_never_enters_the_box(api):
