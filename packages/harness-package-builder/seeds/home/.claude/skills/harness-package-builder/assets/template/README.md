@@ -40,7 +40,7 @@ Ignored, and named in `metadata.hg_ignored_fields`: `instructions`, `reasoning`,
 The request arrives whole at `$HG_REQUEST` (and on stdin). hgkit's `Request` reads it: `req.prompt` is the user text,
 `req.instructions` the `instructions` field with any system/developer messages, `req.place_inputs()` writes the
 request's files into the workspace by name, `req.mcp_servers()` lists the turn's MCP servers, and `req.model`,
-`req.provider`, `req.state` carry the turn's environment (SPEC §5.6: `HG_MODEL`, `HG_PROVIDER_URL`,
+`req.provider`, `req.state` carry the turn's environment (SPEC §5.3: `HG_MODEL`, `HG_PROVIDER_URL`,
 `HG_PROVIDER_TOKEN`, `HG_STATE`, `HG_WORKSPACE`, each setting and secret as a variable).
 
 ## Output mapping
