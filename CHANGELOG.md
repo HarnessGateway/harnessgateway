@@ -22,6 +22,10 @@ actions. A base-image refresh only reaches a deployment as a version, so this is
 
 ### Fixed
 
+- Blocking reads on Redis (the worker's queue, a turn's live stream) outlive the 5 s socket timeout redis-py 6 and
+  later apply by default, which cut every idle poll of the queue and any stream quiet for 5 s.
+- The egress integration test reads every door record of a turn: the door sends records in batches, so a turn's
+  connections may span several.
 - The chat retries a fork on the 409 the api sends while the earlier turn's state is still saving ("not saved yet");
   it matched a message the api never sends, so a switch of harness right after a turn failed instead of waiting.
 - The integration workflow masks the ephemeral CI stack's admin and operator keys, which GitHub otherwise echoes in

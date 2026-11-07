@@ -18,6 +18,8 @@ TURN_STREAM_MAX = 20_000
 TURN_STREAM_TTL_S = 600
 JOB_RECLAIM_MS = 5 * 60 * 1000
 SSO_TTL_S = 600
+READ_TIMEOUT_S = 60              # longer than any blocking read (consume blocks 5 s, follow 15 s): a dead Redis is an
+                                 # error, not a hang. redis-py 6+ bounds every read by 5 s unless told otherwise.
 
 
 def turn_stream(rid: str) -> str:
@@ -31,7 +33,8 @@ def wake_channel(sid: str) -> str:
 class Moments:
     def __init__(self, url: str):
         self.url = url
-        self.r: redis.Redis = redis.Redis.from_url(url, decode_responses=True)  # type: ignore[type-arg]
+        self.r: redis.Redis = redis.Redis.from_url(url, decode_responses=True,  # type: ignore[type-arg]
+                                                   socket_timeout=READ_TIMEOUT_S)
 
     async def close(self) -> None:
         await self.r.aclose()  # type: ignore[attr-defined]
@@ -61,6 +64,7 @@ class Moments:
                      ) -> AsyncIterator[dict[str, Any] | None]:
         """The stream's events numbered above `after`, live until a terminal event; None is a keep-alive. Ends when
         the stream is gone (expired or never there)."""
+        assert keepalive_s < READ_TIMEOUT_S
         last = "0-0"
         key = turn_stream(rid)
         while True:
@@ -93,6 +97,7 @@ class Moments:
 
     async def consume(self, consumer: str, block_ms: int = 5000) -> list[tuple[str, str, dict[str, Any]]]:
         """Jobs for this consumer: stale pending ones reclaimed first, then new ones. Each is (id, kind, payload)."""
+        assert block_ms < READ_TIMEOUT_S * 1000
         out: list[tuple[str, str, dict[str, Any]]] = []
         _, claimed, _ = await self.r.xautoclaim(JOBS, GROUP, consumer, min_idle_time=JOB_RECLAIM_MS, start_id="0-0",
                                                 count=10)

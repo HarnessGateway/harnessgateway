@@ -102,14 +102,15 @@ def test_egress_follows_the_organization_and_deny_entries_win(api):
            "printf '%s %s\\n' $h $(curl -s -o /dev/null -w '%{http_connect}' https://$h/); done")
     r = turn(api, {"input": cmd})
     assert text(r).split("\n")[:3] == ["registry.npmjs.org 200", "evil.npmjs.org 403", "example.com 403"]
-    for _ in range(50):                                   # the door's records arrive in batches
+    hosts = ("registry.npmjs.org", "evil.npmjs.org", "example.com")
+    for _ in range(50):                                   # the door's records arrive in batches: one record each
         trace = api.get(f"/v1/traces/{r['id']}").json()
-        if door := next((rec for rec in trace["records"] if rec["kind"] == "door"), None):
+        verdicts = {c["host"]: c["verdict"] for rec in trace["records"] if rec["kind"] == "door"
+                    for c in rec["data"]["connections"]}   # the box's own api calls are in there too
+        if all(h in verdicts for h in hosts):
             break
         time.sleep(0.2)
-    assert door, trace
-    verdicts = {c["host"]: c["verdict"] for c in door["data"]["connections"]}   # the box's own api calls are in there too
-    assert {h: verdicts.get(h) for h in ("registry.npmjs.org", "evil.npmjs.org", "example.com")} == \
+    assert {h: verdicts.get(h) for h in hosts} == \
         {"registry.npmjs.org": "allowed", "evil.npmjs.org": "denied", "example.com": "denied"}
 
 
