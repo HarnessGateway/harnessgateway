@@ -39,7 +39,9 @@ x-env: &env
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # the major an existing installation runs stays until its operator moves the data (docs/operations.md, Upgrade);
+    # install.sh writes HG_POSTGRES_IMAGE into a new .env, so a new installation starts on the current major
+    image: ${HG_POSTGRES_IMAGE:-postgres:16-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD:?set POSTGRES_ROOT_PASSWORD in .env}
@@ -54,7 +56,7 @@ services:
     networks: [backend]
 
   redis:
-    image: redis:7-alpine
+    image: ${HG_REDIS_IMAGE:-redis:8-alpine}      # nothing durable lives in it: the current major, always
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "${HG_REDIS_MAXMEMORY:-512mb}",
               "--maxmemory-policy", "noeviction"]
