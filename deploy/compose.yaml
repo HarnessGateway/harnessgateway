@@ -1,6 +1,6 @@
 # HarnessGateway self-hosted on one host (SPEC §6, §15): `install.sh` sets it up; by hand:
 #
-#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:3.0.1 keygen >> .env
+#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:3.0.2 keygen >> .env
 #   docker compose up -d --wait
 #   docker compose exec api harnessgateway init --admin-email you@example.com
 #                           # prints, once, the first admin's invitation link and an admin key for automation
@@ -12,7 +12,7 @@
 name: harnessgateway
 
 x-platform: &platform
-  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:3.0.1}
+  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:3.0.2}
   restart: unless-stopped
 
 x-env: &env
@@ -30,8 +30,8 @@ x-env: &env
   HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
   HG_UPSTREAM_PROXY: ${HG_UPSTREAM_PROXY:-}
   HG_CA_FILE: ${HG_CA_FILE:-}
-  HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:3.0.1}
-  HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:3.0.1}
+  HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:3.0.2}
+  HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:3.0.2}
   HG_EXTENSIONS: ${HG_EXTENSIONS:-}
   HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
   AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
