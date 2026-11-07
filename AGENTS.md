@@ -115,7 +115,7 @@ then `harnessgateway init` for the organization and admin key, then `harnessgate
 ## Releasing
 
 `CHANGELOG.md`'s top entry is the version. `scripts/version-check` holds `pyproject.toml`, `harnessgateway/__init__.py`,
-`deploy/compose.yaml`, `deploy/install.sh`, `docs/operations.md` and both Dockerfiles to it. A push to `main` whose
+`deploy/compose.yaml`, `deploy/install.sh`, `deploy/.env.example`, `docs/operations.md` and both Dockerfiles to it. A push to `main` whose
 version has no tag builds both images for amd64 and arm64, pushes them to GHCR, tags `v<version>` and publishes the
 entry as the release. Both images are versioned together with the platform; a package revision bumps the package's
 own version in its manifest.
