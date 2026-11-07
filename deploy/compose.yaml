@@ -46,6 +46,9 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD:?set POSTGRES_ROOT_PASSWORD in .env}
       HG_DB_PASSWORD: ${HG_DB_PASSWORD:?set HG_DB_PASSWORD in .env}
+      # the data directory, the same on every major: 18+ images otherwise default to a per-major directory and refuse
+      # to start with a volume at this path, while an existing installation's data already lives here
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres:/var/lib/postgresql/data
       - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-harnessgateway.sh:ro
