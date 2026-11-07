@@ -42,8 +42,11 @@ jobs:
           sudo mkdir -p /var/lib/harnessgateway/boxes
           docker compose up -d --wait
           docker compose exec -T api harnessgateway init --admin-email ci@example.test | sed -n '/^{/,$p' > init.json
-          echo "HG_TEST_KEY=$(python3 -c "import json; print(json.load(open('init.json'))['admin_key'])")" >> "$GITHUB_ENV"
-          echo "HG_TEST_OPERATOR_KEY=$(grep '^HG_OPERATOR_KEY=' .env | cut -d= -f2-)" >> "$GITHUB_ENV"
+          key=$(python3 -c "import json; print(json.load(open('init.json'))['admin_key'])")
+          operator=$(grep '^HG_OPERATOR_KEY=' .env | cut -d= -f2-)
+          echo "::add-mask::$key"; echo "::add-mask::$operator"       # the step logs echo job env: never the keys
+          echo "HG_TEST_KEY=$key" >> "$GITHUB_ENV"
+          echo "HG_TEST_OPERATOR_KEY=$operator" >> "$GITHUB_ENV"
       - name: the integration suite
         run: .venv/bin/pytest -q tests/integration
         env:
