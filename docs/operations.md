@@ -86,8 +86,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_API_URL` | api, worker, door | `http://localhost:8000` | the api as boxes and doors reach it (its host is always allowed through the door) |
 | `HG_DOOR` | worker, door | `hg-door:3128` | `host:port` of the door as boxes reach it; the door listens on that port |
 | `HG_HOST`, `HG_PORT` | api | `0.0.0.0`, `8000` | the api's listen address |
-| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.0.0` | the image every box runs (installs are keyed by it) |
-| `HG_PLATFORM_IMAGE` | worker | `ghcr.io/harnessgateway/harnessgateway:3.0.0` | reported under versions |
+| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.0.1` | the image every box runs (installs are keyed by it) |
+| `HG_PLATFORM_IMAGE` | worker | `ghcr.io/harnessgateway/harnessgateway:3.0.1` | reported under versions |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` | the Docker runtime for boxes; `runc` runs them unisolated (logged) |
 | `HG_LAUNCHER` | worker | `docker` | the launcher; an extension may register another |
 | `HG_DOOR_CONTAINER` | worker | `hg-door` | the door container the Docker launcher joins to each box's network |

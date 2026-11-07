@@ -3,9 +3,34 @@
 The release record. A release is the top entry: when `main` carries a version here that has no tag yet, the release
 workflow builds and pushes the images, tags `v<version>` and publishes the entry as the release notes. To release:
 add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init__.py`, `deploy/compose.yaml`,
-`deploy/install.sh` and `docs/operations.md` (`scripts/version-check` holds you to it), merge to `main`.
+`deploy/install.sh`, `deploy/.env.example` and `docs/operations.md` (`scripts/version-check` holds you to it), merge to `main`.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
+
+## [3.0.1]
+
+The first refresh after the rebuild: both images on the current Wolfi base, the current OpenAI SDK, the current
+actions. A base-image refresh only reaches a deployment as a version, so this is one.
+
+### Changed
+
+- Both images are built on the current `wolfi-base` digest, which Dependabot now proposes weekly.
+- `openai` 3.45.0 in the platform and the sandbox alike (hgkit and the platform validate output with the same SDK;
+  `scripts/version-check` holds the two pins together); `redis-py` allowed up to 8.
+- The workflows run the current major of each action: `checkout` v7, `build-push-action` v7,
+  `attest-build-provenance` v4, `setup-qemu-action` and `setup-buildx-action` v4.
+
+### Fixed
+
+- Blocking reads on Redis (the worker's queue, a turn's live stream) outlive the 5 s socket timeout redis-py 6 and
+  later apply by default, which cut every idle poll of the queue and any stream quiet for 5 s.
+- The egress integration test reads every door record of a turn: the door sends records in batches, so a turn's
+  connections may span several.
+- The chat retries a fork on the 409 the api sends while the earlier turn's state is still saving ("not saved yet");
+  it matched a message the api never sends, so a switch of harness right after a turn failed instead of waiting.
+- The integration workflow masks the ephemeral CI stack's admin and operator keys, which GitHub otherwise echoes in
+  every step's log.
+- Dependabot scans the composite setup action, whose `setup-python` it had not seen.
 
 ## [3.0.0]
 

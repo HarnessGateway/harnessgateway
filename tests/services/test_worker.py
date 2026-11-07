@@ -59,6 +59,12 @@ async def box_row(plat, box_id):
         return await tx.get("SELECT * FROM boxes WHERE id = %s", box_id)
 
 
+async def test_an_idle_blocking_read_outlives_the_clients_default_timeout(plat):
+    """redis-py 6 and later bound every read with a 5 s socket timeout unless told otherwise; the worker's consume
+    blocks 5 s and a turn's follow 15 s, so the client is told otherwise."""
+    assert await plat.moments.consume("idle", block_ms=5500) == []
+
+
 async def test_install_and_launch_jobs_start_boxes_with_the_organizations_limits(plat, org, shell):
     launcher = FakeLauncher()
     worker = Worker(plat, launcher)
