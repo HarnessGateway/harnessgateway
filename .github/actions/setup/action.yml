@@ -3,7 +3,7 @@ description: uv with Python 3.14, and the project synced into .venv exactly as u
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@v10
+    - uses: astral-sh/setup-uv@v10.3.3
       with:
         python-version: "3.14"
         enable-cache: true
