@@ -309,7 +309,9 @@ class Runner:
         info = self.info = self.api.call("GET", "")
         trust = self.box.trust(info["ca_pem"])
         self.api.ca = str(self.box.bundle)
-        proxy = {v: f"http://{self.api.door}" for v in PROXY_VARS} if self.api.door else {}
+        # the door authenticates every connection by box token: processes in the box carry it as the proxy credential
+        door = f"http://box:{self.api.token}@{self.api.door}"
+        proxy = {v: door for v in PROXY_VARS} if self.api.door else {}
         self.env_base = {**trust, **proxy, "NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1",
                          "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "LANG": "C.UTF-8",
                          "PYTHONPATH": os.environ.get("PYTHONPATH", ""), "PYTHONDONTWRITEBYTECODE": "1",

@@ -97,6 +97,8 @@ class Boxes:
         self.s = settings
         self.pepper = settings.pepper
         self.ca = DoorCA(settings.secret_key)
+        # what a box trusts beyond its image's CAs: the door's, and the operator's when the network re-signs TLS
+        self.trust_pem = self.ca.cert_pem.decode() + (Path(settings.ca_file).read_text() if settings.ca_file else "")
 
     # ── creating boxes (the api, when a turn is queued) ─────────────────────────────────────────────────────────────
     async def ensure(self, tx: Tx, org_id: str, session: dict[str, Any], limits_doc: dict[str, Any]) -> After:
@@ -213,7 +215,7 @@ class Boxes:
                 return {"id": box["id"], "kind": "install", "org_id": box["org_id"], "package": {"digest": install["digest"],
                         "key": archive_key(install["digest"]), "manifest": manifest.model_dump()},
                         "install": {"id": install["id"], "timeout_s": manifest.install.timeout_s},
-                        "ca_pem": self.ca.cert_pem.decode(), "tmp_mb": limits.tmp_mb}
+                        "ca_pem": self.trust_pem, "tmp_mb": limits.tmp_mb}
             session = await tx.get("SELECT * FROM sessions WHERE id = %s", box["session_id"])
             current = await self.installs.current(tx, box["org_id"], session["digest"])
             org = await tx.get("SELECT limits FROM orgs WHERE id = %s", box["org_id"])
@@ -230,7 +232,7 @@ class Boxes:
                 "install": {"id": current["id"], "key": current["object_key"]},
                 "snapshot": {"key": snapshot["manifest_key"]} if snapshot else None,
                 "roots": included_roots(manifest.persist), "standby_s": limits.standby_s, "tmp_mb": limits.tmp_mb,
-                "ca_pem": self.ca.cert_pem.decode()}
+                "ca_pem": self.trust_pem}
 
     async def ready(self, box: dict[str, Any]) -> None:
         async with self.db.platform() as tx:

@@ -71,10 +71,11 @@ class Platform:
         self.cache: dict[str, Rules] = {}
         self.pending: dict[str, list[dict[str, Any]]] = {}
 
-    async def rules(self, token: str) -> Rules | None:
-        """The box's current rules; None for a token the api does not know."""
+    async def rules(self, token: str, fresh: bool = False) -> Rules | None:
+        """The box's current rules; None for a token the api does not know. `fresh` skips the cache: a refusal is
+        checked against the api before it stands, since a turn may have started since the policy was fetched."""
         hit = self.cache.get(token)
-        if hit and time.monotonic() - hit.at < POLICY_TTL_S:
+        if hit and not fresh and time.monotonic() - hit.at < POLICY_TTL_S:
             return hit
         r = await self.http.post("/internal/door/policy", json={"token": token})
         if r.status_code == 404:
@@ -261,6 +262,8 @@ class Door:
                 return
             name, _, port_s = target.rpartition(":")
             host, port = name.strip("[]").lower().rstrip("."), int(port_s or 443)
+            if not rules.policy.permits(host, port):
+                rules = await self.platform.rules(token, fresh=True) or rules
             if not rules.policy.permits(host, port):
                 writer.write(FORBIDDEN)
                 verdict = "denied"

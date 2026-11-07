@@ -41,7 +41,7 @@ def fork(api: httpx.Client, body: dict) -> dict:
 def test_a_turn_runs_in_a_box_and_the_session_continues(api):
     r1 = turn(api, {"input": "echo one > a.txt; id -u; pwd"})
     assert r1["status"] == "completed" and text(r1) == "10001\n/workspace\n"
-    assert r1["output"][0]["type"] == "shell_call" and r1["metadata"]["session_id"].startswith("sess_")
+    assert r1["output"][0]["type"] == "shell_call" and r1["metadata"]["session_id"].startswith("cntr_")
     r2 = turn(api, {"input": "cat a.txt; echo $HG_TURN; jq -c '[.[] | [.id, .status, .input[0].content[0].text, "
                             "(.output[] | select(.type == \"message\") | .content[0].text)]]' $HG_HISTORY",
                     "previous_response_id": r1["id"]})

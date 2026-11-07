@@ -185,6 +185,22 @@ async def test_a_bound_host_is_intercepted_and_the_placeholder_replaced_in_heade
     assert rec["intercepted"] and rec["method"] == "POST" and rec["path"].startswith("/v1/x") and rec["status"] == 200
 
 
+async def test_a_refusal_is_checked_against_a_fresh_policy_first(world):
+    """A box's policy is cached; when a host is not in it, the door asks the api again before refusing, so the first
+    connection of a turn that began after the fetch is not refused on the standby policy."""
+    api = world["api"]
+    reply, _, w = await connect(world["door_port"], "late.example.com:443")
+    assert reply.startswith(b"HTTP/1.1 403")
+    w.close()
+    asked_before = len(api.asked)
+    api.policy = {**api.policy, "version": 2, "allow": [*api.policy["allow"], f"127.0.0.1:{world['plain_port']}"],
+                  "platform": [*api.policy["platform"], f"127.0.0.1:{world['plain_port']}"]}
+    world["door"].platform.cache[TOKEN].policy = world["door"].platform.cache[TOKEN].policy.__class__.of([])   # a stale cache
+    reply, _, w = await connect(world["door_port"], f"127.0.0.1:{world['plain_port']}")
+    assert reply.startswith(b"HTTP/1.1 200") and len(api.asked) == asked_before + 1
+    w.close()
+
+
 def test_rewrite_keeps_upgrades_and_drops_hop_headers():
     head = b"GET / HTTP/1.1\r\nHost: h\r\nConnection: keep-alive\r\nX-Key: hgs_A\r\n\r\n"
     out = rewrite(head, [(b"hgs_A", b"secret")])
