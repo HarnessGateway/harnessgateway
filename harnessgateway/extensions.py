@@ -1,5 +1,6 @@
 """The extension seam (SPEC §13): how more is built on the core (organizations beyond the first, credentials of a
-deployment's own, admission rules, a pipeline for usage and observability records) without forking it.
+deployment's own, admission rules, a pipeline for usage and observability records, a launcher of its own) without
+forking it.
 
 `HG_EXTENSIONS` names classes as `module:Class`; each is instantiated once and implements any subset of the hooks
 below. Every default does nothing, which is exactly the self-hosted behaviour. `observe`, `meter` and `turn_ended`
@@ -14,7 +15,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, Request
 
 if TYPE_CHECKING:
+    from .config import Settings
     from .domain.access import Principal
+    from .ports.launch import Launcher
     from .services.platform import Platform
 
 log = logging.getLogger("harnessgateway.extensions")
@@ -32,7 +35,7 @@ class Admission:
 
 @dataclass(frozen=True)
 class TraceRecord:
-    """One observability record (SPEC §11): kind is harness, gateway or door."""
+    """One observability record (SPEC §7.1 traces): kind is harness, door or provider."""
     id: str
     org_id: str
     response_id: str
@@ -76,13 +79,17 @@ class Extension:
     migrations: str | None = None            # an importable package of NNNN_*.sql files, applied after the core's
 
     def bind(self, platform: Platform) -> None:
-        """Called once with the core's services (orgs, keys, harnesses, usage, traces, ...)."""
+        """Called once with the core's services."""
 
     def router(self) -> APIRouter | None:
         return None
 
+    def launcher(self, settings: Settings) -> Launcher | None:
+        """A substrate of this deployment's own; None keeps the configured one."""
+        return None
+
     async def authenticate(self, request: Request) -> Principal | None:
-        """A principal for this request, or None to let the next extension (and then the API keys) try."""
+        """A principal for this request, or None to let the next extension (and then keys and sign-ins) try."""
         return None
 
     async def admit(self, principal: Principal, turn: Admission) -> None:
@@ -126,6 +133,12 @@ class Extensions:
 
     def routers(self) -> list[APIRouter]:
         return [r for e in self.loaded if (r := e.router()) is not None]
+
+    def launcher(self, settings: Settings) -> Launcher | None:
+        for e in self.loaded:
+            if (launcher := e.launcher(settings)) is not None:
+                return launcher
+        return None
 
     async def authenticate(self, request: Request) -> Principal | None:
         for e in self.loaded:

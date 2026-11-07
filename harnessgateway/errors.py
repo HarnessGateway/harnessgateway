@@ -1,4 +1,4 @@
-"""Errors a caller sees, in OpenAI's shape: {"error": {"type", "code", "message", "param"}}."""
+"""Errors a caller sees, in OpenAI's shape: {"error": {"type", "code", "message", "param"}} (SPEC §4.3)."""
 from __future__ import annotations
 
 
@@ -39,7 +39,7 @@ class TooLarge(ApiError):
 
 
 class Locked(ApiError):
-    """An account locked after repeated failed sign-ins (SPEC §9.3)."""
+    """An account locked after repeated failed sign-ins (SPEC §10.1)."""
     status, type = 423, "authentication_error"
 
 

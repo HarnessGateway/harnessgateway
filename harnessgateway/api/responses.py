@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from ..domain import contract
+from .. import contract
 from ..domain.access import Principal
 from ..services.pages import check_limit, page
 from .http import platform, principal, read_json

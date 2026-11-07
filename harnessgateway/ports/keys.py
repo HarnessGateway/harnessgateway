@@ -1,4 +1,4 @@
-"""The key wrapper port: wraps each organization's data key under a master key it never reveals (SPEC §8.1)."""
+"""The key wrapper port: wraps each organization's data key under a master key it never reveals (SPEC §8.3)."""
 from __future__ import annotations
 
 from typing import Protocol

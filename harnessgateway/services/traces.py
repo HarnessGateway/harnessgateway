@@ -1,5 +1,5 @@
-"""Observability (SPEC §11): per turn, the harness exchange, each gateway exchange and the door's connections, stored
-as objects under the turn (so their storage is metered), indexed, and handed to extensions as they are written."""
+"""Observability (SPEC §7.1 traces): per turn, the harness record, the door's connections and each provider exchange,
+stored as objects under the turn (so their storage is metered), indexed, and handed to extensions as they are written."""
 from __future__ import annotations
 
 import json
@@ -7,14 +7,14 @@ import time
 from typing import Any
 
 from .. import ids
-from ..db import Database
 from ..domain.access import Principal
 from ..errors import NotFound
 from ..extensions import Extensions, TraceRecord
-from .objects import Objects, org_key
-from .turns import own
+from ..store.db import Database
+from ..store.objects import Objects, org_key
+from .pages import own
 
-KINDS = ("harness", "gateway", "door")
+KINDS = ("harness", "door", "provider")
 LOG_MAX = 4 * 1024 * 1024
 
 

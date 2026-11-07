@@ -1,0 +1,60 @@
+name: integration
+# The whole stack from deploy/compose.yaml on one runner, with both images built from this commit, and
+# tests/integration against it: turns in boxes, continuation, fork, stream, cancel, egress allow and deny, the
+# secrets invariant, container files, the operator's view. Boxes run with runc here: GitHub's runners have no gVisor.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: build the images this commit describes
+        run: |
+          version=$(grep -m1 -oP '^version = "\K[^"]+' pyproject.toml)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          docker build -t ghcr.io/harnessgateway/harnessgateway:$version .
+          docker build -t ghcr.io/harnessgateway/sandbox:$version -f sandbox/Dockerfile .
+      - name: start the stack
+        run: |
+          cd deploy
+          password() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32 || true; }
+          sed -e '/^HG_SECRET_KEY=$/d' -e '/^HG_OPERATOR_KEY=$/d' -e '/^HG_DOOR_KEY=$/d' \
+              -e "s/^POSTGRES_ROOT_PASSWORD=$/POSTGRES_ROOT_PASSWORD=$(password)/" -e "s/^HG_DB_PASSWORD=$/HG_DB_PASSWORD=$(password)/" \
+              -e "s|^HG_ADMIN_EMAIL=.*|HG_ADMIN_EMAIL=ci@example.test|" -e "s|^HG_SANDBOX_RUNTIME=.*|HG_SANDBOX_RUNTIME=runc|" \
+              .env.example > .env
+          docker run --rm ghcr.io/harnessgateway/harnessgateway:$VERSION keygen >> .env
+          sudo mkdir -p /var/lib/harnessgateway/boxes
+          docker compose up -d --wait
+          docker compose exec -T api harnessgateway init --admin-email ci@example.test | sed -n '/^{/,$p' > init.json
+          echo "HG_TEST_KEY=$(python3 -c "import json; print(json.load(open('init.json'))['admin_key'])")" >> "$GITHUB_ENV"
+          echo "HG_TEST_OPERATOR_KEY=$(grep '^HG_OPERATOR_KEY=' .env | cut -d= -f2-)" >> "$GITHUB_ENV"
+      - name: the integration suite
+        run: .venv/bin/pytest -q tests/integration
+        env:
+          HG_TEST_STACK: "1"
+          HG_TEST_URL: http://127.0.0.1:8000
+      - name: logs on failure
+        if: failure()
+        run: |
+          cd deploy && docker compose ps
+          docker compose logs --tail 200 api worker door
+          docker ps -a --filter label=harnessgateway.box
+      - name: stop the stack
+        if: always()
+        run: cd deploy && docker compose down -v --remove-orphans || true

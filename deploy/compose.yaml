@@ -1,22 +1,41 @@
-# HarnessGateway self-hosted on one host (SPEC §10.4): `install.sh` sets it up; by hand:
+# HarnessGateway self-hosted on one host (SPEC §6, §15): `install.sh` sets it up; by hand:
 #
-#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:2.4.0 keygen >> .env
-#   docker compose up -d
+#   cp .env.example .env    # then fill it: docker run --rm ghcr.io/harnessgateway/harnessgateway:3.0.0 keygen >> .env
 #   docker compose up -d --wait
-#   docker compose exec harnessgateway harnessgateway init --admin-email you@example.com
-#                                     # prints, once, the first admin's invitation link and an admin key for automation
+#   docker compose exec api harnessgateway init --admin-email you@example.com
+#                           # prints, once, the first admin's invitation link and an admin key for automation
 #
-# Services: postgres (all state), harnessgateway (the API and the provider gateway on one port, objects on a volume),
-# node (runs each session's sandbox under gVisor) and console (the web console on :8800; it holds no key: people sign
-# in with their platform account). The node drives the host's Docker: sandboxes are sibling
-# containers that bind-mount their session directories from the host, so the node directory is mounted at the SAME
-# path inside and out. Each sandbox's egress door joins `hg-uplink`, where it reaches the gateway and the internet;
-# postgres stays on `backend`, which no door joins.
+# Services: postgres (records), redis (moments and the job queue), api, worker (launches boxes on this host's Docker),
+# door (every box's only way out, named hg-door: the worker joins it to each box's network) and console (:8800).
+# Boxes are sibling containers started by the worker; their directories live under HG_BOX_DIR on the host, mounted
+# into the worker at the same path. Objects go to a volume unless HG_BLOB_URL names an S3-compatible store.
 name: harnessgateway
 
 x-platform: &platform
-  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:2.4.0}
+  image: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:3.0.0}
   restart: unless-stopped
+
+x-env: &env
+  HG_DATABASE_URL: postgresql://harnessgateway:${HG_DB_PASSWORD}@postgres:5432/harnessgateway
+  HG_REDIS_URL: redis://redis:6379/0
+  HG_BLOB_URL: ${HG_BLOB_URL:-file:///var/lib/harnessgateway-objects}
+  HG_SECRET_KEY: ${HG_SECRET_KEY:?set HG_SECRET_KEY in .env (harnessgateway keygen)}
+  HG_OPERATOR_KEY: ${HG_OPERATOR_KEY:-}
+  HG_DOOR_KEY: ${HG_DOOR_KEY:?set HG_DOOR_KEY in .env (harnessgateway keygen)}
+  HG_API_URL: http://api:8000
+  HG_DOOR: hg-door:3128
+  HG_CONSOLE_URL: ${HG_CONSOLE_URL:-http://localhost:8800}
+  HG_SMTP_URL: ${HG_SMTP_URL:-}
+  HG_MAIL_FROM: ${HG_MAIL_FROM:-}
+  HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
+  HG_UPSTREAM_PROXY: ${HG_UPSTREAM_PROXY:-}
+  HG_CA_FILE: ${HG_CA_FILE:-}
+  HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:3.0.0}
+  HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:3.0.0}
+  HG_EXTENSIONS: ${HG_EXTENSIONS:-}
+  HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
 
 services:
   postgres:
@@ -34,75 +53,81 @@ services:
       retries: 30
     networks: [backend]
 
-  harnessgateway:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "${HG_REDIS_MAXMEMORY:-512mb}",
+              "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 30
+    networks: [backend]
+
+  api:
     <<: *platform
-    command: ["serve", "--role", "api,gateway"]
-    environment:
-      HG_DATABASE_URL: postgresql://harnessgateway:${HG_DB_PASSWORD}@postgres:5432/harnessgateway
-      HG_SECRET_KEY: ${HG_SECRET_KEY:?set HG_SECRET_KEY in .env (harnessgateway keygen)}
-      HG_OPERATOR_KEY: ${HG_OPERATOR_KEY:-}
-      HG_NODE_JOIN_TOKEN: ${HG_NODE_JOIN_TOKEN:-}      # the default pool's shared token, registered at start
-      HG_BLOB_URL: ${HG_BLOB_URL:-file:///var/lib/harnessgateway-objects}
-      HG_API_URL: http://harnessgateway:8000
-      HG_CONSOLE_URL: ${HG_CONSOLE_URL:-http://localhost:8800}
-      HG_SMTP_URL: ${HG_SMTP_URL:-}
-      HG_MAIL_FROM: ${HG_MAIL_FROM:-}
-      HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
-      HG_EXTENSIONS: ${HG_EXTENSIONS:-}
-      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    command: ["api"]
+    environment: *env
     volumes:
       - objects:/var/lib/harnessgateway-objects
     ports:
       - "${HG_BIND:-127.0.0.1}:${HG_HTTP_PORT:-8000}:8000"
     depends_on:
       postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
       interval: 5s
       retries: 60
     networks: [backend, uplink]
 
-  node:
+  worker:
     <<: *platform
-    command: ["node"]
-    user: "0:0"
-    stop_grace_period: 2m       # saves under way finish before the node removes its boxes
+    command: ["worker"]
+    user: "0:0"                 # the Docker socket, and box directories handed to the sandbox user
     environment:
-      HG_NODE_JOIN_TOKEN: ${HG_NODE_JOIN_TOKEN:?set HG_NODE_JOIN_TOKEN in .env (harnessgateway keygen)}
-      HG_API_URL: http://harnessgateway:8000
-      HG_GATEWAY_URL: http://harnessgateway:8000/gateway
-      HG_UPLINK_NETWORK: hg-uplink
-      HG_NODE_DIR: ${HG_NODE_DIR:-/var/lib/harnessgateway}
-      HG_NODE_NAME: ${HG_NODE_NAME:-node-1}
-      HG_NODE_SLOTS: ${HG_NODE_SLOTS:-4}
-      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:-ghcr.io/harnessgateway/sandbox:2.4.0}
-      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:-ghcr.io/harnessgateway/harnessgateway:2.4.0}
+      <<: *env
+      HG_BOX_DIR: ${HG_BOX_DIR:-/var/lib/harnessgateway/boxes}
+      HG_SANDBOX_RUNTIME: ${HG_SANDBOX_RUNTIME:-runsc}
+      HG_DOOR_CONTAINER: hg-door
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - objects:/var/lib/harnessgateway-objects
+      - ${HG_BOX_DIR:-/var/lib/harnessgateway/boxes}:${HG_BOX_DIR:-/var/lib/harnessgateway/boxes}
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [backend]
+
+  door:
+    <<: *platform
+    container_name: hg-door
+    command: ["door"]
+    environment:
+      HG_SECRET_KEY: ${HG_SECRET_KEY}
+      HG_DOOR_KEY: ${HG_DOOR_KEY}
+      HG_API_URL: http://api:8000
+      HG_DOOR: hg-door:3128
       HG_UPSTREAM_PROXY: ${HG_UPSTREAM_PROXY:-}
       HG_CA_FILE: ${HG_CA_FILE:-}
       HG_ALLOW_PRIVATE_EGRESS: ${HG_ALLOW_PRIVATE_EGRESS:-0}
       HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${HG_NODE_DIR:-/var/lib/harnessgateway}:${HG_NODE_DIR:-/var/lib/harnessgateway}
     depends_on:
-      harnessgateway: {condition: service_healthy}
-    networks: [backend]
+      api: {condition: service_healthy}
+    networks: [uplink]
 
   console:
     <<: *platform
     entrypoint: ["python", "/opt/harnessgateway/console/server.py"]
     command: ["--host", "0.0.0.0", "--port", "8800"]
     environment:
-      HG_API: http://harnessgateway:8000
+      HG_API: http://api:8000
       HG_CONSOLE_DIR: /var/lib/harnessgateway-console    # drafts: packages being written in the console
     volumes:
       - console:/var/lib/harnessgateway-console
     ports:
       - "${HG_BIND:-127.0.0.1}:${HG_CONSOLE_PORT:-8800}:8800"
     depends_on:
-      harnessgateway: {condition: service_healthy}
+      api: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8800/login')"]
       interval: 5s
@@ -111,11 +136,8 @@ services:
 
 networks:
   backend:
-  uplink:                       # every sandbox's door joins it too, so it needs room
+  uplink:                       # the api and the door; every box's own network is joined by the door only
     name: hg-uplink
-    ipam:
-      config:
-        - subnet: ${HG_UPLINK_SUBNET:-172.30.0.0/16}
 
 volumes:
   postgres:

@@ -1,8 +1,8 @@
 """The HarnessGateway console: the organization's console (harnesses, the chat, keys, sessions, accounts) at `/` and
-the platform console (health, nodes, organizations, usage, configuration, audit) at `/ops`, both static pages on the
-platform's public API. This server holds no key: a person signs in with the platform's own accounts (SPEC §9.3), the
-sign-in token lives in an HttpOnly cookie, and every call is relayed with it as the bearer. The platform decides what
-each person may do.
+the platform console (health, boxes, organizations, usage, configuration, audit) at `/ops`, both static pages on the
+platform's public API. This server holds no key: a person signs in with the platform's own accounts or through the
+organization's identity provider (SPEC §10), the sign-in token lives in an HttpOnly cookie, and every call is relayed
+with it as the bearer. The platform decides what each person may do.
 
     python3 console/server.py [--api http://localhost:8000] [--host 127.0.0.1] [--port 8800] [--state DIR]
 
@@ -25,7 +25,7 @@ import tarfile
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
@@ -166,6 +166,8 @@ class Handler(chat.Handler):
                 self._console_static(path.removeprefix("/static/"))
             elif path in ("/", "/ops", "/login", "/setup"):
                 self._page(path)
+            elif path == "/sso/callback":
+                self._sso_callback(url.query)
             elif path.startswith("/chat/") or path == "/chat":
                 self._chat_ui(method, path)
             elif path.startswith("/api/"):
@@ -229,6 +231,13 @@ class Handler(chat.Handler):
         if path in ("/api/login", "/api/accept") and method == "POST":
             self._sign_in(path)
             return
+        if path == "/api/sso" and method == "GET":
+            r = self.platform.get("/v1/auth/sso")
+            self._reply(r.status_code, r.content, r.headers.get("content-type", "application/json"))
+            return
+        if path == "/api/sso/start" and method == "GET":
+            self._sso_start(query)
+            return
         http = self.bound()
         if http is None:
             self._json(401, {"error": "sign in"})
@@ -261,6 +270,49 @@ class Handler(chat.Handler):
         signed = r.json()
         token = signed.pop("token")
         self._json_h(200, signed, [self._cookie(SIGN_IN, token)])
+
+    def _console_url(self) -> str:
+        """This console as the browser reaches it: for the identity provider's way back."""
+        scheme = "https" if self.headers.get("X-Forwarded-Proto") == "https" else "http"
+        return f"{scheme}://{self.headers.get('X-Forwarded-Host') or self.headers.get('Host', 'localhost')}"
+
+    def _sso_start(self, query: str) -> None:
+        """Off to the identity provider: the platform builds the authorization URL and remembers where to return."""
+        nxt = (parse_qs(query).get("next") or ["/"])[0]
+        redirect = self._console_url() + (nxt if nxt.startswith("/") and not nxt.startswith("//") else "/")
+        r = self.platform.get("/v1/auth/sso/start", params={"redirect": redirect}, follow_redirects=False)
+        if r.status_code in (301, 302, 303, 307) and r.headers.get("location"):
+            self._reply(302, b"", "text/plain", {"Location": r.headers["location"]})
+        else:
+            message = self._error_of(r, "SSO is not available")
+            self._reply(302, b"", "text/plain", {"Location": "/login?error=" + quote(message)})
+
+    @staticmethod
+    def _error_of(r: httpx.Response, default: str) -> str:
+        try:
+            return str((r.json().get("error") or {}).get("message") or default)
+        except ValueError:
+            return default
+
+    def _sso_callback(self, query: str) -> None:
+        """Back from the identity provider: the code becomes a sign-in (the cookie) and the person lands where they
+        were going."""
+        q = parse_qs(query)
+        if "error" in q:
+            why = q.get("error_description", q["error"])[0]
+            self._reply(302, b"", "text/plain", {"Location": "/login?error=" + quote(why)})
+            return
+        agent = f"console {self.headers.get('User-Agent', '')[:120]}"
+        r = self.platform.post("/v1/auth/sso/exchange", headers={"User-Agent": agent},
+                               json={"code": (q.get("code") or [""])[0], "state": (q.get("state") or [""])[0]})
+        if r.status_code != 200:
+            message = self._error_of(r, "sign-in failed")
+            self._reply(302, b"", "text/plain", {"Location": "/login?error=" + quote(message)})
+            return
+        signed = r.json()
+        target = signed.get("redirect") or "/"
+        path = urlsplit(target).path or "/"
+        self._reply(302, b"", "text/plain", {"Location": path, "Set-Cookie": self._cookie(SIGN_IN, signed["token"])})
 
     # ── drafts: packages written in the console ──────────────────────────────────────────────────────────────────
     def _drafts(self, method: str, rest: str, http: Bound) -> None:

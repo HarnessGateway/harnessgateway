@@ -1,20 +1,21 @@
--- HarnessGateway schema (SPEC §15). Every tenant row carries its organization, and row-level security confines a
+-- HarnessGateway schema (SPEC §7.1). Every tenant row carries its organization, and row-level security confines a
 -- transaction to the organization it declared (`hg.org`) unless it declared the platform scope (`hg.scope`), which
--- scheduling, metering and authentication use. FORCE applies the policies to the table owner too: the application
+-- boxes, doors, metering and authentication use. FORCE applies the policies to the table owner too: the application
 -- role must be neither a superuser nor BYPASSRLS.
 
--- ── tenancy and identity (SPEC §9) ──────────────────────────────────────────────────────────────────────────────────
+-- ── tenancy and identity (SPEC §7.4, §10) ───────────────────────────────────────────────────────────────────────────
 CREATE TABLE orgs (
     id          text PRIMARY KEY,
     name        text NOT NULL UNIQUE,
     status      text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
-    capacity    jsonb NOT NULL DEFAULT '{}',
+    limits      jsonb NOT NULL DEFAULT '{}',
     egress      jsonb NOT NULL DEFAULT '[]',
     data_key    text NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- A person: the email is the login; the password is an scrypt hash, absent until the invitation is accepted.
+-- A person: the email is the login; the password is an scrypt hash, absent until the invitation is accepted or SSO
+-- provisioned the account.
 CREATE TABLE accounts (
     id             text PRIMARY KEY,
     email          text NOT NULL UNIQUE,
@@ -22,6 +23,7 @@ CREATE TABLE accounts (
     password_hash  text,
     status         text NOT NULL DEFAULT 'invited' CHECK (status IN ('invited', 'active', 'disabled')),
     platform_admin boolean NOT NULL DEFAULT false,
+    sso_subject    text,
     failures       integer NOT NULL DEFAULT 0,
     locked_until   timestamptz,
     created_at     timestamptz NOT NULL DEFAULT now(),
@@ -55,6 +57,23 @@ CREATE TABLE sign_ins (
     revoked_at    timestamptz
 );
 
+-- One identity provider per organization (SPEC §10.3); the client secret is sealed.
+CREATE TABLE identity_providers (
+    org_id          text PRIMARY KEY REFERENCES orgs (id) ON DELETE CASCADE,
+    name            text NOT NULL DEFAULT '',
+    issuer          text NOT NULL,
+    client_id       text NOT NULL,
+    sealed_secret   text NOT NULL,
+    domains         jsonb NOT NULL DEFAULT '[]',
+    auto_provision  boolean NOT NULL DEFAULT true,
+    default_role    text NOT NULL DEFAULT 'developer' CHECK (default_role IN ('admin', 'developer')),
+    role_claim      text NOT NULL DEFAULT '',
+    admin_values    jsonb NOT NULL DEFAULT '[]',
+    required        boolean NOT NULL DEFAULT false,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
 -- A key is what an application is built around: named after it, with a role, and run-only when it only runs.
 CREATE TABLE api_keys (
     id            text PRIMARY KEY,
@@ -83,7 +102,7 @@ CREATE TABLE audit (
 );
 CREATE INDEX audit_org_at ON audit (org_id, at DESC);
 
--- ── providers and harnesses (SPEC §5, §7) ───────────────────────────────────────────────────────────────────────────
+-- ── providers, packages, harnesses, installs (SPEC §5, §9.4, §9.6) ─────────────────────────────────────────────────
 CREATE TABLE providers (
     id          text PRIMARY KEY,
     org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
@@ -123,6 +142,21 @@ CREATE TABLE harnesses (
     UNIQUE (org_id, name)
 );
 
+-- The organization's own run of a package's `install`, once per package digest and sandbox image: its archive.
+CREATE TABLE installs (
+    id          text PRIMARY KEY,
+    org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    digest      text NOT NULL REFERENCES packages (digest),
+    image       text NOT NULL,
+    status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready', 'failed')),
+    object_key  text,
+    bytes       bigint NOT NULL DEFAULT 0,
+    log_tail    text NOT NULL DEFAULT '',
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (org_id, digest, image)
+);
+
 CREATE TABLE files (
     id          text PRIMARY KEY,
     org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
@@ -135,34 +169,9 @@ CREATE TABLE files (
     deleted_at  timestamptz
 );
 
--- ── nodes (SPEC §10) ────────────────────────────────────────────────────────────────────────────────────────────────
-CREATE TABLE node_tokens (
-    id          text PRIMARY KEY,
-    digest      text NOT NULL UNIQUE,
-    pool        text NOT NULL DEFAULT '',
-    label       text NOT NULL DEFAULT '',
-    uses_left   integer NOT NULL CHECK (uses_left >= 0),
-    expires_at  timestamptz,
-    created_at  timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE nodes (
-    id            text PRIMARY KEY,
-    name          text NOT NULL,
-    pool          text NOT NULL DEFAULT '',
-    digest        text NOT NULL UNIQUE,
-    slots         integer NOT NULL DEFAULT 0,
-    version       text NOT NULL DEFAULT '',
-    status        text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'draining')),
-    last_seen_at  timestamptz NOT NULL DEFAULT now(),
-    created_at    timestamptz NOT NULL DEFAULT now()
-);
-
--- ── sessions and turns (SPEC §4, §6) ────────────────────────────────────────────────────────────────────────────────
--- A session pins the package it started on; it records who created it (its first turn's actor: the key an
--- application holds, or a person) and the application's end user, and points at its last saved state, the node holding
--- its warm box, the turn running in it and the turn whose state is still being saved. A fork names the response it
--- continued from.
+-- ── sessions, turns, boxes, snapshots (SPEC §9) ─────────────────────────────────────────────────────────────────────
+-- A session pins the package it started on; it records who created it, the application's end user, and its current
+-- snapshot. A fork names the response it continued from.
 CREATE TABLE sessions (
     id               text PRIMARY KEY,
     org_id           text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
@@ -175,22 +184,16 @@ CREATE TABLE sessions (
     model            text NOT NULL DEFAULT '',
     store            boolean NOT NULL,
     status           text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
-    node_id          text,
-    running_turn_id  text,
-    saving_turn_id   text,
     turns            integer NOT NULL DEFAULT 0,
+    snapshot_id      text,
     snapshot_seq     integer NOT NULL DEFAULT 0,
-    snapshot_key     text,
-    files_key        text,
-    snapshot_bytes   bigint NOT NULL DEFAULT 0,
     forked_from      text,
     created_at       timestamptz NOT NULL DEFAULT now(),
     last_active_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX sessions_org ON sessions (org_id, created_at DESC);
-CREATE INDEX sessions_node ON sessions (node_id) WHERE node_id IS NOT NULL;
 
--- A turn is the response a caller reads and the job a node runs; it records its actor and the state saved after it.
+-- A turn is the response a caller reads and the job a box runs; it records its actor and the state saved after it.
 CREATE TABLE turns (
     id              text PRIMARY KEY,
     org_id          text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
@@ -208,7 +211,7 @@ CREATE TABLE turns (
     request_key     text NOT NULL,
     mcp             jsonb NOT NULL DEFAULT '[]',
     previous_id     text,
-    node_id         text,
+    box_id          text,
     cancel          text,
     hg_reason       text,
     hg_message      text,
@@ -218,28 +221,19 @@ CREATE TABLE turns (
     last_batch      integer NOT NULL DEFAULT -1,
     log_tail        text NOT NULL DEFAULT '',
     stderr_tail     text NOT NULL DEFAULT '',
-    snapshot_key    text,
-    files_key       text,
+    snapshot_id     text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     started_at      timestamptz,
     ended_at        timestamptz,
     exited_at       timestamptz,
     UNIQUE (session_id, seq)
 );
-CREATE INDEX turns_queued ON turns (created_at) WHERE status = 'queued';
+CREATE INDEX turns_queued ON turns (session_id, seq) WHERE status = 'queued';
 CREATE INDEX turns_running ON turns (org_id) WHERE status = 'in_progress';
 
+-- The durable event log: every non-delta event. Deltas live in the Redis stream while a turn is live.
 CREATE TABLE turn_events (
     turn_id  text NOT NULL REFERENCES turns (id) ON DELETE CASCADE,
-    seq      integer NOT NULL,
-    org_id   text NOT NULL,
-    data     jsonb NOT NULL,
-    PRIMARY KEY (turn_id, seq)
-);
-
--- Deltas: delivered while a turn runs, purged soon after (the items they build carry the whole content).
-CREATE UNLOGGED TABLE live_events (
-    turn_id  text NOT NULL,
     seq      integer NOT NULL,
     org_id   text NOT NULL,
     data     jsonb NOT NULL,
@@ -253,18 +247,60 @@ CREATE TABLE turn_bindings (
     sealed   text NOT NULL
 );
 
-CREATE TABLE turn_tokens (
-    digest       text PRIMARY KEY,
-    door_digest  text NOT NULL,
-    turn_id      text NOT NULL REFERENCES turns (id) ON DELETE CASCADE,
-    org_id       text NOT NULL,
-    provider_id  text NOT NULL,
-    node_id      text NOT NULL,
-    capture      text NOT NULL,
-    expires_at   timestamptz,
-    revoked_at   timestamptz
+-- A box: one sandbox container, for one session (consecutive turns) or one install. One live box per session.
+CREATE TABLE boxes (
+    id              text PRIMARY KEY,
+    org_id          text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    kind            text NOT NULL CHECK (kind IN ('session', 'install')),
+    session_id      text REFERENCES sessions (id) ON DELETE CASCADE,
+    install_id      text REFERENCES installs (id) ON DELETE CASCADE,
+    token_digest    text UNIQUE,
+    status          text NOT NULL DEFAULT 'starting' CHECK (status IN ('starting', 'standby', 'running', 'gone')),
+    turn_id         text,
+    policy_version  integer NOT NULL DEFAULT 0,
+    launcher_ref    text,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    launched_at     timestamptz,
+    ready_at        timestamptz,
+    idle_since      timestamptz,
+    last_seen_at    timestamptz NOT NULL DEFAULT now(),
+    expires_at      timestamptz NOT NULL DEFAULT now() + interval '10 minutes',
+    gone_at         timestamptz,
+    gone_reason     text NOT NULL DEFAULT '',
+    CHECK ((kind = 'session') = (session_id IS NOT NULL)),
+    CHECK ((kind = 'install') = (install_id IS NOT NULL))
 );
+CREATE UNIQUE INDEX boxes_live_session ON boxes (session_id) WHERE status <> 'gone' AND session_id IS NOT NULL;
+CREATE UNIQUE INDEX boxes_live_install ON boxes (install_id) WHERE status <> 'gone' AND install_id IS NOT NULL;
+CREATE INDEX boxes_live ON boxes (org_id) WHERE status <> 'gone';
+CREATE INDEX boxes_expiry ON boxes (expires_at) WHERE status <> 'gone';
 
+-- A snapshot: the manifest of a session's state after a turn (SPEC §9.5). Every one is a checkpoint.
+CREATE TABLE snapshots (
+    id            text PRIMARY KEY,
+    org_id        text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    session_id    text NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+    turn_id       text,
+    manifest_key  text NOT NULL,
+    bytes         bigint NOT NULL,
+    files         integer NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX snapshots_session ON snapshots (session_id, created_at);
+
+-- Content, once per organization, with how many snapshots name it.
+CREATE TABLE blobs (
+    org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    hash        text NOT NULL,
+    bytes       bigint NOT NULL,
+    refs        integer NOT NULL DEFAULT 0 CHECK (refs >= 0),
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, hash)
+);
+CREATE INDEX blobs_unreferenced ON blobs (updated_at) WHERE refs = 0;
+
+-- Files staged through the Containers API, applied to the workspace before the session's next turn.
 CREATE TABLE container_ops (
     id          text PRIMARY KEY,
     org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
@@ -287,8 +323,8 @@ CREATE TABLE idempotency (
     PRIMARY KEY (org_id, key)
 );
 
--- ── objects, metering and observability (SPEC §11, §12) ─────────────────────────────────────────────────────────────
--- Every stored object and its size: what storage metering sums.
+-- ── objects, metering and observability (SPEC §7.3, §12) ───────────────────────────────────────────────────────────
+-- Every stored non-blob object and its size: what storage metering sums beside the blobs.
 CREATE TABLE objects (
     key         text PRIMARY KEY,
     org_id      text,
@@ -323,7 +359,7 @@ CREATE TABLE traces (
     id           text PRIMARY KEY,
     org_id       text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
     response_id  text NOT NULL,
-    kind         text NOT NULL CHECK (kind IN ('harness', 'gateway', 'door')),
+    kind         text NOT NULL CHECK (kind IN ('harness', 'door', 'provider')),
     object_key   text NOT NULL,
     at           timestamptz NOT NULL DEFAULT now()
 );
@@ -334,9 +370,9 @@ DO $$
 DECLARE t text;
 BEGIN
     -- the organization's tables: its rows, or every row on the platform scope
-    FOREACH t IN ARRAY ARRAY['api_keys', 'providers', 'harnesses', 'files', 'sessions', 'turns', 'turn_events',
-                             'live_events', 'turn_bindings', 'container_ops', 'usage', 'storage_accruals', 'traces',
-                             'idempotency', 'memberships', 'audit'] LOOP
+    FOREACH t IN ARRAY ARRAY['api_keys', 'providers', 'harnesses', 'installs', 'files', 'sessions', 'turns', 'turn_events',
+                             'turn_bindings', 'boxes', 'snapshots', 'blobs', 'container_ops', 'usage', 'storage_accruals',
+                             'traces', 'idempotency', 'memberships', 'audit', 'identity_providers'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
         EXECUTE format($p$CREATE POLICY tenant ON %I USING (
@@ -356,7 +392,7 @@ BEGIN
             SELECT 1 FROM memberships m WHERE m.account_id = accounts.id AND m.org_id = current_setting('hg.org', true)))
         WITH CHECK (current_setting('hg.scope', true) = 'platform');
     -- the platform's own tables
-    FOREACH t IN ARRAY ARRAY['invitations', 'sign_ins', 'node_tokens', 'nodes', 'turn_tokens', 'objects', 'packages'] LOOP
+    FOREACH t IN ARRAY ARRAY['invitations', 'sign_ins', 'objects', 'packages'] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
         EXECUTE format($p$CREATE POLICY platform ON %I USING (current_setting('hg.scope', true) = 'platform')

@@ -1,0 +1,25 @@
+# What goes stale on its own: Python dependencies, the two images' pinned base digests, and the actions the
+# workflows run. One pull request a week per ecosystem; CI decides whether it merges.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directories: ["/", "/sandbox"]
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]

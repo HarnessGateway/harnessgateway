@@ -34,3 +34,12 @@ def test_a_deny_at_either_level_wins_and_a_harness_widens_the_org():
 
 def test_entries_are_normalized_and_deduplicated():
     assert entries(["Example.COM", "example.com:443", "!X.org"]) == ["!x.org", "example.com"]
+
+
+def test_platform_hosts_are_always_reachable_and_never_denied():
+    p = Policy.of(["!*"], platform=["api:8000", "s3.internal:443"])
+    assert p.permits("api", 8000) and p.permits("S3.internal", 443) and p.is_platform("api", 8000)
+    assert not p.permits("api", 8001) and not p.permits("example.com", 443)
+    assert p.platform_entries() == ["api:8000", "s3.internal:443"]
+    with pytest.raises(ValueError):
+        Policy.of(platform=["api"])

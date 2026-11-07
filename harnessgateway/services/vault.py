@@ -1,11 +1,11 @@
-"""Sealing and opening an organization's secrets (SPEC §8.1): provider keys, harness secret values, a turn's caller
+"""Sealing and opening an organization's secrets (SPEC §8.3): provider keys, harness secret values, a turn's caller
 credentials. Each is sealed under its organization's data key, bound to the record it belongs to."""
 from __future__ import annotations
 
 import asyncio
 
 from ..crypto import DataKeys, seal, unseal
-from ..db import Database
+from ..store.db import Database
 
 
 class Vault:

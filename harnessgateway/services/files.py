@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from .. import ids
-from ..db import Database
 from ..domain.access import Principal
 from ..errors import Invalid, NotFound, TooLarge
 from ..limits import FILE_UPLOAD_MAX
-from .objects import Objects, org_key
+from ..store.db import Database
+from ..store.objects import Objects, org_key
 from .pages import check_limit, page, ts
 
 

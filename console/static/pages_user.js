@@ -134,7 +134,8 @@ const harnesses = { title: "Harnesses", async render(el, params, me) {
   if (params[0]) return harness.render(el, params, me);
   const [doc, drafts] = await Promise.all([api("GET", "/v1/harnesses"), api("GET", "/drafts")]);
   const rows = doc.data;
-  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-package-builder" ? pill("built-in", "q") : ""}</div>` +
+  const installPill = r => !r.install ? pill("install queued", "warn") : r.install.status === "ready" ? "" : r.install.status === "failed" ? pill("install failed", "bad") : pill("installing", "warn");
+  const hcard = r => `<a class="hcard" href="#/harnesses/${encodeURIComponent(r.name)}"><div class="hh"><b>${esc(r.name)}</b>${r.name === "harness-package-builder" ? pill("built-in", "q") : ""}${installPill(r)}</div>` +
     `<div class="hv">${esc(r.version)}</div><div class="hd">${esc(r.description || "")}</div>` +
     `<div class="hf">${r.provider_apis.length ? r.provider_apis.map(a => pill(a, "b")).join(" ") : pill("no model", "q")}<span class="muted small" style="margin-left:auto">${esc([r.default_provider, r.default_model].filter(Boolean).join(" / "))}</span></div>` +
     `<div class="ha"><span class="btn2">Open</span></div></a>`;
@@ -186,8 +187,13 @@ const harness = { title: "Harness", async render(el, params, me) {
   const fitting = providers.filter(p => h.provider_apis.includes(p.api));
   const settings = Object.entries(h.settings), secrets = Object.entries(h.secrets), mcp = Object.entries(h.mcp || {});
   const tab = params[1] || "files";
+  const inst = h.install || { status: "pending", log_tail: "" };
+  const installNote = inst.status === "ready" ? "" : `<div class="note ${inst.status === "failed" ? "bad" : "warn"}">` +
+    (inst.status === "failed" ? `The package's <span class="mono">install</span> failed; turns on this harness fail until it succeeds. <button class="btn2" id="retry">Retry install</button>` :
+      "The package's <span class=\"mono\">install</span> is running in an install box; turns wait for it.") +
+    (inst.log_tail ? `<pre class="code" style="margin-top:8px;max-height:200px">${esc(inst.log_tail.slice(-4000))}</pre>` : "") + `</div>`;
   el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, h.description || "",
-    `<button class="btn2" id="edit">Edit</button><button class="btn2 danger" id="rm">Uninstall</button>`) +
+    `<button class="btn2" id="edit">Edit</button><button class="btn2 danger" id="rm">Uninstall</button>`) + installNote +
     `<div class="tabs">${[["files", "Files"], ["manifest", "Manifest"], ["config", "Settings & secrets"], ["defaults", "Defaults"]].map(([t, l]) => `<a href="#/harnesses/${encodeURIComponent(name)}/${t}"${t === tab ? ' class="on"' : ""}>${l}</a>`).join("")}</div>` +
     `<div id="tab"></div>`;
   const body = $("#tab", el);
@@ -236,6 +242,9 @@ const harness = { title: "Harness", async render(el, params, me) {
     $("#defaults", el)?.addEventListener("submit", async e => { e.preventDefault(); try { await api("PATCH", `/v1/harnesses/${name}`, Object.fromEntries(new FormData(e.target))); toast("Saved", "ok"); } catch (err) { fail(err); } });
   }
   $("#edit", el).addEventListener("click", () => editInstalled(name));
+  $("#retry", el)?.addEventListener("click", async () => {
+    try { await api("POST", `/v1/harnesses/${encodeURIComponent(name)}/install`); toast("Install queued", "ok"); rerender(); } catch (err) { fail(err); }
+  });
   $("#rm", el).addEventListener("click", async () => {
     if (await confirm("Uninstall", `Uninstall ${name}? Existing sessions keep running on their pinned package.`, "Uninstall")) {
       try { await api("DELETE", `/v1/harnesses/${name}`); location.hash = "#/harnesses"; } catch (err) { fail(err); }
@@ -302,7 +311,7 @@ const drafts = { title: "Draft", async render(el, params, me) {
 // ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const providers = { title: "Providers", async render(el, params, me) {
   const rows = await list("/v1/providers"), admin = me.role === "admin";
-  el.innerHTML = top("Providers", "The organization's model endpoints and their keys. A key is sealed here and swapped in at the gateway; a sandbox never sees it." + (admin ? "" : " An admin adds them."),
+  el.innerHTML = top("Providers", "The organization's model endpoints and their keys. A key is sealed here and swapped in at the door, on the provider's host only; a box never sees it." + (admin ? "" : " An admin adds them."),
     admin ? `<button class="btn" id="add">Add provider</button>` : "") +
     `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` }, { h: "API shape", cell: p => pill(p.api, "b") },
       { h: "Base URL", cell: p => `<span class="mono">${esc(p.base_url)}</span>` }, { h: "Updated", cell: p => when(p.updated_at) },
@@ -330,8 +339,8 @@ const egress = { title: "Egress", async render(el, params, me) {
   const harnessesRows = await list("/v1/harnesses"), admin = me.role === "admin";
   const draw = () => { $("#entries", el).innerHTML = table([
     { h: "Entry", cell: e => `<span class="mono">${esc(e)}</span>` }, { h: "", cell: e => e.startsWith("!") ? pill("deny", "bad") : pill("allow", "ok") },
-    ...(admin ? [{ h: "", cls: "acts", cell: e => `<button class="btn2 danger" data-rm="${esc(e)}">Remove</button>` }] : [])], entries, "Nothing allowed: sandboxes reach only their provider through the gateway."); };
-  el.innerHTML = top("Egress", "What every sandbox of this organization may reach, besides its provider. A harness adds its own entries; a deny entry wins." + (admin ? "" : " An admin changes the organization's entries.")) +
+    ...(admin ? [{ h: "", cls: "acts", cell: e => `<button class="btn2 danger" data-rm="${esc(e)}">Remove</button>` }] : [])], entries, "Nothing allowed: boxes reach only their provider and what their harness allows."); };
+  el.innerHTML = top("Egress", "What every box of this organization may reach through the door, besides its provider. A harness adds its own entries; a deny entry wins." + (admin ? "" : " An admin changes the organization's entries.")) +
     `<div class="grid two"><div class="card"><div class="ch"><h2>Organization entries</h2></div>${admin ? `<form class="row" id="add" style="margin-bottom:12px">${input("entry", "", 'placeholder="api.github.com · *.npmjs.org · !evil.example.com · host:8443" required')}<button class="btn">Add</button></form>` : ""}<div id="entries"></div></div>` +
     `<div><div class="card"><h2>Syntax</h2><div class="kv"><div><span class="mono">host</span></div><div>that host, port 443</div><div><span class="mono">*.domain</span></div><div>any subdomain, never the domain itself</div><div><span class="mono">host:8443</span></div><div>another port</div><div><span class="mono">!host</span></div><div>deny, even if a harness allows it</div><div><span class="mono">*</span></div><div>everything (deny entries still apply)</div></div></div>` +
     card("Added by harnesses", table([{ h: "Harness", cell: h => esc(h.name) }, { h: "Run egress", cell: h => h.egress.map(e => `<span class="mono">${esc(e)}</span>`).join(", ") || "—" }], harnessesRows.filter(h => h.egress.length), "No harness adds entries.")) + `</div></div>`;
@@ -391,7 +400,7 @@ export function usagePage(path, groups, lead) {
   } };
 }
 const usage = usagePage("/v1/usage", [["", "total"], ["day", "day"], ["created_by", "app (key) or person"], ["harness", "harness"], ["session", "session"], ["user", "end user"]],
-  "What this organization's sandboxes used: allocated CPU and memory over time, bytes through the door, storage held.");
+  "What this organization's boxes used: agent time (what a turn ran for), the CPU and memory behind it, bytes through the door, storage held.");
 
 // ── Accounts (admins) ─────────────────────────────────────────────────────────────────────────────────────────────
 const accounts = { title: "Accounts", async render(el, params, me) {
@@ -409,7 +418,7 @@ const accounts = { title: "Accounts", async render(el, params, me) {
   $("#add", el).addEventListener("click", () => modal({ title: "Invite an account", submit: "Invite", body:
     field("Email", input("email", "", 'type="email" required placeholder="dev@example.com"'), "their login") + field("Name", input("name", "")) +
     field("Role", select("role", [["developer", "developer — harnesses, chat, keys, sessions"], ["admin", "admin — everything in the organization"]])) +
-    (me.account.platform_admin ? field("Platform scope", select("platform_admin", [["", "no"], ["1", "yes — the platform console too"]]), "sees every organization, the nodes and the configuration") : ""),
+    (me.account.platform_admin ? field("Platform scope", select("platform_admin", [["", "no"], ["1", "yes — the platform console too"]]), "sees every organization, the boxes and the configuration") : ""),
     onSubmit: async d => {
       const a = await api("POST", "/v1/accounts", { email: d.email, name: d.name, role: d.role, platform_admin: !!d.platform_admin });
       then(() => invitation(a, `Invitation for ${a.email}`).then(rerender));

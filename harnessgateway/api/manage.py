@@ -1,5 +1,6 @@
-"""Management (SPEC §14.3): keys, providers, the organization's egress, harnesses, usage and traces. Each service checks
-the principal against the access table; providers and egress are the organization's, so their checks are here."""
+"""Management (SPEC §14.2): keys, providers, the organization's egress, harnesses and their installs, usage and
+traces. Each service checks the principal against the access table; providers and egress are the organization's, so
+their checks are here."""
 from __future__ import annotations
 
 import mimetypes
@@ -14,6 +15,13 @@ from ..errors import Invalid
 from .http import anyone, form_file, only, platform, principal, read_json
 
 router = APIRouter(prefix="/v1")
+
+
+def period(start: int | None, end: int | None) -> tuple[datetime, datetime]:
+    """A usage window: from the start of this month, to now, unless given as epoch seconds."""
+    now = datetime.now(UTC)
+    s = datetime.fromtimestamp(start, UTC) if start else now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return s, datetime.fromtimestamp(end, UTC) if end else now
 
 
 @router.get("/platform", dependencies=[Depends(anyone)])
@@ -123,6 +131,23 @@ async def get_harness(request: Request, name: str, p: Principal = Depends(princi
     return await platform(request).harnesses.get(p, name)
 
 
+@router.get("/harnesses/{name}/install")
+async def harness_install(request: Request, name: str, p: Principal = Depends(principal)) -> Any:
+    """The organization's run of the package's `install` on the current sandbox image."""
+    plat = platform(request)
+    harness = await plat.harnesses.get(p, name)
+    return await plat.installs.ensure(p.org_id, harness["digest"])
+
+
+@router.post("/harnesses/{name}/install")
+async def retry_install(request: Request, name: str, p: Principal = Depends(principal)) -> Any:
+    """A failed install run again."""
+    p.require("harnesses", "install")
+    plat = platform(request)
+    harness = await plat.harnesses.get(p, name)
+    return await plat.installs.retry(p.org_id, harness["digest"])
+
+
 @router.get("/harnesses/{name}/files")
 async def harness_files(request: Request, name: str, p: Principal = Depends(principal)) -> Any:
     p.require("harnesses", "configure")
@@ -164,10 +189,7 @@ async def uninstall_harness(request: Request, name: str, p: Principal = Depends(
 @router.get("/usage")
 async def usage(request: Request, start: int | None = None, end: int | None = None, group_by: str | None = None,
                 p: Principal = Depends(principal)) -> Any:
-    now = datetime.now(UTC)
-    s = datetime.fromtimestamp(start, UTC) if start else now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    e = datetime.fromtimestamp(end, UTC) if end else now
-    return await platform(request).usage.summary(p, s, e, group_by)
+    return await platform(request).usage.summary(p, *period(start, end), group_by)
 
 
 @router.get("/traces/{rid}")

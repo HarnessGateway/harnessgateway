@@ -1,7 +1,6 @@
-"""Postgres, the one system of record. Every unit of work runs in a transaction that first declares its scope: one
-organization (`tenant`) or the platform itself (`platform`); row-level security does the rest. Queries are plain SQL
-with parameters; rows come back as dicts. Postgres is not behind a port: it is the standard the core is written
-against, and the same code runs on a container, RDS, Cloud SQL, Azure or any other Postgres 16+."""
+"""Postgres, the one system of record (SPEC §7.1). Every unit of work runs in a transaction that first declares its
+scope: one organization (`tenant`) or the platform itself (`platform`); row-level security does the rest. Queries are
+plain SQL with parameters; rows come back as dicts."""
 from __future__ import annotations
 
 import json
@@ -51,9 +50,6 @@ class Tx:
         row = await self.one(sql, *args)
         return next(iter(row.values())) if row else None
 
-    async def notify(self, channel: str, payload: str) -> None:
-        await self._cx.execute("SELECT pg_notify(%s, %s)", (channel, payload))
-
 
 def _params(args: tuple[Any, ...]) -> tuple[Any, ...]:
     """Dicts are stored as jsonb; lists stay Postgres arrays (for = ANY(...)). Postgres text and jsonb hold no NUL, and
@@ -63,7 +59,7 @@ def _params(args: tuple[Any, ...]) -> tuple[Any, ...]:
 
 def _without_nul(value: Any) -> Any:
     if isinstance(value, str):
-        return value.replace("\0", "\ufffd")
+        return value.replace("\0", "�")
     if isinstance(value, dict):
         return {k: _without_nul(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -85,7 +81,7 @@ class Database:
 
     @asynccontextmanager
     async def tenant(self, org_id: str) -> AsyncIterator[Tx]:
-        """One organization's rows (SPEC §9.1)."""
+        """One organization's rows."""
         assert org_id.startswith("org_"), "a tenant transaction names an organization"
         async with self._pool.connection() as cx, cx.transaction():
             await cx.execute("SELECT set_config('hg.org', %s, true), set_config('hg.scope', 'tenant', true)", (org_id,))
@@ -96,16 +92,6 @@ class Database:
         async with self._pool.connection() as cx, cx.transaction():
             await cx.execute("SELECT set_config('hg.scope', 'platform', true), set_config('hg.org', '', true)")
             yield Tx(cx)
-
-    @asynccontextmanager
-    async def listen(self, channel: str) -> AsyncIterator[AsyncConnection]:
-        """A dedicated autocommit connection subscribed to a NOTIFY channel."""
-        cx = await AsyncConnection.connect(self.url, autocommit=True)
-        try:
-            await cx.execute(f'LISTEN "{channel}"')
-            yield cx
-        finally:
-            await cx.close()
 
     async def check_role(self) -> None:
         """Refuse to run as a role that bypasses row-level security."""

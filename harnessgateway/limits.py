@@ -1,8 +1,8 @@
-"""The platform's fixed bounds (SPEC §17). They bound what a caller may send and what a process holds in memory; none
+"""The platform's fixed bounds (SPEC §8.5). They bound what a caller may send and what a process holds in memory; none
 of them limits what a harness does."""
 from __future__ import annotations
 
-KB, MB = 1024, 1024 ** 2
+KB, MB, GB = 1024, 1024 ** 2, 1024 ** 3
 
 REQUEST_BODY_MAX = 32 * MB          # a Responses request, inline files included
 FILE_UPLOAD_MAX = 512 * MB          # one /v1/files or container file upload
@@ -12,11 +12,14 @@ PACKAGE_FILES_MAX = 5_000
 CONTROL_BODY_MAX = 1 * MB           # any other JSON body
 INPUT_FILES_MAX = 64                # file_id references per request
 EVENT_LINE_MAX = 64 * MB            # one stdout line from a package
-EVENT_BATCH_BYTES = 1 * MB          # the node sends stdout lines in batches of about this size
-NODE_EVENTS_BODY_MAX = EVENT_LINE_MAX + EVENT_BATCH_BYTES + 64 * KB
-NODE_BODY_MAX = 8 * MB              # any other node report
-CAPTURE_BODY_MAX = 4 * MB           # a captured request or response body, each side
+EVENT_BATCH_BYTES = 1 * MB          # the runner sends stdout lines in batches of about this size
+BOX_EVENTS_BODY_MAX = EVENT_LINE_MAX + EVENT_BATCH_BYTES + 64 * KB
+BOX_BODY_MAX = 8 * MB               # any other box report
+BLOB_MAX = 4 * GB                   # one content blob (a chunk is 4 MiB; a whole small file is one blob)
+MANIFEST_MAX = 64 * MB              # one snapshot manifest
+INSTALL_ARCHIVE_MAX = 4 * GB        # one install archive
 LOG_TAIL = 16 * KB                  # what a turn keeps of its log lines and stderr without full observability
+CAPTURE_BODY_MAX = 4 * MB           # a captured provider request or response body, each side
 SETTINGS_MAX = 64                   # settings, and secrets, per harness
 SETTING_VALUE_MAX = 16 * KB
 EGRESS_MAX = 256                    # an org's egress entries

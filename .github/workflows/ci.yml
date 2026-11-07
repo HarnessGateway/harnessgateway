@@ -4,24 +4,30 @@ on:
     branches: [main, next]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
+      - uses: ./.github/actions/setup
       - run: scripts/version-check
       - run: .venv/bin/ruff check .
       - run: .venv/bin/mypy
-      - run: .venv/bin/pytest -q tests/unit packages
+      - name: the console's scripts parse
+        run: for f in console/static/*.js console/chat/static/*.js; do node --input-type=module --check < "$f" || { echo "$f"; exit 1; }; done
+      - run: .venv/bin/pytest -q tests/unit tests/runner packages
       - name: no forbidden words
         run: '! grep -rIil "harness""router" --exclude-dir=.git --exclude-dir=.venv . | grep -v "^./AGENTS.md$"'
 
   services:
-    # the services on a real Postgres, and the console in a browser on a real API
+    # the services on a real Postgres and Redis, the API through the ASGI app, and the console in a browser
     runs-on: ubuntu-latest
     needs: checks
     services:
@@ -31,16 +37,22 @@ jobs:
           POSTGRES_PASSWORD: test
         ports: ["5432:5432"]
         options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m venv .venv && .venv/bin/pip install -q -e ".[dev]"
+      - uses: ./.github/actions/setup
       - run: .venv/bin/playwright install --with-deps chromium
-      - run: .venv/bin/pytest -q tests/services tests/e2e
+      - run: .venv/bin/pytest -q tests/services
         env:
           HG_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+          HG_TEST_REDIS_URL: redis://localhost:6379/15
+      - run: .venv/bin/pytest -q tests/e2e           # its own process: Playwright's sync API holds the main thread's loop
+        env:
+          HG_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+          HG_TEST_REDIS_URL: redis://localhost:6379/15
 
   images:
     runs-on: ubuntu-latest
@@ -48,5 +60,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t harnessgateway:ci .
-      - run: docker build -t harnessgateway-sandbox:ci sandbox/
+      - run: docker build -t harnessgateway-sandbox:ci -f sandbox/Dockerfile .
       - run: docker run --rm harnessgateway:ci --version
+      - run: docker run --rm --entrypoint python3 harnessgateway-sandbox:ci -c "import hgkit, hgsnapshot; print('sandbox ok')"

@@ -15,14 +15,11 @@ from typing import Any
 from hgkit.validate import (  # noqa: F401  (re-exported: the services read package output through this module)
     DELTAS,
     ENVELOPE,
-    EVENT_MODELS,
-    ITEM_MODELS,
     TERMINAL,
     Line,
     Outcome,
     OutputError,
     check,
-    check_item,
     first_error,
     outcome,
     read_line,
@@ -30,9 +27,9 @@ from hgkit.validate import (  # noqa: F401  (re-exported: the services read pack
 from openai.types import responses as R
 from pydantic import TypeAdapter, ValidationError
 
+from ..domain.names import NAME
 from ..errors import Invalid
 from ..limits import INPUT_FILES_MAX
-from .names import NAME
 
 PARAMS: TypeAdapter[Any] = TypeAdapter(R.ResponseCreateParams)
 TERMINAL_EVENT = {"completed": "response.completed", "incomplete": "response.incomplete", "failed": "response.failed",
@@ -43,11 +40,7 @@ _ECHO = ("instructions", "temperature", "top_p", "tools", "tool_choice", "parall
          "safety_identifier", "prompt_cache_key", "service_tier", "top_logprobs")
 _ERROR_CODES = frozenset(typing.get_args(R.response_error.ResponseError.model_fields["code"].annotation))
 METADATA_MAX = 16
-_first = first_error
-check_output = check              # a package's whole stdout, read as the platform reads it: what package tests call
 
-
-# ── in ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class ModelPath:
@@ -75,7 +68,6 @@ class Routing:
     background: bool
     store: bool
     file_ids: tuple[str, ...]
-    mcp_tools: tuple[dict[str, Any], ...]
 
     @classmethod
     def parse(cls, body: object) -> Routing:
@@ -84,16 +76,15 @@ class Routing:
         try:
             PARAMS.validate_python(body)
         except ValidationError as e:
-            raise Invalid(f"not a valid Responses request: {_first(e)}") from None
+            raise Invalid(f"not a valid Responses request: {first_error(e)}") from None
         if body.get("conversation") is not None:
             raise Invalid("conversations are not supported: continue a session with previous_response_id",
                           param="conversation")
         prev = body.get("previous_response_id")
         if prev is not None and not (isinstance(prev, str) and prev.startswith("resp_")):
             raise Invalid("previous_response_id names a response this platform returned", param="previous_response_id")
-        tools = tuple(t for t in body.get("tools") or [] if isinstance(t, dict) and t.get("type") == "mcp")
         return cls(ModelPath.parse(body.get("model")), prev, body.get("stream") is True, body.get("background") is True,
-                   body.get("store", True) is not False, tuple(file_ids(body.get("input"))), tools)
+                   body.get("store", True) is not False, tuple(file_ids(body.get("input"))))
 
 
 def _parts(given: Any) -> list[Any]:
@@ -126,7 +117,7 @@ def input_items(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def history_entry(rid: str, status: str, body: dict[str, Any], response: dict[str, Any] | None) -> dict[str, Any]:
-    """One earlier turn as a package sees it in the session's history (SPEC §5.6): its input items with any file
+    """One earlier turn as a package sees it in the session's history (SPEC §5.3): its input items with any file
     bytes left out, and the output items it produced, both in Responses form."""
     inputs = []
     for item in input_items(body):
@@ -165,7 +156,7 @@ def response(*, rid: str, body: dict[str, Any], created: float, status: str, out
     try:
         return R.Response.model_validate(doc).model_dump(mode="json", exclude_none=True, warnings=False)  # type: ignore[no-any-return]
     except ValidationError as e:
-        raise OutputError(f"the response does not validate: {_first(e)}") from None
+        raise OutputError(f"the response does not validate: {first_error(e)}") from None
 
 
 def sse(event: dict[str, Any]) -> bytes:

@@ -1,5 +1,5 @@
-"""BlobStore on a local directory (`file:///var/lib/harnessgateway/blobs`), for one-host installs and tests. Writes land
-atomically; links point at the API's own blob route, authorized by a signed token."""
+"""BlobStore on a local directory (`file:///var/lib/harnessgateway/objects`), for one-host installs and tests. Writes
+land atomically."""
 from __future__ import annotations
 
 import asyncio
@@ -14,13 +14,12 @@ CHUNK = 1024 * 1024
 
 
 class FileBlobs:
-    def __init__(self, url: str, link: Callable[[str, str, int], str]):
+    def __init__(self, url: str):
         parts = urlsplit(url)
         if parts.scheme != "file" or parts.netloc or not parts.path.startswith("/"):
             raise ValueError("a file blob URL is file:///absolute/path")
         self.root = Path(unquote(parts.path)).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self._link = link
 
     def path(self, key: str) -> Path:
         segments = key.split("/")
@@ -58,7 +57,10 @@ class FileBlobs:
             raise KeyError(key) from None
 
     async def stream(self, key: str) -> AsyncIterator[bytes]:
-        f = await asyncio.to_thread(self.path(key).open, "rb")
+        try:
+            f = await asyncio.to_thread(self.path(key).open, "rb")
+        except FileNotFoundError:
+            raise KeyError(key) from None
         try:
             while chunk := await asyncio.to_thread(f.read, CHUNK):
                 yield chunk
@@ -75,9 +77,3 @@ class FileBlobs:
     async def delete_prefix(self, prefix: str) -> None:
         assert prefix.endswith("/"), "a prefix names a folder"
         await asyncio.to_thread(shutil.rmtree, self.path(prefix.rstrip("/")), True)
-
-    def link_get(self, key: str, ttl_s: int) -> str:
-        return self._link(key, "GET", ttl_s)
-
-    def link_put(self, key: str, ttl_s: int) -> str:
-        return self._link(key, "PUT", ttl_s)

@@ -1,5 +1,5 @@
 """Row-level security: one organization never sees another's rows, through the services or through a scoped
-transaction, whatever the query says (SPEC §9.1)."""
+transaction, whatever the query says (SPEC §8.4)."""
 import pytest
 
 from harnessgateway.errors import NotFound
@@ -44,9 +44,11 @@ async def test_a_write_into_another_organization_is_refused_by_the_database(plat
                          "('key_' || repeat('1', 32), %s, 'd', 'admin', 'x', 'abcd')", other)
 
 
-async def test_the_same_package_is_stored_once_for_everyone(plat, org, shell):
+async def test_the_same_package_is_stored_once_but_installed_per_organization(plat, org, shell):
     other = Org(str((await plat.orgs.create("other4-" + org.id[-6:]))["id"]))
     again = await plat.harnesses.install(other.admin, pack(SHELL))
     assert again["digest"] == shell["digest"]
     async with plat.db.platform() as tx:
         assert await tx.value("SELECT count(*) FROM packages WHERE digest = %s", shell["digest"]) == 1
+        assert await tx.value("SELECT count(*) FROM installs WHERE digest = %s AND org_id = ANY(%s)", shell["digest"],
+                              [org.id, other.id]) == 2

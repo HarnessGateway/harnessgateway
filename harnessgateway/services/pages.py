@@ -1,11 +1,18 @@
-"""Lists the OpenAI way: {"object": "list", "data", "first_id", "last_id", "has_more"}."""
+"""Lists the OpenAI way: {"object": "list", "data", "first_id", "last_id", "has_more"}, and the clause that confines a
+run-only key's reads to its own sessions."""
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
+from ..domain.access import Principal
 from ..errors import Invalid
 from ..limits import PAGE_MAX
+
+
+def own(p: Principal) -> tuple[str, list[str]]:
+    """A clause confining a query on sessions `s` to the principal's own, when that is all it may read."""
+    return (" AND s.created_by = %s", [p.actor]) if p.owns_only else ("", [])
 
 
 def page(rows: list[dict[str, Any]], limit: int) -> dict[str, Any]:

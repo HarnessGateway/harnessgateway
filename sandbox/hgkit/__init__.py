@@ -1,5 +1,5 @@
 """hgkit: the Responses contract for a harness package, in Python. Optional: a package in any language prints the
-same JSON lines and imports nothing of this. In the sandbox image at /opt/hg/lib (on PYTHONPATH). SPEC §5.7.
+same JSON lines and imports nothing of this. In the sandbox image at /opt/hg/lib (on PYTHONPATH). SPEC §5.6.
 
 hgkit knows nothing about any harness: only the request a turn receives and the events it must print.
 

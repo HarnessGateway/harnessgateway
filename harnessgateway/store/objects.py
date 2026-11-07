@@ -1,21 +1,22 @@
-"""Stored objects: the BlobStore port plus the `objects` ledger, which records each object's owner and size so storage
-is metered without listing the store (SPEC §12)."""
+"""Stored objects: the BlobStore port plus the `objects` ledger, which records each non-blob object's owner and size so
+storage is metered without listing the store (SPEC §7.3, §12.2). Content blobs are accounted in `blobs` instead."""
 from __future__ import annotations
 
-import tempfile
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from pathlib import Path
 
-from ..db import Database
 from ..ports.blob import BlobStore
-
-LINK_TTL_S = 3600
+from .db import Database
 
 
 def org_key(org_id: str, *parts: str) -> str:
     """`orgs/<org>/<parts...>`; a trailing "" makes a prefix."""
     assert org_id.startswith("org_") and all(p and "/" not in p and p not in (".", "..") for p in parts[:-1])
     return "/".join(("orgs", org_id, *parts))
+
+
+def blob_key(org_id: str, digest: str) -> str:
+    return org_key(org_id, "blobs", digest)
 
 
 def _like(prefix: str) -> str:
@@ -46,21 +47,11 @@ class Objects:
     async def get(self, key: str) -> bytes:
         return await self.store.get(key)
 
-    async def copy(self, src: str, dst: str, *, org_id: str | None, kind: str,
-                   transform: Callable[[Path, Path], None] | None = None) -> int:
-        """`src` copied to `dst`, streamed through a file so a large snapshot never sits in memory (through
-        `transform(src_file, dst_file)` when given); its size."""
-        with tempfile.NamedTemporaryFile(prefix="hg-copy-") as tmp, tempfile.NamedTemporaryFile(prefix="hg-copy-") as out:
-            async for chunk in self.store.stream(src):
-                tmp.write(chunk)
-            tmp.flush()
-            if transform is None:
-                return await self.put_file(dst, Path(tmp.name), org_id=org_id, kind=kind)
-            transform(Path(tmp.name), Path(out.name))
-            return await self.put_file(dst, Path(out.name), org_id=org_id, kind=kind)
-
     def stream(self, key: str) -> AsyncIterator[bytes]:
         return self.store.stream(key)
+
+    async def size(self, key: str) -> int | None:
+        return await self.store.size(key)
 
     async def delete(self, key: str) -> None:
         await self.store.delete(key)
@@ -72,9 +63,3 @@ class Objects:
         await self.store.delete_prefix(prefix)
         async with self.db.platform() as tx:
             await tx.run("UPDATE objects SET deleted_at = now() WHERE key LIKE %s AND deleted_at IS NULL", _like(prefix))
-
-    def link_get(self, key: str, ttl_s: int = LINK_TTL_S) -> str:
-        return self.store.link_get(key, ttl_s)
-
-    def link_put(self, key: str, ttl_s: int = LINK_TTL_S) -> str:
-        return self.store.link_put(key, ttl_s)
