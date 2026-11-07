@@ -12,7 +12,7 @@ changelog = re.search(r"^## \[(\d[^\]]*)\]", (root / "CHANGELOG.md").read_text()
 problems = []
 if not pyproject == package == changelog:
     problems.append(f"pyproject {pyproject}, harnessgateway.__version__ {package}, CHANGELOG top entry {changelog} differ")
-for rel in ("deploy/compose.yaml", "deploy/install.sh", "docs/operations.md", "Dockerfile", "sandbox/Dockerfile"):
+for rel in ("deploy/compose.yaml", "deploy/install.sh", "deploy/.env.example", "docs/operations.md", "Dockerfile", "sandbox/Dockerfile"):
     text = (root / rel).read_text()
     others = sorted(set(re.findall(r"harnessgateway(?:/harnessgateway|/sandbox)?:(\d+\.\d+\.\d+)", text)) - {pyproject})
     if others:
