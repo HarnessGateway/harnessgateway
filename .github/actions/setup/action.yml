@@ -3,7 +3,7 @@ description: Python 3.12 with the pip cache, a virtual environment at .venv, and
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: "3.12"
         cache: pip
