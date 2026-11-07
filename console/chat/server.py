@@ -439,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                 with self.http.stream(method, path, timeout=httpx.Timeout(60, read=300), **kwargs) as r:
                     if r.status_code >= 400:
                         r.read()
-                        if r.status_code == 409 and "being saved" in r.text and attempt < SAVING_RETRIES - 1:
+                        if r.status_code == 409 and "not saved yet" in r.text and attempt < SAVING_RETRIES - 1:
                             time.sleep(SAVING_WAIT_S)     # a fork right after a turn: its state is still being saved
                             continue
                         try:
