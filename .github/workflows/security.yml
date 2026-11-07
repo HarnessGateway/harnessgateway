@@ -25,7 +25,7 @@ jobs:
           - name: sandbox
             file: sandbox/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t scan/${{ matrix.name }}:${{ github.sha }} -f ${{ matrix.file }} .
       - name: install Trivy
         run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
@@ -34,7 +34,7 @@ jobs:
   dependencies:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: .venv/bin/pip install -q pip-audit
       - run: .venv/bin/pip-audit --progress-spinner off --skip-editable
