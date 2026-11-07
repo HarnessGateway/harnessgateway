@@ -79,8 +79,9 @@ every harness, the package's add to them (or deny).
 `install` runs once per package digest and sandbox image, in an install box with a writable `$HG_TOOLS` and egress
 `install.egress`, no provider and no secrets. Install the CLI by its vendor's documented method, pinned to the
 manifest's version (`${HG_PACKAGE_VERSION%-*}` in bash), and verify the version. Never name a CPU architecture (the
-package manager picks the build); never edit installed files afterwards. The result is mounted read-only into every
-sandbox of that package.
+package manager picks the build); never edit installed files afterwards. The result is archived and extracted into
+`$HG_TOOLS` of every sandbox of that package; a turn that changes something there changes its own box only, since
+`$HG_TOOLS` is not snapshotted.
 
 ## Run
 
@@ -89,11 +90,12 @@ It prints one JSON object per stdout line: Responses stream events (`"type": "re
 line. Exactly one terminal event (`response.completed`, `.incomplete`, `.failed`) ends the turn. The platform
 validates every event against the OpenAI SDK's models and assigns sequence numbers.
 
-What a turn sees (SPEC §5.6): `HG_REQUEST`, `HG_FILES` (file_id inputs and `index.json`), `HG_MCP` (the turn's
+What a turn sees (SPEC §5.3): `HG_REQUEST`, `HG_FILES` (file_id inputs and `index.json`), `HG_MCP` (the turn's
 servers, header values holding placeholders), `HG_HISTORY` (the session's earlier turns, in Responses form),
 `HG_WORKSPACE`, `HG_STATE`, `HOME`, `HG_PACKAGE_DIR`, `HG_TOOLS`,
 `HG_PACKAGE_VERSION`, `HG_SESSION`, `HG_RESPONSE`, `HG_TURN`, `HG_MODEL`, `HG_PROVIDER_API`, `HG_PROVIDER_URL`
-(`http://hg-door:8080`: point the CLI's base URL here), `HG_PROVIDER_TOKEN` (use it as the API key), each declared
+(the provider's own base URL, `https://api.anthropic.com` say, without a version segment: point the CLI's base URL
+here; the door swaps the key on that host), `HG_PROVIDER_TOKEN` (use it as the API key: a placeholder), each declared
 setting as a variable, each declared secret as a variable holding its placeholder.
 
 ### hgkit
@@ -146,7 +148,7 @@ new sandbox, so the agent's configuration is always the package's.
 
 A conversation reaches the next turn two ways, and `run` must handle both, because a client may stop or interrupt a
 turn, rewind to an earlier response, branch from one, or continue on another harness, all by naming a response
-(SPEC §6.3), and the platform never tells the package which happened:
+(SPEC §9.3), and the platform never tells the package which happened:
 
 1. **The CLI's own session**, where `persist` keeps its store. Save the CLI's session id in `req.state` the moment the
    CLI reports it, never only at the end of a successful turn: a stopped turn still has to resume. Resume with it on

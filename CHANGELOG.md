@@ -7,6 +7,27 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.0.2]
+
+A review of every page of documentation against the code, and the three places where the code had to move instead.
+
+### Fixed
+
+- A sandbox image upgrade re-runs each package's `install` on its own. The first turn on an installed harness after
+  an upgrade found no install for the new image and stayed queued until someone called
+  `GET /v1/harnesses/{name}/install`; `Boxes.ensure` now starts the install itself.
+- The door keeps a policy that carries bindings for 3 s (one without them, 30 s as before), so a turn's secrets stop
+  being injected within 3 s of its end. The spec had described a revocation the api never sent.
+- The docs no longer promise what the code never had: observability `full` keeps each turn's whole stdout and stderr,
+  not request or response bodies; `HG_LAUNCHER` is gone (it was parsed and never read; an extension's `launcher`
+  hook is the one way to another substrate); the package and tools directories are the box's own, not read-only.
+- `docs/packages.md` told package authors `HG_PROVIDER_URL` is the 2.x gateway address; a turn gets the provider's
+  own base URL. Its SPEC section numbers, and the template README's, point where they should.
+- SPEC, operations, security and the chat page corrected in the small places they had drifted: which tables are
+  platform-only, what a stream entry holds, when a box token is armed, which meters install boxes carry, what each
+  setting is read by, the installer's order, the no-admin-left recovery (the operator's invite route), where an SSO
+  refusal surfaces, and that the door and operator keys are configuration rather than digests.
+
 ## [3.0.1]
 
 The first refresh after the rebuild: both images on the current Wolfi base, the current OpenAI SDK, the current
@@ -18,7 +39,7 @@ actions. A base-image refresh only reaches a deployment as a version, so this is
 - `openai` 3.45.0 in the platform and the sandbox alike (hgkit and the platform validate output with the same SDK;
   `scripts/version-check` holds the two pins together); `redis-py` allowed up to 8.
 - The workflows run the current major of each action: `checkout` v7, `build-push-action` v7,
-  `attest-build-provenance` v4, `setup-qemu-action` and `setup-buildx-action` v4.
+  `attest-build-provenance` v4, `setup-qemu-action` and `setup-buildx-action` v4, `setup-python` v7.
 
 ### Fixed
 

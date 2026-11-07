@@ -7,7 +7,7 @@ import pytest
 
 from harnessgateway.errors import Conflict, NotFound, Unauthenticated
 
-from .conftest import SHELL, said
+from .conftest import SHELL, Runner, said
 from .test_turns import package
 
 BODY = {"model": "shell", "input": "echo hi"}
@@ -46,6 +46,28 @@ async def test_a_failed_install_fails_the_turns_that_waited_and_can_be_retried(p
     retried = await plat.installs.retry(org.id, shell["digest"])
     assert retried["status"] == "pending" and retried["id"] == install["id"]
     assert (await runner.install(org.id, shell["digest"]))["status"] == "ready"
+
+
+async def test_a_new_sandbox_image_re_runs_the_install_before_the_next_turn(plat, org, ready, settings):
+    """A deployment upgrades its sandbox image: the first turn on an installed harness finds no install for the new
+    image, queues one, waits on it, and gets its box once it is ready. Nobody has to ask for the install."""
+    import dataclasses
+
+    from harnessgateway.services.platform import Platform
+
+    upgraded = Platform(dataclasses.replace(settings, sandbox_image="ghcr.io/harnessgateway/sandbox:test-next"))
+    await upgraded.open()
+    try:
+        turn = await upgraded.turns.create(org.admin, BODY)
+        assert await box_of(upgraded, turn["session_id"]) is None                # the new image has no install yet
+        install = (await upgraded.harnesses.get(org.admin, "shell"))["install"]
+        assert install and install["status"] == "pending" and install["id"] != ready["install"]["id"]
+        queued = [json.loads(f["payload"]) for _, f in await upgraded.moments.r.xrange("hg:jobs") if f["kind"] == "install"]
+        assert {"install_id": install["id"], "org_id": org.id} in queued
+        assert (await Runner(upgraded).install(org.id, ready["digest"]))["id"] == install["id"]
+        assert (await box_of(upgraded, turn["session_id"]))["status"] == "starting"
+    finally:
+        await upgraded.close()
 
 
 def window():

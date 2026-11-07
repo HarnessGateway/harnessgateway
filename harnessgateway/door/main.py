@@ -1,10 +1,10 @@
 """The door (SPEC §11): a box's only way out. One listener, a CONNECT proxy with proxy authentication by box token.
 
 Per connection: the credential names a box; the api says what that box may reach now and which placeholders are
-bound to which hosts (cached for a moment); a host outside the policy is refused; the door resolves the host and
-connects only to an address it checked; a host no secret is bound to is tunnelled untouched; a host a secret is
-bound to is intercepted (TLS with the box as that host, TLS to the real server, placeholders replaced in the one
-request head, the rest spliced). Bytes are counted and one record per connection goes back to the api in batches.
+bound to which hosts (cached 30 s, or 3 s while bindings are in it); a host outside the policy is refused; the door
+resolves the host and connects only to an address it checked; a host no secret is bound to is tunnelled untouched; a
+host a secret is bound to is intercepted (TLS with the box as that host, TLS to the real server, placeholders replaced
+in the one request head, the rest spliced). Bytes are counted and one record per connection goes back to the api in batches.
 The door holds no database and no secret of its own but the door key and the CA it derives from the secret key."""
 from __future__ import annotations
 
@@ -37,7 +37,8 @@ from ..netguard import is_public
 HEAD_MAX = 256 * 1024
 HANDSHAKE_S = 30
 CONNECT_S = 15
-POLICY_TTL_S = 30
+POLICY_TTL_S = 30                # a policy without bindings (standby, an install box)
+BINDINGS_TTL_S = 3               # a policy with bindings: a turn's secrets outlive its end by at most this
 RECORDS_EVERY_S = 3
 CHUNK = 65536
 FORBIDDEN = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n"
@@ -62,6 +63,10 @@ class Rules:
     def substitutions(self, host: str, port: int) -> list[tuple[bytes, bytes]]:
         return [(p, v) for p, v, hosts in self.bindings if hosts.permits(host, port)]
 
+    @property
+    def fresh(self) -> bool:
+        return time.monotonic() - self.at < (BINDINGS_TTL_S if self.bindings else POLICY_TTL_S)
+
 
 class Platform:
     """The api as the door sees it: policies by box token, and the records it sends back."""
@@ -73,9 +78,10 @@ class Platform:
 
     async def rules(self, token: str, fresh: bool = False) -> Rules | None:
         """The box's current rules; None for a token the api does not know. `fresh` skips the cache: a refusal is
-        checked against the api before it stands, since a turn may have started since the policy was fetched."""
+        checked against the api before it stands, since a turn may have started since the policy was fetched. A
+        policy that carries bindings is kept only briefly, so a turn's secrets stop being injected soon after it ends."""
         hit = self.cache.get(token)
-        if hit and not fresh and time.monotonic() - hit.at < POLICY_TTL_S:
+        if hit and not fresh and hit.fresh:
             return hit
         r = await self.http.post("/internal/door/policy", json={"token": token})
         if r.status_code == 404:

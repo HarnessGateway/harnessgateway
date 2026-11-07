@@ -194,8 +194,8 @@ standard input and these variables:
 | `HG_WORKSPACE` | `/workspace` |
 | `HG_STATE` | `/state`: small key/value files the package keeps (e.g. the CLI's own session id) |
 | `HOME` | `/home/hg` |
-| `HG_PACKAGE_DIR` | `/opt/hg/package` (read-only) |
-| `HG_TOOLS` | `/opt/hg/tools` (the install's output, read-only) |
+| `HG_PACKAGE_DIR` | `/opt/hg/package`: the package folder, extracted into the box (its own; not snapshotted) |
+| `HG_TOOLS` | `/opt/hg/tools`: the install archive, extracted into the box (its own; not snapshotted) |
 | `HG_SESSION`, `HG_RESPONSE`, `HG_TURN` | the session id, the response id, the turn's sequence number in the session |
 | `HG_PACKAGE_VERSION` | the manifest's `version` |
 | `HG_MODEL` | the model name the CLI is given: the request's, the session's, or the harness's default |
@@ -293,8 +293,8 @@ same image.
 ```
 /opt/hg/runner.py     the runner (in the sandbox image; Python standard library only)
 /opt/hg/lib/hgkit     the package library
-/opt/hg/package       the package folder (read-only, from the archive)
-/opt/hg/tools         the install archive, extracted (read-only to run)
+/opt/hg/package       the package folder, from the archive (the box's own; not persisted)
+/opt/hg/tools         the install archive, extracted (the box's own; not persisted)
 /run/hg               the turn's inputs (request, history, files, mcp)
 /workspace            persisted
 /home/hg              persisted per the manifest
@@ -342,14 +342,14 @@ Tables (`migrations/0001_core.sql`):
 | `idempotency` | (org, key) → request digest, turn id |
 | `schema_migrations` | package, version |
 
-Platform-only tables (no `org_id` policy): `packages` (readable by all), `boxes` is tenant-scoped but written on the
-platform path, `objects`, `storage_accruals`.
+Platform-only tables (no `org_id` policy): `packages` (readable by all), `invitations`, `sign_ins`, `objects`. `boxes`
+is tenant-scoped but written on the platform path.
 
 ### 7.2 Redis: moments
 
 | Key | Type | Holds | Lifetime |
 |---|---|---|---|
-| `hg:turn:<rid>` | stream | every event of the turn, deltas included, as `{seq, type, json}` | trimmed to 20,000 entries; expires 10 minutes after the terminal event |
+| `hg:turn:<rid>` | stream | every event of the turn, deltas included, as `{seq, data}` (the event as JSON) | trimmed to 20,000 entries; expires 10 minutes after the terminal event |
 | `hg:jobs` | stream, consumer group `workers` | jobs (§7.5) | acknowledged when done; pending entries older than 5 minutes are reclaimed |
 | `hg:wake:<sid>` | pub/sub channel | "a turn is queued for this session" | none |
 | `hg:sso:<state>` | string | an OIDC exchange in flight (nonce, code verifier, redirect) | 10 minutes |
@@ -390,7 +390,7 @@ Boxes never hold store credentials: every byte a box reads or writes goes throug
 | `standby_s` | 120 | how long a box waits for the session's next turn after one ends |
 | `turn_timeout_s` | 0 (none) | the bound on a turn, with the package's own |
 | `retention_days` | 0 (keep) | sessions idle longer are deleted with their snapshots |
-| `observability` | `metadata` | `full` keeps bodies and whole logs |
+| `observability` | `metadata` | `metadata` keeps a 16 KiB tail of each turn's log lines and stderr; `full` keeps the whole stdout and stderr |
 
 ### 7.5 Jobs
 
@@ -409,7 +409,7 @@ Run by every worker on a tick, each under a Postgres advisory lock so one runs a
 
 | Duty | Every | Does |
 |---|---|---|
-| `lost` | 15 s | boxes whose `expires_at` passed: status `gone`; their running turn fails `node_lost`→ `box_lost`; a `stop` job for the launcher |
+| `lost` | 15 s | boxes whose `expires_at` passed: status `gone`; their running turn fails `box_lost`; a `stop` job for the launcher |
 | `reconcile` | 30 s | boxes `starting` without a launcher reference for over a minute, installs `pending` without a job: re-queued |
 | `retention` | 5 min | sessions past their organization's retention: `delete_session` jobs |
 | `purge` | 5 min | unstored sessions idle 10 minutes; spent idempotency keys and sign-in tokens after a day; `objects` rows deleted over a day |
@@ -486,8 +486,8 @@ Request body 32 MiB; a file upload 512 MiB; a package upload 64 MiB; any other J
    sealed into `turn_bindings`. The stored request holds placeholders.
 6. `extensions.admit(principal, admission)` may refuse.
 7. Write the request object, the turn row (`queued`), `response.created` to the durable log and the stream.
-8. Ensure a box: if the session has a live box, publish on `hg:wake:<sid>`; else insert a `starting` box with a
-   fresh token and queue `launch`. Check `max_concurrent_turns` here: a turn over the limit stays queued and the
+8. Ensure a box: if the session has a live box, publish on `hg:wake:<sid>`; else insert a `starting` box and queue
+   `launch` (the worker arms it with a fresh token as it launches it). Check `max_concurrent_turns` here: a turn over the limit stays queued and the
    box is ensured when a turn ends.
 9. Reply: the stream, the queued `Response` (background), or wait for the terminal event (foreground; cancel on
    disconnect).
@@ -500,9 +500,9 @@ Request body 32 MiB; a file upload 512 MiB; a package upload 64 MiB; any other J
    seeds the home, restores the session's snapshot (§9.5), and reports `ready`.
 2. `GET /internal/boxes/{id}/next?wait=…` long-polls for the session's next turn (the api waits on `hg:wake:<sid>`
    and re-checks Postgres). The reply is the **job**: turn id, seq, model, timeout, grace, the request, history,
-   files and staged ops to download, the environment, the MCP list, the provider, the log links, and whether to
-   persist. The api marks the turn `in_progress` with `started_at`, emits `response.in_progress`, and gives the
-   door the turn's policy version.
+   files and staged ops to download, the environment, the MCP list, the provider, and whether the organization's
+   observability is `full`. The api marks the turn `in_progress` with `started_at`, emits `response.in_progress`,
+   and from then on answers the door's policy question with the turn's bindings.
 3. The runner writes `/run/hg`, applies staged file operations to the workspace, and starts `run` under `setsid`
    with the request on stdin and §5.3's environment. It pumps stdout in batches (about 1 MiB or every 200 ms,
    whole lines) to `POST /internal/boxes/{id}/turns/{rid}/events`; the reply says whether the turn has concluded
@@ -513,9 +513,10 @@ Request body 32 MiB; a file upload 512 MiB; a package upload 64 MiB; any other J
    runner SIGTERMs the group, waits the grace, then SIGKILLs every process in the box but itself. **After every
    turn, whatever its outcome, the runner kills every process it did not start**, so standby holds nothing.
 5. The runner reports `POST …/finish` with the outcome, exit code, stderr tail, byte counts, the box's cgroup CPU
-   seconds and memory high-water mark, and whether it holds state to persist. The api concludes the turn if no
-   terminal event did (§4.2), records usage, revokes the policy version (the door drops the bindings), writes the
-   harness trace.
+   seconds and memory high-water mark. The api concludes the turn if no terminal event did (§4.2), records usage,
+   writes the harness trace, and answers whether the runner is to snapshot. From then on the box's policy carries no
+   bindings; a door re-reads a policy that carries bindings every 3 s (§11), so the turn's secrets stop being
+   injected within that.
 6. Snapshot (§9.5), then `POST …/saved`. Then back to step 2. If no turn arrives within the organization's
    `standby_s`, the runner reports `bye` and exits. The box is `gone`.
 
@@ -654,8 +655,9 @@ A single program with one listener, `:3128`, a CONNECT proxy with proxy authenti
 Basic base64("box:<box token>")`.
 
 Per connection: read the CONNECT line and the credential; fetch the policy for the token from the api
-(`POST /internal/door/policy`, door key; cached by token for 30 s and dropped when the policy version changes);
-refuse (403) a host the policy does not allow or a credential the api does not know; resolve the host itself and
+(`POST /internal/door/policy`, door key; cached by token for 30 s, or 3 s while it carries bindings, since the api
+never contacts a door and a turn's end reaches it only by a re-read; a refusal is checked against a fresh policy
+before it stands); refuse (403) a host the policy does not allow or a credential the api does not know; resolve the host itself and
 connect only to an address it checked (public only unless `HG_ALLOW_PRIVATE_EGRESS`; platform hosts always);
 tunnel untouched unless the host is bound, in which case intercept: TLS with the box as the server for that host
 (a certificate from the door's CA, HTTP/1.1 only), TLS to the real server verified normally, one request head read
@@ -681,7 +683,7 @@ platform: [host:port, …]}`. Between turns (standby) the policy has no bindings
 | `agent_seconds` | seconds | `turn`, `standby`, `install` | the api: `started_at` to `ended_at` of a turn; standby from the box's `finish` to its next `next` or `bye`; install from launch to report |
 | `cpu_seconds` | seconds of CPU used | `turn`, `install` | the runner's cgroup reading, reported at finish |
 | `memory_gib_seconds` | GiB × seconds allocated | `turn`, `standby`, `install` | `memory_mb + tmp_mb` × duration, the api |
-| `ingress_bytes`, `egress_bytes` | bytes through the door | `turn`, `standby` | the door's records |
+| `ingress_bytes`, `egress_bytes` | bytes through the door | `turn`, `standby`, `install` | the door's records |
 | `storage_gib_hours` | GiB × hours held | `storage` | the `accrue` duty |
 
 Ids are generated where measured; the ledger is append-only and idempotent by id. `extensions.meter` sees every
@@ -796,7 +798,7 @@ harnessgateway/
   domain/                names, egress, manifest, package, mcp, access, limits, meters, turn states — pure
   ports/                 blob store, key wrapper, mailer, launcher
   adapters/              blob_fs, blob_s3, keys_local, keys_kms, mail_smtp, launch_docker
-  store/                 db.py (Postgres, scoped transactions, migrations), redis.py (streams, queue, pubsub), objects.py (the ledger over the blob store)
+  store/                 db.py (Postgres, scoped transactions, migrations), moments.py (Redis: streams, queue, pubsub, SSO state), objects.py (the ledger over the blob store)
   services/              orgs, accounts, sso, keys, audit, vault, providers, harnesses, installs, files, containers, turns, boxes, snapshots, traces, usage, operations, platform (composition root)
   api/                   http.py (principals, body limits, envelope), responses, storage, manage, identity, internal, app.py
   worker/                jobs (launch, install, stop, delete_session), duties, main loop
@@ -807,6 +809,7 @@ sandbox/
   Dockerfile             the sandbox image: runtimes, hgkit, the runner
   runner.py              standard library only
   hgkit/                 __init__.py, validate.py, __main__.py
+  hgsnapshot/            manifests, walk, restore; shared by the runner and the api
 packages/shell, packages/harness-package-builder
 console/                 server.py, static/, chat/
 deploy/                  compose.yaml, install.sh, postgres-init.sh, .env.example
@@ -814,7 +817,7 @@ docs/                    operations.md, api.md, packages.md, console.md, securit
 tests/unit, tests/services, tests/runner, tests/integration, tests/e2e
 scripts/version-check, scripts/sync-builder-seeds
 Dockerfile, pyproject.toml, README.md, CHANGELOG.md, AGENTS.md, LICENSE
-.github/workflows/ci.yml, release.yml
+.github/workflows/ci.yml, integration.yml, security.yml, release.yml; .github/actions/setup; .github/dependabot.yml
 ```
 
 Build in this order; each step is shippable and tested on its own:
@@ -863,19 +866,21 @@ Every setting is an environment variable with the `HG_` prefix. Secrets never ap
 | `HG_KMS_KEY` | api, worker | AWS KMS key for wrapping instead of the local master key |
 | `HG_OPERATOR_KEY` | api | `hgo_…`: the platform scope's key |
 | `HG_DOOR_KEY` | api, door | `hgd_…`: doors to the api |
-| `HG_API_URL` | worker, door, boxes | the api as boxes and doors reach it |
+| `HG_API_URL` | api, worker, door | the api as boxes and doors reach it (the api allows its own host through the door) |
 | `HG_DOOR` | worker | `host:port` of the door as boxes reach it (self-hosted: `hg-door:3128`) |
-| `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE` | worker | images |
+| `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE` | api, worker | images (installs are keyed by the sandbox image; versions report both) |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` (default) or `runc` |
-| `HG_LAUNCHER` | worker | `docker` (default); an extension may register another |
-| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher) |
+| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher). The launcher is Docker unless an extension's `launcher` hook returns another (§13) |
 | `HG_BOX_DIR` | worker | where the Docker launcher keeps each box's writable directories, mounted at the same path inside and out |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE`, `HG_ALLOW_PRIVATE_EGRESS` | door, api | an operator's proxy and CA; private addresses allowed |
 | `HG_CONSOLE_URL` | api | where people open the console; invitation and SSO links |
 | `HG_SMTP_URL`, `HG_MAIL_FROM` | api | mail: invitations are sent by the api that creates them |
 | `HG_DEFAULT_*` | api | §7.4 defaults |
 | `HG_EXTENSIONS` | all | §13 |
-| `HG_HOST`, `HG_PORT`, `HG_LOG_LEVEL` | all | listening and logging |
+| `HG_HOST`, `HG_PORT` | api | the listen address |
+| `HG_LOG_LEVEL` | all | `debug`, `info`, `warning`, `error` |
+| `HG_BUILDER_DIR`, `HG_TEMPLATE_DIR` | api (`init`), console | the built-in harness package builder; the template every new harness starts from |
+| `HG_ADMIN_EMAIL` | `init` | the first admin's login |
 
 ---
 

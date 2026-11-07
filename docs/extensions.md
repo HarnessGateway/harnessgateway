@@ -72,7 +72,8 @@ operator's cost record. Tokens are not metered: the organization pays its provid
 
 ## Observability
 
-`observe` receives every record as it is written: the harness exchange (request as delivered, events, logs, timings,
-exit; bodies and whole logs when the organization's observability is `full`), the door exchange (host, port, verdict,
-bytes per connection) and each intercepted provider connection (method, path, status, bytes, duration). No record
-ever holds a secret value.
+`observe` receives every record as it is written: the harness record (outcome, exit code, timings, the number of
+events, byte counts, CPU and peak memory, and a 16 KiB tail of the log lines and stderr; the whole stdout and stderr
+as objects when the organization's observability is `full`), the door exchange (host, port, verdict, bytes per
+connection) and each intercepted provider connection (method, path, status, bytes, duration). No record ever holds a
+secret value, and none holds a request or response body.

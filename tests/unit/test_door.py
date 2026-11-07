@@ -201,6 +201,31 @@ async def test_a_refusal_is_checked_against_a_fresh_policy_first(world):
     w.close()
 
 
+async def test_a_policy_with_bindings_is_re_read_soon_after(world, monkeypatch):
+    """The api never contacts a door, so a turn's end reaches it only by a re-read: a policy carrying bindings is kept
+    briefly, a policy without them for the usual while."""
+    from harnessgateway.door import main as door_main
+    monkeypatch.setattr(door_main, "BINDINGS_TTL_S", 0.2)
+    api = world["api"]
+    reply, _, w = await connect(world["door_port"], f"127.0.0.1:{world['plain_port']}")
+    assert reply.startswith(b"HTTP/1.1 200") and world["door"].platform.cache[TOKEN].bindings
+    w.close()
+    asked = len(api.asked)
+    reply, _, w = await connect(world["door_port"], f"127.0.0.1:{world['plain_port']}")
+    w.close()
+    assert len(api.asked) == asked                                              # within the short TTL: cached
+    api.policy = {**api.policy, "version": 2, "turn_id": None, "bindings": []}  # the turn ended
+    await asyncio.sleep(0.25)
+    reply, _, w = await connect(world["door_port"], f"127.0.0.1:{world['plain_port']}")
+    w.close()
+    assert len(api.asked) == asked + 1 and world["door"].platform.cache[TOKEN].bindings == []
+    asked = len(api.asked)
+    await asyncio.sleep(0.25)
+    reply, _, w = await connect(world["door_port"], f"127.0.0.1:{world['plain_port']}")
+    w.close()
+    assert len(api.asked) == asked                                              # no bindings: the 30 s TTL applies
+
+
 def test_rewrite_keeps_upgrades_and_drops_hop_headers():
     head = b"GET / HTTP/1.1\r\nHost: h\r\nConnection: keep-alive\r\nX-Key: hgs_A\r\n\r\n"
     out = rewrite(head, [(b"hgs_A", b"secret")])
