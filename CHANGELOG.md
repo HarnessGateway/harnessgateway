@@ -7,6 +7,29 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.1.1]
+
+What running the platform against a live provider on both API shapes turned up, and the harness package builder
+delivering one package per request.
+
+### Fixed
+
+- **The OpenAI API shape authenticates.** The door's binding for a provider with the `openai` shape carried
+  `Bearer <key>`, while the CLI already sends `Authorization: Bearer <placeholder>`, so the provider received
+  `Bearer Bearer <key>` and refused every request. The binding is the bare key on every shape; the door swaps it into
+  whatever header the CLI wrote. A service test holds it.
+- **A box launch no longer loses its network to the reaper.** The Docker launcher's `reap` duty runs beside launches
+  in the same worker and removed a box's network between `network create` and `docker run`, so a launch that met the
+  minute tick failed with "network not found" (an install then waited a minute for `reconcile`). A network younger than
+  two minutes is left alone. Unit tests cover the three cases.
+
+### Changed
+
+- **The harness package builder delivers one package.** Asked for an agent built for a purpose, it builds one tailored
+  package that installs and runs the CLI itself, under `/workspace/<name>/`, and never a separate vanilla package of
+  the CLI beside it. The skill, its tailoring reference and the packages guide say so; the built-in is
+  `harness-package-builder` 2.1.319-2.
+
 ## [3.1.0]
 
 Every version the platform is built from is now pinned where it is built from and moved by automation; the runtimes

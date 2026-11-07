@@ -754,8 +754,8 @@ class Boxes:
                 key = await self.vault.open(box["org_id"], key_context(provider["id"]), provider["sealed_key"])
                 host = _host_entry(provider["base_url"])
                 provider_host = [host]
-                bindings.append({"placeholder": b["placeholder"], "value": f"Bearer {key}" if wire.bearer else key,
-                                 "hosts": [host], "header": wire.header})
+                # the bare key: the CLI already wrote the header's shape around the placeholder ("Bearer <token>")
+                bindings.append({"placeholder": b["placeholder"], "value": key, "hosts": [host], "header": wire.header})
             elif b.get("secret") and harness and b["secret"] in harness["secrets"]:
                 spec = manifest.secrets.get(b["secret"])
                 hosts = set(spec.hosts if spec else []) | {s.host() for s in manifest.mcp.values()

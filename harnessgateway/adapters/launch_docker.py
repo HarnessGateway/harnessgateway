@@ -11,6 +11,7 @@ import contextlib
 import logging
 import os
 import shutil
+import time
 
 from ..config import Settings
 from ..ports.launch import BoxSpec
@@ -19,6 +20,7 @@ from .docker_cli import LABEL, DockerError, docker, env_args
 UID = 10001
 DOOR = "hg-door"
 RUNNER = ["python3", "/opt/hg/runner.py"]
+GRACE_S = 120  # a network younger than this may belong to a box that `start` has not run yet
 WRITABLE = {"workspace": "/workspace", "state": "/state", "home": "/home/hg", "package": "/opt/hg/package",
             "tools": "/opt/hg/tools", "run": "/run/hg", "runtime": "/opt/hg/runtime", "blobs": "/tmp/hg/blobs"}  # noqa: S108
 log = logging.getLogger("harnessgateway.launcher")
@@ -86,7 +88,10 @@ class DockerLauncher:
         return result.code == 0 and result.out.strip() == b"true"
 
     async def reap(self) -> int:
-        """Exited box containers removed with their networks and directories; orphaned networks removed."""
+        """Exited box containers removed with their networks and directories; orphaned networks removed.
+
+        A network is orphaned when no box container is on it; one created in the last GRACE_S seconds is skipped,
+        because `start` connects the door before it runs the box and `reap` runs beside it in the same worker."""
         exited = (await docker("ps", "-aq", "--filter", f"label={LABEL}", "--filter", "status=exited", timeout=60)
                   ).out.decode().split()
         for cid in exited:
@@ -94,8 +99,10 @@ class DockerLauncher:
             await self.stop(name or cid)
         live = set((await docker("ps", "-aq", "--filter", f"label={LABEL}", timeout=60)).out.decode().split())
         for net in (await docker("network", "ls", "-q", "--filter", f"label={LABEL}", timeout=60)).out.decode().split():
-            members = (await docker("network", "inspect", "-f", "{{range .Containers}}{{.Name}} {{end}}", net, timeout=15)
-                       ).out.decode().split()
+            shape = "{{.Created.Unix}} {{range .Containers}}{{.Name}} {{end}}"
+            created, *members = (await docker("network", "inspect", "-f", shape, net, timeout=15)).out.decode().split() or ["0"]
+            if time.time() - float(created) < GRACE_S:
+                continue  # a launch in progress: the door is on it and its box is about to be
             if not [m for m in members if m != self.s.door_container] and not live & set(members):
                 with contextlib.suppress(DockerError):
                     await docker("network", "disconnect", "-f", net, self.s.door_container, timeout=30)

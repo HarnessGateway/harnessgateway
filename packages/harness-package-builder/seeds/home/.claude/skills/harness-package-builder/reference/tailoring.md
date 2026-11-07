@@ -1,8 +1,10 @@
 # Tailoring: an organization's purpose as a package
 
-A tailored package is a vanilla CLI package plus the organization: what the agent is for, what it may do, what it
-may reach, and the knobs the operator turns. Everything below lives in the package, so it is versioned, reviewed and
-upgraded like code, and reseeded into every new sandbox so the agent cannot drift from it.
+A tailored package is one package: the CLI, headless in the sandbox, plus the organization: what the agent is for,
+what it may do, what it may reach, and the knobs the operator turns. Everything below lives in that one package, so
+it is versioned, reviewed and upgraded like code, and reseeded into every new sandbox so the agent cannot drift from
+it. There is no separate "base" package: the CLI's install and the mapping of its output are part of the tailored
+package itself.
 
 ## The questions
 
@@ -12,7 +14,7 @@ Ask them in one message, numbered, each with the default you would pick; skip an
 |---|---|---|
 | What is the agent for, and what does a typical request look like? | the instructions, the tools, the egress | `seeds/home` instructions; `mcp`; `run.egress` |
 | Who calls it, and in what shape must it answer (prose, files, JSON)? | `text.format` support, what `run` maps, the README | `run`; README "Purpose" |
-| Which CLI? (or: recommend one for this provider and purpose) | the base package | the vanilla base |
+| Which CLI? (or: recommend one for this provider and purpose) | what `install` installs and `run` maps | `harness.json`, `install`, `run` |
 | What must it reach: repositories, internal services, MCP servers, registries? | each is an egress entry or a catalog server with a secret | `mcp`, `secrets`, `run.egress` |
 | What must it never do: paths, commands, hosts, kinds of change? | the permission rules and hooks | `seeds/home` permission config; deny egress entries |
 | Which model? | the default | `defaults.model` |
@@ -40,7 +42,8 @@ ones allow.
 
 ## Finding each CLI's mechanisms
 
-You researched the CLI for the vanilla package; tailoring needs four more facts, from its current documentation:
+Research the CLI as for any package (its install, headless command and output); tailoring needs four more facts, from
+its current documentation:
 
 1. **Where it reads standing instructions under `$HOME`** (a user-level memory or instruction file), so the purpose
    is in place for every session regardless of the workspace.
