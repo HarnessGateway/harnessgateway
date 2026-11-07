@@ -500,9 +500,9 @@ Request body 32 MiB; a file upload 512 MiB; a package upload 64 MiB; any other J
    seeds the home, restores the session's snapshot (§9.5), and reports `ready`.
 2. `GET /internal/boxes/{id}/next?wait=…` long-polls for the session's next turn (the api waits on `hg:wake:<sid>`
    and re-checks Postgres). The reply is the **job**: turn id, seq, model, timeout, grace, the request, history,
-   files and staged ops to download, the environment, the MCP list, the provider, the log links, and whether to
-   persist. The api marks the turn `in_progress` with `started_at`, emits `response.in_progress`, and gives the
-   door the turn's policy version.
+   files and staged ops to download, the environment, the MCP list, the provider, and whether the organization's
+   observability is `full`. The api marks the turn `in_progress` with `started_at`, emits `response.in_progress`,
+   and from then on answers the door's policy question with the turn's bindings.
 3. The runner writes `/run/hg`, applies staged file operations to the workspace, and starts `run` under `setsid`
    with the request on stdin and §5.3's environment. It pumps stdout in batches (about 1 MiB or every 200 ms,
    whole lines) to `POST /internal/boxes/{id}/turns/{rid}/events`; the reply says whether the turn has concluded
@@ -513,9 +513,10 @@ Request body 32 MiB; a file upload 512 MiB; a package upload 64 MiB; any other J
    runner SIGTERMs the group, waits the grace, then SIGKILLs every process in the box but itself. **After every
    turn, whatever its outcome, the runner kills every process it did not start**, so standby holds nothing.
 5. The runner reports `POST …/finish` with the outcome, exit code, stderr tail, byte counts, the box's cgroup CPU
-   seconds and memory high-water mark, and whether it holds state to persist. The api concludes the turn if no
-   terminal event did (§4.2), records usage, revokes the policy version (the door drops the bindings), writes the
-   harness trace.
+   seconds and memory high-water mark. The api concludes the turn if no terminal event did (§4.2), records usage,
+   writes the harness trace, and answers whether the runner is to snapshot. From then on the box's policy carries no
+   bindings; a door re-reads a policy that carries bindings every 3 s (§11), so the turn's secrets stop being
+   injected within that.
 6. Snapshot (§9.5), then `POST …/saved`. Then back to step 2. If no turn arrives within the organization's
    `standby_s`, the runner reports `bye` and exits. The box is `gone`.
 
@@ -654,8 +655,9 @@ A single program with one listener, `:3128`, a CONNECT proxy with proxy authenti
 Basic base64("box:<box token>")`.
 
 Per connection: read the CONNECT line and the credential; fetch the policy for the token from the api
-(`POST /internal/door/policy`, door key; cached by token for 30 s and dropped when the policy version changes);
-refuse (403) a host the policy does not allow or a credential the api does not know; resolve the host itself and
+(`POST /internal/door/policy`, door key; cached by token for 30 s, or 3 s while it carries bindings, since the api
+never contacts a door and a turn's end reaches it only by a re-read; a refusal is checked against a fresh policy
+before it stands); refuse (403) a host the policy does not allow or a credential the api does not know; resolve the host itself and
 connect only to an address it checked (public only unless `HG_ALLOW_PRIVATE_EGRESS`; platform hosts always);
 tunnel untouched unless the host is bound, in which case intercept: TLS with the box as the server for that host
 (a certificate from the door's CA, HTTP/1.1 only), TLS to the real server verified normally, one request head read
