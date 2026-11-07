@@ -7,8 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Wire:
-    header: str                      # where the key goes
-    bearer: bool = False
+    header: str                      # where the key goes; the door swaps the placeholder for the key inside it
 
     def base(self, url: str) -> str:
         """A base URL without an API version segment a caller may have pasted: harnesses call <base><path>."""
@@ -19,7 +18,7 @@ class Wire:
 
 WIRES = {
     "anthropic": Wire("x-api-key"),
-    "openai": Wire("authorization", bearer=True),
+    "openai": Wire("authorization"),
     "google": Wire("x-goog-api-key"),
 }
 PROVIDER_APIS = tuple(WIRES)

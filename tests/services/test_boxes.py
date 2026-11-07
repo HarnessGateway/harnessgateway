@@ -329,3 +329,19 @@ async def test_the_operator_sees_the_platform(plat, org, ready, runner):
     total = await plat.usage.platform_summary(*window(), "org")
     assert org.id in total["data"]
     assert await plat.usage.accrue_storage() >= 1
+
+
+async def test_the_door_binds_the_bare_provider_key_for_the_turns_provider(plat, org, ready, runner):
+    """The CLI writes the header's shape itself (`Authorization: Bearer <placeholder>`), so the door swaps in the key alone."""
+    manifest = {**json.loads((SHELL / "harness.json").read_text()), "name": "spoken", "provider": {"apis": ["openai"]}}
+    await plat.harnesses.install(org.admin, package(manifest))
+    await plat.providers.put(org.id, "oa", "openai", "https://api.openai.com/v1", "sk-the-provider-key")
+    await runner.install(org.id, (await plat.harnesses.get(org.admin, "spoken"))["digest"])
+    turn = await plat.turns.create(org.admin, {"model": "spoken/oa/gpt-5", "input": "x"})
+    box = await runner.boot(turn["session_id"])
+    job = await runner.next(box)
+    token = job["provider"]["token"]
+    assert token.startswith("hgs_") and job["provider"]["url"] == "https://api.openai.com" and "sk-the" not in json.dumps(job)
+    [binding] = (await plat.boxes.policy(box["_token"]))["bindings"]
+    assert binding["placeholder"] == token and binding["value"] == "sk-the-provider-key"
+    assert binding["header"] == "authorization" and binding["hosts"][0].startswith("api.openai.com")
