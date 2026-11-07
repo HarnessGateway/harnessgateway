@@ -196,7 +196,7 @@ class Turns:
             await self.objects.delete(request_key)
             raise
         await self.publish(rid, events)
-        await self.boxes.after_commit(after)
+        await self.boxes.after_commit(after, p.org_id)
         return turn
 
     async def _replay(self, p: Principal, digest: str, key: str) -> dict[str, Any] | None:

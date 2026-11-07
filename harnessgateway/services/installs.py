@@ -31,19 +31,23 @@ class Installs:
     async def ensure(self, org_id: str, digest: str) -> dict[str, Any]:
         """The install row for this package on the current sandbox image, created pending and queued when absent."""
         async with self.db.tenant(org_id) as tx:
-            row = await tx.one("SELECT * FROM installs WHERE org_id = %s AND digest = %s AND image = %s",
-                               org_id, digest, self.image)
-            if row is None:
-                await tx.run("INSERT INTO installs (id, org_id, digest, image) VALUES (%s, %s, %s, %s)",
-                             ids.new("install"), org_id, digest, self.image)
-                row = await tx.get("SELECT * FROM installs WHERE org_id = %s AND digest = %s AND image = %s",
-                                   org_id, digest, self.image)
-                queued = True
-            else:
-                queued = False
+            row, queued = await self.ensure_in(tx, org_id, digest)
         if queued:
             await self.moments.enqueue("install", install_id=row["id"], org_id=org_id)
         return _view(row)
+
+    async def ensure_in(self, tx: Tx, org_id: str, digest: str) -> tuple[dict[str, Any], bool]:
+        """The same, in the caller's transaction: the row, and whether it was just created (then the caller queues the
+        `install` job once the transaction has committed). A sandbox image upgrade reaches an installed harness this
+        way: the first turn on it finds no install for the new image and starts one."""
+        row = await tx.one("SELECT * FROM installs WHERE org_id = %s AND digest = %s AND image = %s",
+                           org_id, digest, self.image)
+        if row is not None:
+            return row, False
+        await tx.run("INSERT INTO installs (id, org_id, digest, image) VALUES (%s, %s, %s, %s)",
+                     ids.new("install"), org_id, digest, self.image)
+        return await tx.get("SELECT * FROM installs WHERE org_id = %s AND digest = %s AND image = %s",
+                            org_id, digest, self.image), True
 
     async def current(self, tx: Tx, org_id: str, digest: str) -> dict[str, Any] | None:
         return await tx.one("SELECT * FROM installs WHERE org_id = %s AND digest = %s AND image = %s",

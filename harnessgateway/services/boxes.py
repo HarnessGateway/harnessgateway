@@ -59,6 +59,7 @@ class After:
     """What to do once the transaction that decided it has committed."""
     launch: str | None = None        # a box id to queue a launch for
     wake: str | None = None          # a session id to wake
+    install: str | None = None       # an install id to queue (the package's first install on this sandbox image)
 
 
 def _tail(previous: str, more: str) -> str:
@@ -103,13 +104,14 @@ class Boxes:
     # ── creating boxes (the api, when a turn is queued) ─────────────────────────────────────────────────────────────
     async def ensure(self, tx: Tx, org_id: str, session: dict[str, Any], limits_doc: dict[str, Any]) -> After:
         """A box for the session: wake the live one, or make one when the organization's install is ready and its
-        concurrency allows. Returns what to do after commit."""
+        concurrency allows. An install the current sandbox image lacks (a fresh install, an upgraded image) is started
+        here. Returns what to do after commit."""
         live = await tx.one("SELECT id, status FROM boxes WHERE session_id = %s AND status <> 'gone'", session["id"])
         if live:
             return After(wake=session["id"])
-        install = await self.installs.current(tx, org_id, session["digest"])
-        if install is None or install["status"] != "ready":
-            return After()                                   # the install's finish admits the pending sessions
+        install, queued = await self.installs.ensure_in(tx, org_id, session["digest"])
+        if install["status"] != "ready":                     # the install's finish admits the pending sessions
+            return After(install=install["id"] if queued else None)
         limits = OrgLimits.parse(limits_doc, self.s.defaults)
         if limits.max_concurrent_turns:
             live_boxes = await tx.value("SELECT count(*) FROM boxes WHERE org_id = %s AND kind = 'session' AND status <> 'gone'",
@@ -121,16 +123,18 @@ class Boxes:
                      session["id"])
         return After(launch=box_id)
 
-    async def after_commit(self, after: After) -> None:
+    async def after_commit(self, after: After, org_id: str) -> None:
         if after.launch:
             await self.moments.enqueue("launch", box_id=after.launch)
         if after.wake:
             await self.moments.wake(after.wake)
+        if after.install:
+            await self.moments.enqueue("install", install_id=after.install, org_id=org_id)
 
     async def admit_pending(self, org_id: str) -> None:
         """Sessions with a queued turn and no live box get one, within the organization's concurrency: called when a
         box ends, an install becomes ready, or the reconcile duty runs."""
-        launches: list[str] = []
+        afters: list[After] = []
         async with self.db.tenant(org_id) as tx:
             org = await tx.get("SELECT limits, status FROM orgs WHERE id = %s", org_id)
             if org["status"] != "active":
@@ -139,11 +143,9 @@ class Boxes:
                                    "AND t.status = 'queued' AND s.status = 'active' AND NOT EXISTS (SELECT 1 FROM boxes b "
                                    "WHERE b.session_id = s.id AND b.status <> 'gone') ORDER BY s.last_active_at", org_id)
             for session in waiting:
-                after = await self.ensure(tx, org_id, session, org["limits"])
-                if after.launch:
-                    launches.append(after.launch)
-        for box_id in launches:
-            await self.moments.enqueue("launch", box_id=box_id)
+                afters.append(await self.ensure(tx, org_id, session, org["limits"]))
+        for after in afters:
+            await self.after_commit(after, org_id)
 
     async def ensure_install_box(self, org_id: str, install_id: str) -> str | None:
         """A box for a pending install: the worker launches it (`to_launch` arms it). None when one is live already or
