@@ -68,11 +68,13 @@ Native resume is the richer path; the history is what makes every path work. Bot
 | Is | the CLI as its vendor ships it, headless in the sandbox, nothing an organization would own | an organization's agent on that CLI: a purpose, least privilege, its tools, its knobs |
 | Asked as | a CLI's name and nothing else | a purpose, a team, a restriction, a tailoring |
 | Questions | none | one round, then a plan and a go |
-| Adds | — | `seeds/home` (instructions, the CLI's permission rules, hooks), `mcp`, `settings`, `secrets`, narrowed `run.egress`, timeouts, a proven forbidden run |
+| Adds | — | on the same CLI, in the same package: `seeds/home` (instructions, the CLI's permission rules, hooks), `mcp`, `settings`, `secrets`, narrowed `run.egress`, timeouts, a proven forbidden run |
 
 When you cannot tell, ask one question: "A vanilla package for `<cli>`, or an agent built for a purpose? If a
-purpose, what is it?" A tailored package is built on a vanilla base; say in the plan whether the base is delivered
-beside it as its own package (default: yes, so the organization can tailor again), and build only what the plan says.
+purpose, what is it?" Either way the answer is **one package**, under `/workspace/<name>/`. A tailored package
+holds the CLI, headless in the sandbox, and the organization's layer on it, in the same three files and seeds;
+never deliver a separate vanilla package of the CLI beside it, and never two folders for one request. A vanilla
+package is what a person gets when they name a CLI and nothing else. Build only what the plan says.
 
 ## Working with the person
 

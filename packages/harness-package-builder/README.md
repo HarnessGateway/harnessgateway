@@ -7,8 +7,8 @@ speaks that API shape, writes the package under `/workspace/<name>/`, validates 
 check (the platform's own), and hands the folder back. Say what you need an agent *for* ("an agent that triages our
 support tickets with Codex", "harden claude-code for the docs team") and it asks what changes what it will build
 (purpose, callers, what it may reach and must never do, model, the operator's knobs), sends a plan, and on a go
-builds a tailored package: the vanilla base plus the organization, with the CLI's own permission rules and hooks in
-`seeds/home`, an `mcp` catalog with secrets bound to hosts, declared `settings` and `secrets`, narrowed egress, and
+builds a tailored package: one package holding the CLI and the organization's layer on it, with the CLI's own
+permission rules and hooks in `seeds/home`, an `mcp` catalog with secrets bound to hosts, declared `settings` and `secrets`, narrowed egress, and
 a recorded forbidden run that proves the fence. In the console, **New harness from workspace** on this session's
 page turns the folder into a draft; **Install**, then a turn on the new harness is its real test.
 
