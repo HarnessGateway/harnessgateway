@@ -248,8 +248,10 @@ def test_an_install_box_runs_install_and_uploads_the_archive(tmp_path):
     assert out.returncode == 0, out.stderr
     assert api.installed and api.installed["ok"] is True and "installed: bash" in api.installed["log_tail"]
     assert api.archive and api.installed["bytes"] == len(api.archive)
-    with tarfile.open(fileobj=io.BytesIO(api.archive)) as tar:
-        assert tar.getnames()[0] == "."
+    archive = tmp_path / "tools.tar"                      # zstd where the host has it, gzip otherwise: tar tells them apart
+    archive.write_bytes(api.archive)
+    listing = subprocess.run(["tar", "-tf", str(archive)], check=True, capture_output=True, text=True).stdout
+    assert listing.splitlines()[0] == "./"
 
 
 def test_a_line_the_api_refuses_stops_the_turn(tmp_path):
