@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1
 # The platform image: one image for every role: `harnessgateway api`, `harnessgateway worker` (the Docker socket
 # and root, to hand box directories to the sandbox user), `harnessgateway door`, and the admin commands. The console
 # (console/, with the chat) ships in /opt/harnessgateway/console; the two packages the platform ships, in
@@ -15,7 +15,7 @@ FROM cgr.dev/chainguard/wolfi-base@sha256:8509ee4351a2e501b7f98201f2e2642396e820
 
 USER 0
 WORKDIR /src
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY harnessgateway ./harnessgateway
 COPY sandbox/hgkit ./sandbox/hgkit
 COPY sandbox/hgsnapshot ./sandbox/hgsnapshot
@@ -24,12 +24,11 @@ COPY console ./console
 RUN --mount=type=secret,id=ca,required=false sh -eu <<'EOF'
 [ -s /run/secrets/ca ] && export SSL_CERT_FILE=/run/secrets/ca PIP_CERT=/run/secrets/ca
 apk update
-apk add --no-cache python-3.12 docker-cli bash tini ca-certificates-bundle    # bash: `bash -n` on package scripts
-python3.12 -m venv /opt/harnessgateway
-/opt/harnessgateway/bin/pip install --no-cache-dir --disable-pip-version-check /src
+apk add --no-cache python-3.14 uv docker-cli bash tini ca-certificates-bundle    # bash: `bash -n` on package scripts
+# the environment exactly as uv.lock pins it: no resolution at build time, so two builds of one commit agree
+cd /src && UV_PROJECT_ENVIRONMENT=/opt/harnessgateway UV_NO_CACHE=1 uv sync --frozen --no-dev --no-editable --python /usr/bin/python3.14
 cp -r /src/packages /opt/harnessgateway/packages && find /opt/harnessgateway/packages -mindepth 2 -maxdepth 2 -name tests -type d -exec rm -rf {} +   # a package's own tests; its seeds keep theirs
 cp -r /src/console /opt/harnessgateway/console
-/opt/harnessgateway/bin/pip uninstall -y pip
 rm -rf /src /var/cache/apk /etc/apk/cache
 echo 'harnessgateway:x:10002:10002:harnessgateway:/nonexistent:/sbin/nologin' >> /etc/passwd
 echo 'harnessgateway:x:10002:' >> /etc/group
@@ -39,8 +38,8 @@ sed -i -E '/^harnessgateway:/!s#:[^:]*$#:/sbin/nologin#' /etc/passwd
 # no privilege-raising files; then no shell or package manager (BusyBox provides sh, rm and find: it goes last, and
 # its applet links, which apk does not own, after it)
 find / -xdev -type f -perm /6000 -exec chmod a-s {} +
-apk del --no-cache wolfi-base busybox apk-tools
-python3.12 -c "import os, pathlib; [p.unlink() for d in ('/bin', '/sbin', '/usr/bin', '/usr/sbin') for p in \
+apk del --no-cache wolfi-base busybox apk-tools uv
+python3.14 -c "import os, pathlib; [p.unlink() for d in ('/bin', '/sbin', '/usr/bin', '/usr/sbin') for p in \
 pathlib.Path(d).iterdir() if p.is_symlink() and os.readlink(p).endswith('busybox')]"
 EOF
 

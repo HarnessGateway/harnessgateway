@@ -1,12 +1,11 @@
 name: set up the checkout
-description: Python 3.12 with the pip cache, a virtual environment at .venv, and the package installed with its dev extras. Every job that runs Python starts here.
+description: uv with Python 3.14, and the project synced into .venv exactly as uv.lock pins it, dev group included. Every job that runs Python starts here.
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v7
+    - uses: astral-sh/setup-uv@v10
       with:
-        python-version: "3.12"
-        cache: pip
-        cache-dependency-path: pyproject.toml
-    - run: python -m venv .venv && .venv/bin/pip install -q -U pip && .venv/bin/pip install -q -e ".[dev]"
+        python-version: "3.14"
+        enable-cache: true
+    - run: uv sync --frozen
       shell: bash

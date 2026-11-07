@@ -135,7 +135,7 @@ in [`SPEC.md`](SPEC.md).
 ## Contributing
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+uv sync                      # Python 3.14 and every dependency as uv.lock pins them
 .venv/bin/ruff check . && .venv/bin/mypy && .venv/bin/pytest -q tests/unit tests/runner packages
 ```
 

@@ -41,7 +41,7 @@ By hand, without compose:
 python3 console/server.py --api http://localhost:8000 --host 0.0.0.0 --state /var/lib/harnessgateway-console
 ```
 
-The server needs Python 3.12 and `httpx`. The state directory holds drafts (below) and nothing else.
+The server needs Python 3.14 and `httpx`. The state directory holds drafts (below) and nothing else.
 
 ## Pages
 
