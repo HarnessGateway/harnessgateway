@@ -53,7 +53,7 @@ h2 { font-size:15px; font-weight:600; margin:0 0 10px; }
 .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
 .grid.two { grid-template-columns:1fr 1fr; } .grid.three { grid-template-columns:repeat(3,1fr); }
 .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); min-width:0; }
-.card + .card { margin-top:14px; }
+.card + .card { margin-top:14px; } .grid > .card { margin-top:0; }
 .card .k { color:var(--muted); font-size:12px; } .card .v { font-size:22px; font-weight:650; margin-top:4px; color:var(--blue); }
 .card .v small { font-size:12px; color:var(--muted); font-weight:500; margin-left:6px; }
 .ch { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; } .ch h2 { margin:0; } .ch .acts { margin-left:auto; display:flex; gap:8px; }
@@ -94,7 +94,7 @@ details.sec summary { cursor:pointer; font-weight:600; }
 .modal h2 { margin-bottom:14px; } .modal .mf { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
 .toasts { position:fixed; bottom:18px; right:18px; display:flex; flex-direction:column; gap:8px; z-index:30; }
 .toast { background:var(--text); color:#fff; padding:10px 14px; border-radius:10px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.2); max-width:420px; }
-.toast.bad { background:var(--bad); } .toast.ok { background:var(--ok); }
+.toast.bad { background:var(--bad); color:#fff; } .toast.ok { background:var(--ok); color:#fff; }
 .secret { font-family:var(--mono); background:#fbf1dc; border:1px solid #f0dcab; border-radius:8px; padding:10px 12px; word-break:break-all; }
 .secret-row { display:flex; align-items:center; gap:8px; } .secret-row .secret { flex:1; min-width:0; }
 

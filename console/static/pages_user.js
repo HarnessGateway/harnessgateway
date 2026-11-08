@@ -3,7 +3,7 @@
 // platform as the signed-in person; the platform refuses what the person may not do, so the pages only hide what
 // would be refused.
 import { METERS, actorOf, api, bytes, date, esc, meter, short, stream, when } from "./api.js";
-import { $, $$, card, confirm, fail, field, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { $, $$, I, card, confirm, copy, fail, field, ic, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
 import { session } from "./session.js";
 
 export function nav(me) {
@@ -12,7 +12,8 @@ export function nav(me) {
     { mod: "Setup", items: [{ id: "harnesses", label: "Harnesses", icon: "box" }, { id: "providers", label: "Providers", icon: "globe" },
                            { id: "egress", label: "Egress", icon: "shield" }] },
     { mod: "Workbench", items: [{ id: "chat", label: "Chat", icon: "chat" }, { id: "playground", label: "Playground", icon: "code" }] },
-    { mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" }, ...(admin ? [{ id: "accounts", label: "Accounts", icon: "users" }] : [])] },
+    { mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" }, ...(admin ? [{ id: "accounts", label: "Accounts", icon: "users" },
+                                                                                     { id: "sso", label: "Single sign-on", icon: "lock" }] : [])] },
     { mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" },
                                    ...(admin ? [{ id: "audit", label: "Audit log", icon: "log" }] : [])] }];
   for (const m of mods) for (const it of m.items) it.mod = m.mod;
@@ -438,6 +439,54 @@ const accounts = { title: "Accounts", async render(el, params, me) {
   });
 } };
 
+// ── Single sign-on (admins) ───────────────────────────────────────────────────────────────────────────────────────
+const words = v => String(v || "").split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+const sso = { title: "Single sign-on", async render(el) {
+  const idp = await api("GET", "/v1/sso").catch(e => { if (/no identity provider/i.test(e.message)) return null; throw e; });
+  const redirect = `${location.origin}/sso/callback`;
+  el.innerHTML = top("Single sign-on", "The organization's OpenID Connect identity provider (Okta, Microsoft Entra ID, Google, Keycloak, Auth0…). When one is set, the sign-in page offers Sign in with it; people it vouches for are signed in by their email, and, with auto-provisioning, get an account on first sign-in.",
+    idp ? `<button class="btn2" id="edit">Edit</button><button class="btn2 danger" id="remove">Remove</button>` : `<button class="btn" id="edit">Configure</button>`) +
+    `<div class="grid two">` + card(idp ? idp.name || "Identity provider" : "Not configured",
+    (idp ? kv([["Issuer", `<span class="mono">${esc(idp.issuer)}</span>`], ["Client ID", `<span class="mono">${esc(idp.client_id)}</span>`],
+               ["Client secret", "set (write-only)"],
+               ["Email domains", idp.domains.length ? idp.domains.map(d => `<span class="mono">${esc(d)}</span>`).join(", ") : "any the provider vouches for"],
+               ["New people", idp.auto_provision ? `get an account as ${esc(idp.default_role)} on first sign-in` : "need an account first (Access → Accounts)"],
+               ["Admins", idp.role_claim ? `<span class="mono">${esc(idp.role_claim)}</span> holds ${idp.admin_values.map(v => `<span class="mono">${esc(v)}</span>`).join(" or ") || "—"}; everyone else is a developer` : "roles are kept as set in Accounts"],
+               ["Passwords", idp.required ? "hidden on the sign-in page; platform admins still reach /login?local=1" : "still offered beside SSO"],
+               ["Updated", when(idp.updated_at)]])
+         : `<p class="muted">People sign in with the passwords they chose from their invitations. Configure a provider to add Sign in with it.</p>`),
+    idp ? pill(idp.required ? "required" : "enabled", idp.required ? "run" : "ok") : "") +
+    card("At the provider", `<p class="muted small">Register a web application (OpenID Connect, authorization code) with:</p>` +
+    kv([["Redirect URI", `<div class="secret-row"><span class="mono">${esc(redirect)}</span><button type="button" class="ib" data-copy title="Copy">${ic(I.copy, 14)}</button></div>`],
+        ["Scopes", `<span class="mono">openid email profile</span>`], ["Client", "confidential (a client secret), PKCE S256"]]) +
+    `<p class="muted small">The redirect URI is built on the console's address (HG_CONSOLE_URL); register it exactly. The ID token must carry the person's <span class="mono">email</span> (on Entra ID, add it as an optional claim).</p>`) + `</div>`;
+  $("[data-copy]", el).addEventListener("click", () => copy(redirect));
+  $("#edit", el).addEventListener("click", () => {
+    const c = idp || { name: "", issuer: "", client_id: "", domains: [], auto_provision: true, default_role: "developer", role_claim: "", admin_values: [], required: false };
+    return modal({ title: idp ? "Edit identity provider" : "Configure single sign-on", submit: "Save", wide: true, body:
+      field("Name", input("name", c.name, 'placeholder="Okta" maxlength="100"'), "on the sign-in button: Sign in with …") +
+      field("Issuer", input("issuer", c.issuer, 'required placeholder="https://your-org.okta.com"'), "the provider's issuer URL; its /.well-known/openid-configuration is read when you save") +
+      `<div class="grid two">` + field("Client ID", input("client_id", c.client_id, "required")) +
+      field("Client secret", input("client_secret", "", `type="password" autocomplete="off"${idp ? ' placeholder="leave empty to keep the stored secret"' : " required"}`), "write-only; sealed, never shown again") + `</div>` +
+      field("Email domains", input("domains", c.domains.join(", "), 'placeholder="example.com, example.org"'), "only people with these email domains sign in; empty allows any the provider vouches for") +
+      `<div class="grid two">` + field("New people", select("auto_provision", [["1", "get an account on first sign-in"], ["", "need an account first"]], c.auto_provision ? "1" : "")) +
+      field("Their role", select("default_role", [["developer", "developer"], ["admin", "admin"]], c.default_role)) + `</div>` +
+      `<div class="grid two">` + field("Role claim", input("role_claim", c.role_claim, 'placeholder="groups"'), "optional: the ID token claim that decides admin at every sign-in") +
+      field("Admin values", input("admin_values", c.admin_values.join(", "), 'placeholder="hg-admins"'), "values of that claim that make someone an admin") + `</div>` +
+      field("Passwords", select("required", [["", "still offered beside SSO"], ["1", "hidden: everyone signs in with SSO"]], c.required ? "1" : ""), "platform admins can always use /login?local=1"),
+      onSubmit: async d => {
+        await api("PUT", "/v1/sso", { name: d.name.trim(), issuer: d.issuer.trim(), client_id: d.client_id.trim(), ...(d.client_secret ? { client_secret: d.client_secret } : {}),
+          domains: words(d.domains), auto_provision: !!d.auto_provision, default_role: d.default_role, role_claim: d.role_claim.trim(),
+          admin_values: words(d.admin_values), required: !!d.required });
+        toast("Saved: the sign-in page now offers it", "ok"); rerender();
+      } });
+  });
+  $("#remove", el)?.addEventListener("click", async () => {
+    if (!await confirm("Remove single sign-on", "The sign-in page goes back to passwords only. Accounts made by SSO keep working only if they set a password (Reset password).", "Remove")) return;
+    try { await api("DELETE", "/v1/sso"); toast("Removed", "ok"); rerender(); } catch (err) { fail(err); }
+  });
+} };
+
 // ── Audit log ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export function auditPage(path, lead) {
   return { title: "Audit log", async render(el) {
@@ -451,4 +500,4 @@ export function auditPage(path, lead) {
 }
 const audit = auditPage("/v1/audit", "Every change of standing in this organization, newest first: sign-ins and their failures, accounts, keys, providers, egress, harnesses.");
 
-export const pages = { chat, sessions, playground, harnesses, drafts, providers, egress, keys, usage, accounts, audit };
+export const pages = { chat, sessions, playground, harnesses, drafts, providers, egress, keys, usage, accounts, sso, audit };
