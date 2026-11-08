@@ -7,6 +7,27 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.2.0]
+
+Single sign-on is configured in the console.
+
+### Added
+
+- **Access → Single sign-on**, for admins: the organization's OpenID Connect identity provider (issuer, client ID and
+  secret, allowed email domains, auto-provisioning and the role for new people, the role claim and its admin values,
+  and whether passwords stay offered), with the redirect URI to register at the provider beside it. Saving reads the
+  issuer's discovery document first, so a wrong issuer is refused before anything is stored; the client secret is
+  write-only. Remove goes back to passwords only. It is the same `GET/PUT/DELETE /v1/sso` the API always had.
+- A browser test of the whole sign-in: an admin configures a fake OpenID provider on that page (which checks the
+  client secret and PKCE and signs a real ID token), a person signs in through it and gets an account, and the admin
+  removes it.
+
+### Fixed
+
+- The console's error toasts were red text on a red background: every error it reported was unreadable. They are
+  white on red again.
+- Two cards side by side in a console grid no longer sit at different heights.
+
 ## [3.1.1]
 
 What running the platform against a live provider on both API shapes turned up, and the harness package builder
