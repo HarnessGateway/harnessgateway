@@ -89,8 +89,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_API_URL` | api, worker, door | `http://localhost:8000` | the api as boxes and doors reach it (its host is always allowed through the door) |
 | `HG_DOOR` | worker, door | `hg-door:3128` | `host:port` of the door as boxes reach it; the door listens on that port |
 | `HG_HOST`, `HG_PORT` | api | `0.0.0.0`, `8000` | the api's listen address |
-| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.1.1` | the image every box runs (installs are keyed by it) |
-| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.1.1` | reported under `GET /internal/versions` |
+| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.2.0` | the image every box runs (installs are keyed by it) |
+| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.2.0` | reported under `GET /internal/versions` |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` | the Docker runtime for boxes; `runc` runs them unisolated (logged) |
 | `HG_DOOR_CONTAINER` | worker | `hg-door` | the door container the Docker launcher joins to each box's network |
 | `HG_BOX_DIR` | worker | `/var/lib/harnessgateway/boxes` | each box's writable directories, mounted at the same path inside and out |
@@ -143,6 +143,6 @@ be redone, never for a change (that is a new version).
 | `hg_reason: invalid_output` | the package printed an event the OpenAI schema rejects; the error names the field |
 | the api refuses to start | `HG_DOOR_KEY is required`, `HG_SECRET_KEY is at least 32 random bytes`: `harnessgateway keygen` prints both |
 | a lost invitation link, a locked or forgotten password | an admin: `POST /v1/accounts/{id}/reset` (console: Access → Accounts → Reset password) prints a new link; with no admin left, the operator invites a new one: `POST /internal/orgs/{id}/accounts` with the operator key (console: Platform → Organizations → Invite admin) |
-| SSO sign-in fails | `GET /v1/sso` (admin): issuer, client id, domains; the identity provider's redirect URI must be `HG_CONSOLE_URL/sso/callback`; the provider's refusal comes back in the api's error message, which the console shows on the sign-in page |
+| SSO sign-in fails | console: Access → Single sign-on (or `GET /v1/sso`): issuer, client id, domains; the identity provider's redirect URI must be `HG_CONSOLE_URL/sso/callback`; the provider's refusal comes back in the api's error message, which the console shows on the sign-in page |
 | `403 … an admin or a developer may …` | the key or account lacks the role the route needs (SPEC §8.4) |
 | an invitation never arrives | `HG_SMTP_URL` unset (the link is in the API's response and the console's dialog instead), or `docker compose logs api` shows `sending the invitation … failed` with the SMTP error |

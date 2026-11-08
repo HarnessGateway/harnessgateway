@@ -617,7 +617,7 @@ invitation and an admin key, printed once.
 
 ### 10.3 SSO (OIDC)
 
-One identity provider per organization, configured by an admin at `PUT /v1/sso`:
+One identity provider per organization, configured by an admin at `PUT /v1/sso` (the console's Access → Single sign-on):
 
 | Field | Meaning |
 |---|---|

@@ -28,8 +28,11 @@ new link. There is no default password anywhere. Ten failed sign-ins lock an acc
 lasts twelve hours and ends at sign-out, at a password change, or when an admin disables the account. Every sign-in,
 failure and lock is in the audit log.
 
-**SSO.** When an admin has configured the organization's identity provider (`PUT /v1/sso`: issuer, client id and
-secret, allowed email domains, auto-provisioning, the role claim), the sign-in page shows *Sign in with <name>*. The
+**SSO.** An admin configures the organization's OpenID Connect identity provider under *Access → Single sign-on*
+(or `PUT /v1/sso`): issuer, client id and secret, allowed email domains, auto-provisioning and the role for new
+people, the role claim, and whether passwords stay offered. The page shows the redirect URI to register at the
+provider, reads the issuer's discovery document when you save, and keeps the client secret write-only. Once one is
+configured, the sign-in page shows *Sign in with <name>*. The
 button goes to the console's `/api/sso/start`, which asks the api for the provider's authorization URL (PKCE, state and
 nonce kept in Redis) and redirects there; the provider returns to `HG_CONSOLE_URL/sso/callback`, which the console
 exchanges with the api for a sign-in and sets as the cookie. With `required` set, the password form is hidden; platform
