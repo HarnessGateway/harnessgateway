@@ -41,7 +41,7 @@ services:
   postgres:
     # the major an existing installation runs stays until its operator moves the data (docs/operations.md, Upgrade);
     # install.sh writes HG_POSTGRES_IMAGE into a new .env, so a new installation starts on the current major
-    image: ${HG_POSTGRES_IMAGE:-postgres:16-alpine}
+    image: ${HG_POSTGRES_IMAGE:-postgres:18-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD:?set POSTGRES_ROOT_PASSWORD in .env}
