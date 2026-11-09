@@ -6,10 +6,12 @@ import asyncio
 import os
 from dataclasses import dataclass
 
+from ..ports.launch import LaunchError
+
 LABEL = "harnessgateway.box"
 
 
-class DockerError(RuntimeError):
+class DockerError(LaunchError):
     pass
 
 

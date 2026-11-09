@@ -1,9 +1,13 @@
 """The launcher port (SPEC §6): start a box from the sandbox image with its two environment values, stop it, ask
-whether it is alive. Docker self-hosted; an extension registers a container service for the SaaS."""
+whether it is alive. Docker on one host, Kubernetes on a cluster (HG_LAUNCHER); an extension may register another."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
+
+
+class LaunchError(RuntimeError):
+    """A box could not be started or stopped: the worker records the launch as failed and goes on."""
 
 
 @dataclass(frozen=True)

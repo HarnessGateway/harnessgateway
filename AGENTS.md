@@ -24,7 +24,7 @@ The code is checked against it; a change the spec does not describe is a spec ch
 |---|---|
 | `harnessgateway/domain/` | pure rules, no I/O: names, egress entries, manifests, packages (digest, archive), MCP resolution, access, limits, meters, turn states |
 | `harnessgateway/contract/` | the Responses reader and writer (re-exporting hgkit's validator) and request routing |
-| `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, Mailer, Launcher) and their implementations (file and S3 stores, local and KMS key wrapping, SMTP, Docker with gVisor). Vendor SDKs live only in `adapters/` |
+| `harnessgateway/ports/`, `adapters/` | interfaces (BlobStore, KeyWrapper, Mailer, Launcher) and their implementations (file and S3 stores, local and KMS key wrapping, SMTP, Docker with gVisor, Kubernetes pods with gVisor). Vendor SDKs live only in `adapters/` |
 | `harnessgateway/store/` | `db.py` (Postgres, scoped transactions, migrations), `moments.py` (Redis: streams, queue, wake, SSO state), `objects.py` (the ledger over the blob store) |
 | `harnessgateway/services/` | one class per responsibility: orgs, accounts, sso, keys, audit, vault, providers, harnesses, installs, files, containers, turns (the caller's side), boxes (the box's and the door's side), snapshots, traces, usage, operations. `platform.py` is the composition root |
 | `harnessgateway/api/` | FastAPI routers: OpenAI-shaped (`responses.py`, `storage.py`), management (`manage.py`), identity and SSO (`identity.py`), the boxes', doors' and operator's routes (`internal.py`); `http.py` is authentication, body limits and the error envelope |
@@ -35,7 +35,8 @@ The code is checked against it; a change the spec does not describe is a spec ch
 | `packages/` | the two shipped packages: `shell`, the template the console copies for every new harness, and `harness-package-builder`, the built-in `init` installs |
 | `console/` | the organization and platform consoles (`server.py`, `static/`) and the chat (`chat/`): applications on the public API, vanilla JS, no build step |
 | `deploy/` | `compose.yaml`, `install.sh`, the Postgres init script, `.env.example` |
-| `docs/` | operations, api, security, console, packages, extensions |
+| `charts/harnessgateway/` | the Helm chart: the four roles, a bundled Postgres and Redis, the boxes namespace with its NetworkPolicy, the worker's RBAC |
+| `docs/` | operations, kubernetes, api, security, console, packages, extensions |
 | `tests/unit`, `tests/runner`, `tests/services`, `tests/e2e`, `tests/integration` | unit tests (the door included, on local servers); the runner against a fake api; the services and the API on a real Postgres and Redis (`HG_TEST_DATABASE_URL`, `HG_TEST_REDIS_URL`) with a fake runner; the console in a browser on a real API; tests against a live stack (`HG_TEST_STACK=1`) |
 | `scripts/version-check`, `scripts/sync-builder-seeds`, `scripts/sync-cdn-libs` | the one version, everywhere it is written; the builder's copies of the template and the packages guide, kept current; the chat's CDN libraries written into its scripts at the versions `console/chat/package.json` pins, with fresh integrity hashes |
 
@@ -122,7 +123,8 @@ then `harnessgateway init` for the organization and admin key, then `harnessgate
 ## Releasing
 
 `CHANGELOG.md`'s top entry is the version. `scripts/version-check` holds `pyproject.toml`, `harnessgateway/__init__.py`,
-`deploy/compose.yaml`, `deploy/install.sh`, `deploy/.env.example`, `docs/operations.md` and both Dockerfiles to it. A push to `main` whose
+`deploy/compose.yaml`, `deploy/install.sh`, `deploy/.env.example`, `docs/operations.md`, both Dockerfiles and the Helm
+chart's `Chart.yaml` to it. A push to `main` whose
 version has no tag builds both images for amd64 and arm64, pushes them to GHCR, tags `v<version>` and publishes the
 entry as the release. Both images are versioned together with the platform; a package revision bumps the package's
 own version in its manifest.

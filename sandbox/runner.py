@@ -188,7 +188,9 @@ class Box:
 def extract(archive: Path, into: Path) -> None:
     """A tar (gzip, zstd or plain, detected by tar) into a directory, one wrapping directory stripped."""
     into.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["tar", "-xf", str(archive), "-C", str(into)], check=True, capture_output=True)
+    # --no-overwrite-dir: the target may be a mount root the box user does not own (a Kubernetes emptyDir is root's,
+    # group-writable), whose mode and times tar may not reset
+    subprocess.run(["tar", "--no-overwrite-dir", "-xf", str(archive), "-C", str(into)], check=True, capture_output=True)
     children = [c for c in into.iterdir() if c.name != "pax_global_header"]
     if len(children) == 1 and children[0].is_dir() and not (into / "harness.json").exists():
         wrapper = children[0]
@@ -608,7 +610,16 @@ class Runner:
         log(f"install {'ok' if ok else 'failed'}: {size} bytes")
 
 
+class Terminated(BaseException):                 # not an Exception: no handler in the runner swallows it
+    """The box is being stopped from outside (its pod deleted or drained, its container stopped)."""
+
+
+def _terminated(signum: int, frame: object) -> None:
+    raise Terminated
+
+
 def main() -> int:
+    signal.signal(signal.SIGTERM, _terminated)
     env = os.environ
     api = Api(env["HG_API_URL"], env["HG_BOX_ID"], env["HG_BOX_TOKEN"], env.get("HG_DOOR", ""))
     run_uid = int(env["HG_RUN_UID"]) if env.get("HG_RUN_UID") and os.geteuid() == 0 else None
@@ -620,6 +631,13 @@ def main() -> int:
             runner.install()
         else:
             runner.serve()
+    except Terminated:
+        # say so at once: a turn in progress fails now rather than when the lease runs out, and the next turn gets a
+        # new box instead of this one
+        log("terminated: bye")
+        with contextlib.suppress(Exception):
+            api.call("POST", "/bye")
+        return 143
     except Exception:
         log(f"fatal: {traceback.format_exc()}")
         with contextlib.suppress(Exception):

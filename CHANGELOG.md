@@ -3,9 +3,41 @@
 The release record. A release is the top entry: when `main` carries a version here that has no tag yet, the release
 workflow builds and pushes the images, tags `v<version>` and publishes the entry as the release notes. To release:
 add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init__.py`, `deploy/compose.yaml`,
-`deploy/install.sh`, `deploy/.env.example` and `docs/operations.md` (`scripts/version-check` holds you to it), merge to `main`.
+`deploy/install.sh`, `deploy/.env.example`, `docs/operations.md` and `charts/harnessgateway/Chart.yaml`
+(`scripts/version-check` holds you to it), merge to `main`.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
+
+## [3.3.0]
+
+HarnessGateway runs on Kubernetes: each box a gVisor pod, fenced to the door.
+
+### Added
+
+- **A Kubernetes launcher** (`HG_LAUNCHER=kubernetes`). The worker starts each box as a pod in its own namespace:
+  the gVisor RuntimeClass, a read-only root, emptyDirs and a memory-backed `/tmp`, uid 10001 with every capability
+  dropped, cpu and memory limits, no DNS and one hosts entry for the door's Service, no service-account token, and
+  its id and token in a Secret the pod owns. Ended pods and orphaned Secrets are reaped every minute. Before it
+  launches anything the worker proves the fence: the RuntimeClass must exist, and a probe pod placed as a box must
+  reach the door and must not reach the api; otherwise it exits with the reason.
+- **A Helm chart**, `charts/harnessgateway`: the api, worker, door and console; a bundled Postgres and Redis or your
+  own; objects on a volume or S3; the boxes namespace under the `restricted` Pod Security Standard with the
+  NetworkPolicy that lets box pods reach the door's pods and nothing else; the worker's RBAC; keys generated once and
+  kept across upgrades; an optional RuntimeClass, CA bundle and Ingress. [`docs/kubernetes.md`](docs/kubernetes.md) is
+  the guide. Proven on a local cluster with gVisor and Calico: installs, turns on both API shapes, the fence, a
+  session restored on a new pod after its pod was deleted, and upgrades with the data in place.
+
+### Fixed
+
+- **A box that cannot start no longer loops.** A session box whose runner failed before it was ready said goodbye,
+  and the turn waiting for it got a new box that failed the same way, about once a second, indefinitely. The turn now
+  fails `sandbox_failed` with "the sandbox failed to start".
+- **A box that is stopped from outside says so.** The runner answers SIGTERM (a container stopped, a pod deleted or
+  evicted) by telling the api it is leaving: a turn in progress fails at once instead of when the lease runs out, and
+  the session's next turn gets a new box rather than the dead one.
+- The runner unpacks tools and restores snapshots into directories the box user does not own (a Kubernetes emptyDir is
+  root's, group-writable) without trying to change their mode or times.
+- The door logs a connection that closed before naming a host (a health probe's TCP check) at debug, not info.
 
 ## [3.2.0]
 

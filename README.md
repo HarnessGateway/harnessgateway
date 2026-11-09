@@ -124,6 +124,7 @@ in [`SPEC.md`](SPEC.md).
 |---|---|
 | [`SPEC.md`](SPEC.md) | the specification the code is checked against |
 | [`docs/operations.md`](docs/operations.md) | one host, many hosts, every setting, upgrades, releasing, troubleshooting |
+| [`docs/kubernetes.md`](docs/kubernetes.md) | the Helm chart: each box a gVisor pod fenced to the door |
 | [`docs/api.md`](docs/api.md) | the API as a conversation: turns, sessions, management |
 | [`docs/security.md`](docs/security.md) | isolation, egress, secrets, access, limits |
 | [`docs/console.md`](docs/console.md) | the organization and platform consoles and the chat |

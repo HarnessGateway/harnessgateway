@@ -11,8 +11,7 @@ import zlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..adapters.docker_cli import DockerError
-from ..ports.launch import BoxSpec, Launcher
+from ..ports.launch import BoxSpec, Launcher, LaunchError
 from ..services.platform import Platform
 
 TICK_S = 5
@@ -23,14 +22,18 @@ log = logging.getLogger("harnessgateway.worker")
 class Worker:
     def __init__(self, plat: Platform, launcher: Launcher | None = None):
         self.plat = plat
-        self.launcher = launcher or plat.extensions.launcher(plat.settings) or self._docker()
+        self.launcher = launcher or plat.extensions.launcher(plat.settings) or self._builtin()
         self.name = f"{socket.gethostname()}-{id(self) & 0xffff:x}"
         self.duties: list[tuple[str, float, Callable[[], Awaitable[object]]]] = [
             ("lost", 15, plat.boxes.lost), ("reconcile", 30, self.reconcile), ("retention", 300, self.retention),
             ("purge", 300, self.purge), ("gc", 600, plat.snapshots.collect), ("accrue", 3600, plat.usage.accrue_storage),
             ("reap", 60, self.launcher.reap)]
 
-    def _docker(self) -> Launcher:
+    def _builtin(self) -> Launcher:
+        """The launcher HG_LAUNCHER names: Docker on this host, or pods on the cluster the worker runs in."""
+        if self.plat.settings.launcher == "kubernetes":
+            from ..adapters.launch_k8s import KubernetesLauncher
+            return KubernetesLauncher(self.plat.settings)
         from ..adapters.launch_docker import DockerLauncher
         return DockerLauncher(self.plat.settings)
 
@@ -38,7 +41,12 @@ class Worker:
         await self.plat.open()
         prepare = getattr(self.launcher, "prepare", None)
         if prepare:
-            await prepare()
+            try:
+                await prepare()
+            except LaunchError as e:                 # the launcher cannot run boxes safely here: say why and stop
+                await self.plat.close()
+                log.error("worker %s: the launcher is not ready: %s", self.name, e)
+                raise SystemExit(1) from None
         log.info("worker %s: launcher %s", self.name, type(self.launcher).__name__)
         try:
             await asyncio.gather(self.jobs(), self.clock())
@@ -89,7 +97,7 @@ class Worker:
                        box["kind"])
         try:
             reference = await self.launcher.start(spec)
-        except (DockerError, OSError) as e:
+        except (LaunchError, OSError) as e:
             log.error("box %s could not start: %s", box_id, e)
             await self.plat.boxes.launch_failed(box_id, str(e)[:500])
             return

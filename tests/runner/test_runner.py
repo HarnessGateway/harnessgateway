@@ -277,3 +277,21 @@ def test_a_line_the_api_refuses_stops_the_turn(tmp_path):
     out = run_runner(api, tmp_path / "root")
     assert out.returncode == 0, out.stderr
     assert api.reports[rid]["outcome"] == "stopped" and time.monotonic() - started < 20
+
+
+def test_a_terminated_box_says_bye_at_once(tmp_path):
+    """Its pod deleted or drained: SIGTERM, and the api hears bye before the box goes."""
+    import signal
+    api = FakeApi(standby_s=60)
+    env = {**os.environ, "HG_API_URL": api.url, "HG_BOX_ID": "box_1", "HG_BOX_TOKEN": "hgb_test", "HG_DOOR": "",
+           "HG_ROOT": str(tmp_path), "PYTHONPATH": str(ROOT / "sandbox")}
+    env.pop("HG_RUN_UID", None)
+    proc = subprocess.Popen([sys.executable, str(RUNNER)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + 20
+    while ("POST", "/ready", {}) not in api.calls and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert ("POST", "/ready", {}) in api.calls
+    proc.send_signal(signal.SIGTERM)
+    _, err = proc.communicate(timeout=10)
+    assert proc.returncode == 143, err
+    assert ("POST", "/bye", {}) in api.calls and "terminated: bye" in err

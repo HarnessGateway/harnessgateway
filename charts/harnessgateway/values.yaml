@@ -1,0 +1,116 @@
+# HarnessGateway on Kubernetes. Every key is optional; `helm install hg charts/harnessgateway -n hg --create-namespace`
+# runs the whole platform with a bundled Postgres and Redis and objects on a volume. docs/kubernetes.md has the guide.
+
+image:
+  repository: ghcr.io/harnessgateway/harnessgateway
+  tag: ""                            # the chart's appVersion when empty
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The image every box runs (and the network probe). Box pods pull it in the boxes namespace with no pull secret: use a
+# registry the nodes can pull from (a public one, or node credentials).
+sandbox:
+  repository: ghcr.io/harnessgateway/sandbox
+  tag: ""
+  pullPolicy: IfNotPresent
+  runtime: runsc                     # runsc (gVisor, through boxes.runtimeClassName) | runc (unisolated: tests only)
+
+# Where box pods run. The chart makes the namespace, the NetworkPolicy that fences box pods to the door, and the
+# worker's rights there. The cluster's CNI must enforce NetworkPolicy: the worker proves it with a probe pod at
+# start-up and refuses to launch boxes otherwise.
+boxes:
+  namespace: ""                      # <release namespace>-boxes when empty
+  createNamespace: true
+  runtimeClassName: gvisor           # a RuntimeClass whose handler is runsc (GKE Sandbox names it gvisor)
+  createRuntimeClass: false          # make it (cluster-scoped): only where containerd already has the runsc handler
+  probe: true                        # prove the fence at worker start-up
+
+# The platform's keys. Generated at install and kept across upgrades (and after uninstall, so a reinstall over the same
+# volumes still opens its data). Or name an existing Secret with the keys secret-key, door-key, operator-key and, with
+# the bundled Postgres, db-password and postgres-password.
+secrets:
+  existingSecret: ""
+
+api:
+  replicas: 1
+  resources: {requests: {cpu: 250m, memory: 384Mi}, limits: {memory: 1Gi}}
+  service: {type: ClusterIP, port: 8000}
+  nodeSelector: {}
+  tolerations: []
+
+worker:
+  replicas: 1
+  resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 768Mi}}
+  nodeSelector: {}
+  tolerations: []
+
+door:
+  replicas: 1
+  port: 3128
+  resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+  nodeSelector: {}
+  tolerations: []
+
+console:
+  enabled: true
+  url: http://localhost:8800         # where people open the console: invitation and SSO links are built on it
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+  service: {type: ClusterIP, port: 8800}
+  persistence: {size: 1Gi, storageClass: ""}
+
+# Objects (packages, snapshots, files). Empty url: a volume shared by the api and worker (ReadWriteOnce by default, so
+# the worker is scheduled beside the api; with ReadWriteMany storage set accessMode and both scale freely). For S3 or
+# an S3-compatible store: s3://bucket[/prefix][?region=..][&endpoint=..], credentials from envSecret (a Secret holding
+# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY) or the pods' cloud identity.
+objects:
+  url: ""
+  envSecret: ""
+  persistence: {size: 20Gi, storageClass: "", accessMode: ReadWriteOnce}
+
+postgresql:
+  enabled: true                      # false: set externalDatabase
+  image: postgres:18-alpine
+  resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 1Gi}}
+  persistence: {size: 10Gi, storageClass: ""}
+
+# An external Postgres: a Secret whose key holds postgresql://user:password@host:5432/db. The role must not be a
+# superuser or BYPASSRLS (row-level security isolates organizations).
+externalDatabase:
+  existingSecret: ""
+  key: database-url
+
+redis:
+  enabled: true                      # false: set externalRedis.url
+  image: redis:8-alpine
+  maxmemory: 512mb
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 768Mi}}
+
+externalRedis:
+  url: ""
+
+# A network that re-signs TLS: a ConfigMap holding the CA (PEM). The door trusts it upstream and boxes get it in
+# their trust bundle. A proxy to the internet: HG_UPSTREAM_PROXY in config.
+caBundle:
+  configMap: ""
+  key: ca.crt
+
+# Further HG_ settings for the api, worker and door (docs/operations.md), e.g. HG_SMTP_URL from a Secret through
+# extraEnv, or HG_UPSTREAM_PROXY, HG_ALLOW_PRIVATE_EGRESS, HG_EXTENSIONS, HG_DEFAULT_* here.
+config:
+  HG_LOG_LEVEL: info
+extraEnv: []
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  console: {host: ""}                # console.example.com
+  api: {host: ""}                    # api.example.com
+  tls: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10002
+  runAsGroup: 10002
+  fsGroup: 10002
+  seccompProfile: {type: RuntimeDefault}

@@ -615,6 +615,11 @@ class Boxes:
 
     # ── the end of a box ────────────────────────────────────────────────────────────────────────────────────────────
     async def bye(self, box: dict[str, Any]) -> None:
+        """The box is leaving. A session box that leaves before it was ever ready failed to start (its runner could not
+        boot): the turns waiting on it fail, rather than a new box being started for them that would fail the same way."""
+        if box["kind"] == "session" and box["ready_at"] is None:
+            await self._gone(box["id"], "failed to start", Reason.SANDBOX_FAILED, "the sandbox failed to start")
+            return
         await self._gone(box["id"], "bye", None, "")
 
     async def _gone(self, box_id: str, why: str, reason: Reason | None, message: str) -> None:

@@ -1,0 +1,15 @@
+{{- if include "hg.objectsInVolume" . }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hg.fullname" . }}-objects
+  labels: {{- include "hg.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ .Values.objects.persistence.accessMode }}]
+  {{- with .Values.objects.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources: {requests: {storage: {{ .Values.objects.persistence.size }}}}
+{{- end }}

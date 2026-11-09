@@ -1,0 +1,73 @@
+{{- $pg := printf "%s-postgres" (include "hg.fullname" .) }}
+{{- $redis := printf "%s-redis" (include "hg.fullname" .) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hg.fullname" . }}-api
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.api.service.type }}
+  selector: {{- include "hg.select" (dict "ctx" . "c" "api") | nindent 4 }}
+  ports: [{name: http, port: {{ .Values.api.service.port }}, targetPort: 8000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hg.fullname" . }}-api
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels: {{- include "hg.select" (dict "ctx" . "c" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "hg.select" (dict "ctx" . "c" "api") | nindent 8 }}
+      annotations:
+        checksum/config: {{ toJson .Values.config | sha256sum | trunc 16 }}
+    spec:
+      {{- include "hg.podCommon" . | nindent 6 }}
+      automountServiceAccountToken: false
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.postgresql.enabled .Values.redis.enabled }}
+      initContainers:
+        {{- if .Values.postgresql.enabled }}
+        {{- include "hg.waitFor" (dict "ctx" . "name" "postgres" "host" $pg "port" 5432) | nindent 8 }}
+        {{- end }}
+        {{- if .Values.redis.enabled }}
+        {{- include "hg.waitFor" (dict "ctx" . "name" "redis" "host" $redis "port" 6379) | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "hg.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [api]
+          env: {{- include "hg.env" . | nindent 12 }}
+          {{- include "hg.envFrom" . | nindent 10 }}
+          ports: [{name: http, containerPort: 8000}]
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          {{- include "hg.containerSecurity" . | nindent 10 }}
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "hg.commonMounts" . | nindent 12 }}
+            {{- if include "hg.objectsInVolume" . }}
+            - {name: objects, mountPath: /var/lib/harnessgateway-objects}
+            {{- end }}
+      volumes:
+        {{- include "hg.commonVolumes" . | nindent 8 }}
+        {{- if include "hg.objectsInVolume" . }}
+        - name: objects
+          persistentVolumeClaim: {claimName: {{ include "hg.fullname" . }}-objects}
+        {{- end }}

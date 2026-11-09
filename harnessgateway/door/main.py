@@ -292,7 +292,8 @@ class Door:
                 writer.write(FORBIDDEN)
         except (TimeoutError, ConnectionError, OSError, ValueError, ssl.SSLError, asyncio.IncompleteReadError,
                 asyncio.LimitOverrunError, httpx.HTTPError) as e:
-            log.info("%s:%s failed: %s", host, port, type(e).__name__)
+            # a connection that closed before naming a host is a health probe's TCP check, or noise: debug only
+            (log.info if host else log.debug)("%s:%s failed: %s", host, port, type(e).__name__)
             with contextlib.suppress(Exception):
                 writer.write(BAD_GATEWAY)
         finally:

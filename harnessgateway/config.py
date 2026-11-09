@@ -41,6 +41,12 @@ class Settings:
     sandbox_runtime: str = "runsc"
     door_container: str = "hg-door"
     box_dir: Path = Path("/var/lib/harnessgateway/boxes")
+    launcher: str = "docker"                  # docker | kubernetes
+    k8s_namespace: str = ""                   # where box pods run (its NetworkPolicy lets them reach only the door)
+    k8s_door_service: str = ""                # the door's Service, namespace/name: box pods reach it by its address
+    k8s_runtime_class: str = "gvisor"         # the RuntimeClass whose handler is runsc
+    k8s_pull_policy: str = "IfNotPresent"
+    k8s_probe: bool = True                    # prove at start-up that box pods reach the door and nothing else
     upstream_proxy: str = ""
     ca_file: str = ""
     allow_private_egress: bool = False
@@ -105,6 +111,10 @@ class Settings:
                 sandbox_image=get("SANDBOX_IMAGE", cls.sandbox_image), platform_image=get("PLATFORM_IMAGE", cls.platform_image),
                 sandbox_runtime=get("SANDBOX_RUNTIME", cls.sandbox_runtime),
                 door_container=get("DOOR_CONTAINER", cls.door_container), box_dir=Path(get("BOX_DIR", str(cls.box_dir))),
+                launcher=get("LAUNCHER", cls.launcher).lower(), k8s_namespace=get("K8S_NAMESPACE"),
+                k8s_door_service=get("K8S_DOOR_SERVICE"), k8s_runtime_class=get("K8S_RUNTIME_CLASS", cls.k8s_runtime_class),
+                k8s_pull_policy=get("K8S_PULL_POLICY", cls.k8s_pull_policy),
+                k8s_probe=_bool(get("K8S_PROBE", "1")),
                 upstream_proxy=get("UPSTREAM_PROXY"), ca_file=get("CA_FILE"),
                 allow_private_egress=_bool(get("ALLOW_PRIVATE_EGRESS")),
                 console_url=get("CONSOLE_URL", cls.console_url).rstrip("/"), smtp_url=get("SMTP_URL"),
@@ -122,6 +132,16 @@ class Settings:
             problems.append("HG_DOOR_KEY is required (hgd_..., from harnessgateway keygen): doors authenticate with it")
         if s.sandbox_runtime not in ("runsc", "runc"):
             problems.append("HG_SANDBOX_RUNTIME is runsc or runc")
+        if s.launcher not in ("docker", "kubernetes"):
+            problems.append("HG_LAUNCHER is docker or kubernetes")
+        if s.launcher == "kubernetes" and "worker" in wanted:
+            if not s.k8s_namespace:
+                problems.append("HG_K8S_NAMESPACE is required with HG_LAUNCHER=kubernetes: the namespace box pods run in")
+            if not s.k8s_door_service:
+                problems.append("HG_K8S_DOOR_SERVICE (namespace/name of the door's Service) is required with "
+                                "HG_LAUNCHER=kubernetes")
+            if s.k8s_pull_policy not in ("Always", "IfNotPresent", "Never"):
+                problems.append("HG_K8S_PULL_POLICY is Always, IfNotPresent or Never")
         if s.ca_file and not Path(s.ca_file).is_file():
             problems.append(f"HG_CA_FILE names no file: {s.ca_file}")
         if s.smtp_url and not s.mail_from:

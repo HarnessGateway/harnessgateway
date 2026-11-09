@@ -52,7 +52,7 @@ held back from the core.
 | **Box** | One sandbox container running one session, for one or more consecutive turns, then gone. |
 | **Runner** | The small program inside the box that drives a turn: fetch, restore, run, stream, snapshot, report. |
 | **Door** | The egress proxy. A box's only way out. Enforces the allow list and swaps secret placeholders for values. |
-| **Launcher** | The adapter that starts a box: Docker self-hosted, a container service in the SaaS. |
+| **Launcher** | The adapter that starts a box: Docker on one host, a pod on Kubernetes, a container service in the SaaS. |
 | **Worker** | The process that consumes the job queue (launching boxes, installs, stops, deletions) and runs scheduled duties. |
 | **Placeholder** | A random token (`hgs_…`) a box holds where a secret would be; the door replaces it on the way out, only toward the hosts it is bound to. |
 | **Agent-seconds** | Seconds a turn was running, measured by the API's clock from the box's first report to its finish. The unit customers are billed in. |
@@ -415,7 +415,7 @@ Run by every worker on a tick, each under a Postgres advisory lock so one runs a
 | `purge` | 5 min | unstored sessions idle 10 minutes; spent idempotency keys and sign-in tokens after a day; `objects` rows deleted over a day |
 | `gc` | 10 min | blobs with `refs = 0` untouched for an hour: object deleted, row deleted |
 | `accrue` | 1 h | storage GiB-hours per organization since its last accrual (§12.2) |
-| `reap` (Docker launcher only) | 1 min | exited box containers and their networks removed |
+| `reap` | 1 min | exited box containers and their networks removed (Docker); ended box pods and Secrets left without a pod removed (Kubernetes) |
 
 ---
 
@@ -428,6 +428,14 @@ capabilities, `no-new-privileges`, uid 10001, `--cpus`, `--memory` (`memory_mb +
 one hosts entry (`hg-door`), and bind mounts only for its own directories. Self-hosted, Docker runs it under gVisor
 (`runsc`) when installed; `HG_SANDBOX_RUNTIME=runc` is allowed and logged as unisolated. In the SaaS the container
 service's micro-VM is the isolation.
+
+On Kubernetes (`HG_LAUNCHER=kubernetes`) a box is a pod in its own namespace with the same shape: the gVisor
+RuntimeClass, a read-only root, emptyDirs for its directories and a memory-backed `/tmp`, uid 10001, no capabilities,
+cpu and memory limits, `dnsPolicy: None` with the one hosts entry pointing at the door's Service, no service-account
+token, and its two environment values in a Secret the pod owns. Instead of a network of its own, a NetworkPolicy lets
+box pods open connections to the door's pods on the door's port and nothing else, and accept none. The worker proves
+the fence before it launches anything: a probe pod placed as a box must reach the door and must not reach the api, and
+the RuntimeClass must exist; otherwise the worker exits and says which check failed.
 
 ### 8.2 Egress
 
@@ -797,7 +805,7 @@ harnessgateway/
   contract/              the Responses reader and writer (re-exports hgkit's validator) and routing
   domain/                names, egress, manifest, package, mcp, access, limits, meters, turn states — pure
   ports/                 blob store, key wrapper, mailer, launcher
-  adapters/              blob_fs, blob_s3, keys_local, keys_kms, mail_smtp, launch_docker
+  adapters/              blob_fs, blob_s3, keys_local, keys_kms, mail_smtp, launch_docker, launch_k8s
   store/                 db.py (Postgres, scoped transactions, migrations), moments.py (Redis: streams, queue, pubsub, SSO state), objects.py (the ledger over the blob store)
   services/              orgs, accounts, sso, keys, audit, vault, providers, harnesses, installs, files, containers, turns, boxes, snapshots, traces, usage, operations, platform (composition root)
   api/                   http.py (principals, body limits, envelope), responses, storage, manage, identity, internal, app.py
@@ -870,7 +878,10 @@ Every setting is an environment variable with the `HG_` prefix. Secrets never ap
 | `HG_DOOR` | worker | `host:port` of the door as boxes reach it (self-hosted: `hg-door:3128`) |
 | `HG_SANDBOX_IMAGE`, `HG_PLATFORM_IMAGE` | api, worker | images (installs are keyed by the sandbox image; versions report both) |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` (default) or `runc` |
-| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher). The launcher is Docker unless an extension's `launcher` hook returns another (§13) |
+| `HG_LAUNCHER` | worker | `docker` (default) or `kubernetes`; an extension's `launcher` hook, when it returns one, takes precedence (§13) |
+| `HG_K8S_NAMESPACE`, `HG_K8S_DOOR_SERVICE` | worker | Kubernetes: the namespace box pods run in, and the door's Service (`namespace/name`) whose cluster IP is each box's `hg-door` |
+| `HG_K8S_RUNTIME_CLASS`, `HG_K8S_PULL_POLICY`, `HG_K8S_PROBE` | worker | Kubernetes: the RuntimeClass for `runsc` (`gvisor`), the sandbox image's pull policy (`IfNotPresent`), the start-up fence probe (`1`) |
+| `HG_DOOR_CONTAINER` | worker | the door container's name, joined to each box's network (Docker launcher) |
 | `HG_BOX_DIR` | worker | where the Docker launcher keeps each box's writable directories, mounted at the same path inside and out |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE`, `HG_ALLOW_PRIVATE_EGRESS` | door, api | an operator's proxy and CA; private addresses allowed |
 | `HG_CONSOLE_URL` | api | where people open the console; invitation and SSO links |

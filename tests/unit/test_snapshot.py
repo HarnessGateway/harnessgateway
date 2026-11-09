@@ -99,6 +99,35 @@ def test_round_trip_and_restore_reproduce_the_tree(tmp_path):
         restore(tmp_path / "bad", loaded, lambda h: b"wrong")
 
 
+def test_restore_leaves_the_mode_of_a_mount_root_it_does_not_own(tmp_path, monkeypatch):
+    """A Kubernetes emptyDir is root's: the box user may not chmod it, and restore goes on; its own directories it may."""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    make_tree(src)
+    m = walk(src, included_roots(["."]))
+    dst.mkdir()
+    real_chmod, real_stat = os.chmod, os.stat
+    mount = str(dst / "workspace")
+
+    def chmod(path, mode, *a, **k):
+        if str(path) == mount:
+            raise PermissionError(1, "Operation not permitted", str(path))
+        return real_chmod(path, mode, *a, **k)
+
+    def stat(path, *a, **k):
+        st = real_stat(path, *a, **k)
+        if str(path) == mount:
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, os.geteuid() + 1, *tuple(st)[5:]))
+        return st
+
+    monkeypatch.setattr(os, "chmod", chmod)
+    monkeypatch.setattr(os, "stat", stat)
+    assert restore(dst, m, store_of(src, m).__getitem__) == m.size()
+    monkeypatch.setattr(os, "stat", real_stat)
+    with pytest.raises(PermissionError):                         # one it owns still fails loudly
+        restore(dst, m, store_of(src, m).__getitem__)
+
+
 def test_under_keeps_one_root(tmp_path):
     make_tree(tmp_path)
     m = walk(tmp_path, included_roots(["."]))

@@ -9,7 +9,7 @@
 # setuid files left in the image (bash is there only to syntax-check package scripts). CI scans it with Trivy on every
 # change and weekly (.github/workflows/security.yml); a release attests its build provenance.
 #
-# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:3.2.0 .
+# Build: docker build -t ghcr.io/harnessgateway/harnessgateway:3.3.0 .
 # Behind a TLS-intercepting proxy, pass its CA as a build secret: --secret id=ca,src=/path/ca.pem
 FROM cgr.dev/chainguard/wolfi-base@sha256:8509ee4351a2e501b7f98201f2e2642396e82020c61a589cacdcfe74b9de46c1
 
