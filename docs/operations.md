@@ -57,8 +57,10 @@ processes at them:
    (the same everywhere), `HG_DOOR_KEY` and `HG_API_URL` (the api as boxes and doors reach it).
 3. **worker** replicas: `harnessgateway worker`, as many as the queue needs. Self-hosted, each runs on a Docker +
    gVisor host with the socket mounted and `HG_BOX_DIR` at the same path inside and out; it launches boxes on its own
-   host and needs the door on that host too (`HG_DOOR_CONTAINER`). In a container service (the SaaS), an extension's
-   launcher starts boxes as tasks and the worker runs anywhere.
+   host and needs the door on that host too (`HG_DOOR_CONTAINER`). On Kubernetes (`HG_LAUNCHER=kubernetes`) the worker
+   starts each box as a pod and runs anywhere in the cluster: [`kubernetes.md`](kubernetes.md) and the Helm chart in
+   `charts/harnessgateway` set it all up. In a container service (the SaaS), an extension's launcher starts boxes as
+   tasks and the worker runs anywhere.
 4. **door** replicas behind one address boxes reach as `HG_DOOR`: `harnessgateway door`. A door holds a policy cache
    and the CA derived from the secret key, nothing else; a box's next connection may land on any door.
 5. **console** anywhere: `python3 console/server.py --api https://hg.internal`.
@@ -89,9 +91,15 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_API_URL` | api, worker, door | `http://localhost:8000` | the api as boxes and doors reach it (its host is always allowed through the door) |
 | `HG_DOOR` | worker, door | `hg-door:3128` | `host:port` of the door as boxes reach it; the door listens on that port |
 | `HG_HOST`, `HG_PORT` | api | `0.0.0.0`, `8000` | the api's listen address |
-| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.2.0` | the image every box runs (installs are keyed by it) |
-| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.2.0` | reported under `GET /internal/versions` |
-| `HG_SANDBOX_RUNTIME` | worker | `runsc` | the Docker runtime for boxes; `runc` runs them unisolated (logged) |
+| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.3.0` | the image every box runs (installs are keyed by it) |
+| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.3.0` | reported under `GET /internal/versions` |
+| `HG_SANDBOX_RUNTIME` | worker | `runsc` | gVisor for boxes (Docker's runtime, or the RuntimeClass on Kubernetes); `runc` runs them unisolated (logged) |
+| `HG_LAUNCHER` | worker | `docker` | `docker` (boxes are containers on the worker's host) or `kubernetes` (boxes are pods; [kubernetes.md](kubernetes.md)) |
+| `HG_K8S_NAMESPACE` | worker | required with `kubernetes` | the namespace box pods run in |
+| `HG_K8S_DOOR_SERVICE` | worker | required with `kubernetes` | the door's Service, `namespace/name`: its cluster IP is each box's `hg-door` |
+| `HG_K8S_RUNTIME_CLASS` | worker | `gvisor` | the RuntimeClass whose handler is `runsc` (unused with `HG_SANDBOX_RUNTIME=runc`) |
+| `HG_K8S_PULL_POLICY` | worker | `IfNotPresent` | the sandbox image's pull policy in box pods |
+| `HG_K8S_PROBE` | worker | `1` | prove at start-up that a box pod reaches the door and not the api; `0` skips it |
 | `HG_DOOR_CONTAINER` | worker | `hg-door` | the door container the Docker launcher joins to each box's network |
 | `HG_BOX_DIR` | worker | `/var/lib/harnessgateway/boxes` | each box's writable directories, mounted at the same path inside and out |
 | `HG_UPSTREAM_PROXY`, `HG_CA_FILE` | door, api | — | see above |
@@ -120,7 +128,7 @@ and stderr; `full`: the whole stdout and stderr of every turn, stored as objects
 ## Releasing
 
 The changelog is the release. `CHANGELOG.md`'s top entry names the version; `scripts/version-check` (run by CI) holds
-`pyproject.toml`, `harnessgateway/__init__.py`, compose, the installer, `.env.example`, both Dockerfiles and this page
+`pyproject.toml`, `harnessgateway/__init__.py`, compose, the installer, `.env.example`, both Dockerfiles, the Helm chart and this page
 to the same one.
 When `main` carries a version that has no tag yet, the release workflow builds both images for amd64 and arm64, pushes
 them to GHCR as `:<version>` and `:latest` with a build provenance attestation beside each (`gh attestation verify

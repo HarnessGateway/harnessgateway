@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "hg.fullname" . }}-worker
+  labels: {{- include "hg.labels" . | nindent 4 }}
+---
+# The worker starts each box as a pod in the boxes namespace (HG_LAUNCHER=kubernetes). It holds no Docker socket and
+# no host path: box pods are fenced to the door by the NetworkPolicy and isolated by the gVisor RuntimeClass.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hg.fullname" . }}-worker
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels: {{- include "hg.select" (dict "ctx" . "c" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "hg.select" (dict "ctx" . "c" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ toJson .Values.config | sha256sum | trunc 16 }}
+    spec:
+      {{- include "hg.podCommon" . | nindent 6 }}
+      serviceAccountName: {{ include "hg.fullname" . }}-worker
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and (include "hg.objectsInVolume" .) (eq .Values.objects.persistence.accessMode "ReadWriteOnce") }}
+      affinity:                      # the objects volume mounts on one node only: beside the api
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: {{- include "hg.select" (dict "ctx" . "c" "api") | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+      initContainers:
+        {{- include "hg.waitFor" (dict "ctx" . "name" "api" "host" (printf "%s-api" (include "hg.fullname" .)) "port" .Values.api.service.port) | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "hg.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [worker]
+          env:
+            {{- include "hg.env" . | nindent 12 }}
+            - {name: HG_LAUNCHER, value: kubernetes}
+            - {name: HG_K8S_NAMESPACE, value: {{ include "hg.boxesNamespace" . }}}
+            - {name: HG_K8S_DOOR_SERVICE, value: {{ .Release.Namespace }}/{{ include "hg.fullname" . }}-door}
+            - {name: HG_K8S_RUNTIME_CLASS, value: {{ .Values.boxes.runtimeClassName }}}
+            - {name: HG_K8S_PULL_POLICY, value: {{ .Values.sandbox.pullPolicy }}}
+            - {name: HG_K8S_PROBE, value: {{ ternary "1" "0" .Values.boxes.probe | quote }}}
+          {{- include "hg.envFrom" . | nindent 10 }}
+          {{- include "hg.containerSecurity" . | nindent 10 }}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "hg.commonMounts" . | nindent 12 }}
+            {{- if include "hg.objectsInVolume" . }}
+            - {name: objects, mountPath: /var/lib/harnessgateway-objects}
+            {{- end }}
+      volumes:
+        {{- include "hg.commonVolumes" . | nindent 8 }}
+        {{- if include "hg.objectsInVolume" . }}
+        - name: objects
+          persistentVolumeClaim: {claimName: {{ include "hg.fullname" . }}-objects}
+        {{- end }}

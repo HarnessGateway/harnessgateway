@@ -1,0 +1,68 @@
+{{- if .Values.console.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hg.fullname" . }}-console
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.console.service.type }}
+  selector: {{- include "hg.select" (dict "ctx" . "c" "console") | nindent 4 }}
+  ports: [{name: http, port: {{ .Values.console.service.port }}, targetPort: 8800}]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hg.fullname" . }}-console
+  labels: {{- include "hg.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.console.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources: {requests: {storage: {{ .Values.console.persistence.size }}}}
+---
+# The console holds no key: people sign in with their platform account. Its volume holds drafts (packages being
+# written in it).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hg.fullname" . }}-console
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{- include "hg.select" (dict "ctx" . "c" "console") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "hg.select" (dict "ctx" . "c" "console") | nindent 8 }}
+    spec:
+      {{- include "hg.podCommon" . | nindent 6 }}
+      automountServiceAccountToken: false
+      initContainers:
+        {{- include "hg.waitFor" (dict "ctx" . "name" "api" "host" (printf "%s-api" (include "hg.fullname" .)) "port" .Values.api.service.port) | nindent 8 }}
+      containers:
+        - name: console
+          image: {{ include "hg.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [python, /opt/harnessgateway/console/server.py]
+          args: [--host, 0.0.0.0, --port, "8800"]
+          env:
+            - {name: HG_API, value: {{ include "hg.apiUrl" . }}}
+            - {name: HG_CONSOLE_DIR, value: /var/lib/harnessgateway-console}
+          ports: [{name: http, containerPort: 8800}]
+          readinessProbe:
+            httpGet: {path: /login, port: http}
+            periodSeconds: 5
+          {{- include "hg.containerSecurity" . | nindent 10 }}
+          resources: {{- toYaml .Values.console.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: drafts, mountPath: /var/lib/harnessgateway-console}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: drafts
+          persistentVolumeClaim: {claimName: {{ include "hg.fullname" . }}-console}
+{{- end }}

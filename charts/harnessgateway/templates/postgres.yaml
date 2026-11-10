@@ -1,0 +1,82 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hg.fullname" . }}-postgres-init
+  labels: {{- include "hg.labels" . | nindent 4 }}
+data:
+  # The platform connects as an ordinary role that owns its database: never a superuser, never BYPASSRLS, so row-level
+  # security isolates organizations. The api refuses to start as a role that would bypass it.
+  10-harnessgateway.sh: |
+    #!/bin/sh
+    set -eu
+    psql -v ON_ERROR_STOP=1 --username postgres <<SQL
+    CREATE ROLE harnessgateway LOGIN PASSWORD '${HG_DB_PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    CREATE DATABASE harnessgateway OWNER harnessgateway;
+    SQL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hg.fullname" . }}-postgres
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "hg.select" (dict "ctx" . "c" "postgres") | nindent 4 }}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "hg.fullname" . }}-postgres
+  labels: {{- include "hg.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "hg.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels: {{- include "hg.select" (dict "ctx" . "c" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "hg.select" (dict "ctx" . "c" "postgres") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70                # postgres in the alpine image
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: {{ .Values.postgresql.image }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "hg.secret" . }}, key: postgres-password}}
+            - name: HG_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "hg.secret" . }}, key: db-password}}
+            # the data directory, the same on every major (18+ images otherwise default to a per-major directory)
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe:
+            exec: {command: [pg_isready, -U, postgres, -d, harnessgateway]}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources: {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            - {name: run, mountPath: /var/run/postgresql}
+      volumes:
+        - name: init
+          configMap: {name: {{ include "hg.fullname" . }}-postgres-init, defaultMode: 0555}
+        - name: run
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources: {requests: {storage: {{ .Values.postgresql.persistence.size }}}}
+{{- end }}

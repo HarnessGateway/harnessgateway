@@ -231,5 +231,10 @@ def restore(root: Path, manifest: Manifest, fetch: Callable[[str], bytes]) -> in
             os.symlink(e.target, dest)
     for e in entries:
         if e.kind == "d":
-            os.chmod(root / e.path, e.mode)
+            try:
+                os.chmod(root / e.path, e.mode)
+            except PermissionError:
+                if (root / e.path).stat().st_uid == os.geteuid():
+                    raise
+                # not ours: a mount root the platform made (a Kubernetes emptyDir is root's); its mode is the platform's
     return written

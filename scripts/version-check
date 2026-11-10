@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The one version, everywhere it is written: pyproject, the package, the changelog's top entry, compose, the installer,
-the ops doc and the two Dockerfiles. CI runs this; a release is the changelog's top entry."""
+the ops doc, the two Dockerfiles and the Helm chart. CI runs this; a release is the changelog's top entry."""
 import re
 import sys
 from pathlib import Path
@@ -19,6 +19,11 @@ for rel in ("deploy/compose.yaml", "deploy/install.sh", "deploy/.env.example", "
         problems.append(f"{rel} names version(s) {', '.join(others)}, not {pyproject}")
     if rel == "deploy/install.sh" and f"VERSION={pyproject}\n" not in text:
         problems.append(f"{rel}: VERSION is not {pyproject}")
+chart = (root / "charts/harnessgateway/Chart.yaml").read_text()
+for field in ("version", "appVersion"):
+    found = re.search(rf'^{field}: "?([^"\n]+)"?$', chart, re.M)
+    if not found or found[1] != pyproject:
+        problems.append(f"charts/harnessgateway/Chart.yaml {field} is {found[1] if found else 'missing'}, not {pyproject}")
 openai_pin = re.search(r'"openai==([^"]+)"', (root / "pyproject.toml").read_text())[1]
 if f"openai=={openai_pin} " not in (root / "sandbox/Dockerfile").read_text():
     problems.append(f"sandbox/Dockerfile installs another openai than pyproject's {openai_pin}: hgkit and the platform must validate alike")

@@ -210,6 +210,20 @@ async def test_output_that_breaks_the_contract_fails_the_turn_and_stops_the_proc
     assert doc["status"] == "failed" and doc["metadata"]["hg_reason"] == "invalid_output"
 
 
+async def test_a_box_that_cannot_boot_fails_the_turn_instead_of_being_started_again(plat, org, ready, runner):
+    """The runner died before it was ready and said bye: one box, one failed turn, no box started after it."""
+    turn = await plat.turns.create(org.admin, BODY)
+    box_id = (await box_of(plat, turn["session_id"]))["id"]
+    spec = await plat.boxes.to_launch(box_id)
+    await plat.boxes.launched(box_id, "container-x")
+    await runner.bye(await plat.boxes.authenticate(box_id, spec["token"]))
+    doc = await plat.turns.response(org.admin, turn["id"])
+    assert doc["status"] == "failed" and doc["metadata"]["hg_reason"] == "sandbox_failed"
+    async with plat.db.platform() as tx:
+        rows = await tx.all("SELECT status, gone_reason FROM boxes WHERE session_id = %s", turn["session_id"])
+    assert rows == [{"status": "gone", "gone_reason": "failed to start"}]
+
+
 async def test_a_lost_box_fails_its_turn_and_a_new_box_serves_the_next(plat, org, ready, runner):
     turn = await plat.turns.create(org.admin, BODY)
     box = await runner.boot(turn["session_id"])
