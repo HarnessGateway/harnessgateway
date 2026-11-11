@@ -54,7 +54,9 @@ sessions for many callers safely. HarnessGateway puts one contract and one sandb
 
 ## Quick start
 
-On a Linux host with Docker (gVisor is installed for you):
+You need a Linux machine (x86_64 or arm64, kernel 5.6 or later; on macOS or Windows, a Linux virtual machine) where
+you are root, with [Docker Engine](https://docs.docker.com/engine/install/) and its Compose plugin, git and curl.
+gVisor is installed for you. [`docs/operations.md`](docs/operations.md#one-host) has the full list and the settings.
 
 ```bash
 git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
@@ -77,6 +79,9 @@ Under **Access**, invite developers by email or sign them in through your identi
 per app: a run-only key is what an app holds, and its sessions and usage are read by that key. The platform console at
 `http://localhost:8800/ops` shows health, boxes, organizations, usage, configuration and the audit log to platform
 admins. For many hosts, a managed Postgres and Redis and an S3 bucket, see [`docs/operations.md`](docs/operations.md).
+
+On Kubernetes each box is a pod instead: [`docs/kubernetes.md`](docs/kubernetes.md) has what the cluster needs, the
+Helm chart, and a one-machine cluster to try it on.
 
 ## Harnesses
 
@@ -123,8 +128,8 @@ in [`SPEC.md`](SPEC.md).
 | | |
 |---|---|
 | [`SPEC.md`](SPEC.md) | the specification the code is checked against |
-| [`docs/operations.md`](docs/operations.md) | one host, many hosts, every setting, upgrades, releasing, troubleshooting |
-| [`docs/kubernetes.md`](docs/kubernetes.md) | the Helm chart: each box a gVisor pod fenced to the door |
+| [`docs/operations.md`](docs/operations.md) | one host (what it needs, the installer, a first turn), many hosts, every setting, upgrades, releasing, troubleshooting |
+| [`docs/kubernetes.md`](docs/kubernetes.md) | Kubernetes: what the cluster needs, the Helm chart, a one-machine cluster, each box a gVisor pod fenced to the door |
 | [`docs/api.md`](docs/api.md) | the API as a conversation: turns, sessions, management |
 | [`docs/security.md`](docs/security.md) | isolation, egress, secrets, access, limits |
 | [`docs/console.md`](docs/console.md) | the organization and platform consoles and the chat |
