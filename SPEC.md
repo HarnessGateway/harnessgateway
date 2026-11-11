@@ -731,6 +731,9 @@ Services the extension may call through `Platform`: `orgs` (create, get, update 
 identity providers, plans as limits, admission, rating of the ledger, billing, an operator surface, and its own
 launcher. It never reads a secret value, never bypasses row-level security, never changes a turn's behaviour.
 
+An extension's routes get their pages in the console the same way, with no change to the console: `HG_CONSOLE_PAGES`
+names a directory of page modules the console loads beside its own (`docs/console.md`).
+
 ---
 
 ## 14. The HTTP API
@@ -891,6 +894,7 @@ Every setting is an environment variable with the `HG_` prefix. Secrets never ap
 | `HG_HOST`, `HG_PORT` | api | the listen address |
 | `HG_LOG_LEVEL` | all | `debug`, `info`, `warning`, `error` |
 | `HG_BUILDER_DIR`, `HG_TEMPLATE_DIR` | api (`init`), console | the built-in harness package builder; the template every new harness starts from |
+| `HG_CONSOLE_PAGES` | console | a directory of page modules a deployment adds to the consoles (`docs/console.md`) |
 | `HG_ADMIN_EMAIL` | `init` | the first admin's login |
 
 ---

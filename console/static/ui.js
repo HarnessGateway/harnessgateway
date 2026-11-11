@@ -10,6 +10,8 @@ export function table(cols, rows, empty = "Nothing yet.") {
   return `<table><thead><tr>${cols.map(c => `<th>${esc(c.h)}</th>`).join("")}</tr></thead><tbody>` +
     rows.map(r => `<tr>${cols.map(c => `<td${c.cls ? ` class="${c.cls}"` : ""}>${c.cell(r)}</td>`).join("")}</tr>`).join("") + `</tbody></table>`;
 }
+// A page's heading: its title, one line on what it is for, and its actions.
+export const top = (title, lead, acts = "") => `<div class="top"><div><h1>${esc(title)}</h1><p class="lead">${esc(lead)}</p></div><div class="acts">${acts}</div></div>`;
 export const pill = (text, kind = "q") => `<span class="pill ${kind}">${esc(text)}</span>`;
 export const statusPill = s => pill(s, { completed: "ok", active: "ok", idle: "q", running: "run", in_progress: "run", queued: "q",
                                          saving: "warn", failed: "bad", cancelled: "q", incomplete: "warn", draining: "warn", suspended: "bad" }[s] || "q");
@@ -92,6 +94,7 @@ export const I = {
   side: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M10 4v16"/>',
   tag: '<path d="M20 12 12 20 3 11V4h7l10 8Z"/><path d="M7 8h.01"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  card: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
 };
 export const ic = (d, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;

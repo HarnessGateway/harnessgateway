@@ -4,11 +4,12 @@ platform's public API. This server holds no key: a person signs in with the plat
 organization's identity provider (SPEC §10), the sign-in token lives in an HttpOnly cookie, and every call is relayed
 with it as the bearer. The platform decides what each person may do.
 
-    python3 console/server.py [--api http://localhost:8000] [--host 127.0.0.1] [--port 8800] [--state DIR]
+    python3 console/server.py [--api http://localhost:8000] [--host 127.0.0.1] [--port 8800] [--state DIR] [--pages DIR]
 
 The state directory (HG_CONSOLE_DIR, default ./console-state) holds drafts: packages being written here. An invitation
 link (`/setup?token=hgi_…`, mailed or printed by `harnessgateway init` and by inviting an account) activates an account
-by setting its password."""
+by setting its password. The pages directory (HG_CONSOLE_PAGES, default none) holds a deployment's own pages: each
+`*.js` in it is a page module the console loads beside its own (docs/console.md)."""
 from __future__ import annotations
 
 import argparse
@@ -108,6 +109,7 @@ class Handler(chat.Handler):
     state: State
     platform: httpx.Client                        # the API, no credential: each request binds its own
     console_static: dict[str, Path]
+    pages: dict[str, Path]                        # the deployment's own page modules, by file name
 
     # ── who ──────────────────────────────────────────────────────────────────────────────────────────────────────
     def cookie(self, name: str) -> str:
@@ -163,7 +165,9 @@ class Handler(chat.Handler):
         path = url.path
         try:
             if path.startswith("/static/"):
-                self._console_static(path.removeprefix("/static/"))
+                self._file(self.console_static.get(path.removeprefix("/static/")))
+            elif path.startswith("/pages/"):
+                self._file(self.pages.get(path.removeprefix("/pages/")))
             elif path in ("/", "/ops", "/login", "/setup"):
                 self._page(path)
             elif path == "/sso/callback":
@@ -185,8 +189,7 @@ class Handler(chat.Handler):
         except httpx.HTTPError as e:
             self._json(502, {"error": {"message": f"the platform is unreachable: {e}"}})
 
-    def _console_static(self, name: str) -> None:
-        path = self.console_static.get(name)
+    def _file(self, path: Path | None) -> None:
         if not path:
             self._text(404, "not found")
             return
@@ -249,7 +252,7 @@ class Handler(chat.Handler):
         elif path == "/api/me" and method == "GET":
             r = http.get("/v1/auth/me")
             r.raise_for_status()
-            self._json(200, r.json())
+            self._json(200, {**r.json(), "pages": sorted(n for n in self.pages if n.endswith(".js"))})
         elif path.startswith("/api/drafts"):
             self._drafts(method, path.removeprefix("/api/drafts").strip("/"), http)
         elif path.startswith("/api/v1/") or path.startswith("/api/internal/"):
@@ -509,6 +512,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--api", default=os.environ.get("HG_API", "http://localhost:8000"))
     ap.add_argument("--state", default=os.environ.get("HG_CONSOLE_DIR", "console-state"))
+    ap.add_argument("--pages", default=os.environ.get("HG_CONSOLE_PAGES", ""), help="a directory of page modules of your own")
     ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach it from outside this machine")
     ap.add_argument("--port", type=int, default=8800)
     args = ap.parse_args()
@@ -519,6 +523,7 @@ def main() -> None:
     Handler.default_model = os.environ.get("HG_MODEL", "")
     Handler.static = {p.name: p for p in chat.STATIC.iterdir() if p.is_file()}
     Handler.console_static = {p.name: p for p in STATIC.iterdir() if p.is_file()}
+    Handler.pages = {p.name: p for p in Path(args.pages).iterdir() if p.is_file()} if args.pages else {}
     server = chat.Server((args.host, args.port), Handler)
     print(f"HarnessGateway console on http://{'localhost' if args.host in ('127.0.0.1', '0.0.0.0') else args.host}:{args.port}"
           f" (API {api}); Ctrl+C to stop", file=sys.stderr)

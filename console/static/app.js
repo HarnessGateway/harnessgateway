@@ -1,12 +1,13 @@
 // The console shell: the sidebar (modules and items, collapsible), the header, the account menu, and a hash router
 // that renders one page module into #content. Which app this is (the organization's or the platform's) comes from
-// <body data-app>. `me` is /api/me: the account, its role and its organization.
+// <body data-app>. `me` is /api/me: the account, its role, its organization, and the names of the deployment's own
+// page modules (HG_CONSOLE_PAGES), which are loaded beside the console's.
 import { api, esc } from "./api.js";
 import { $, I, fail, field, ic, modal, toast } from "./ui.js";
 
 const APP = document.body.dataset.app;             // "user" | "ops"
 const SIDE = `hg-console-side-${APP}`;
-const me = { account: {}, role: "", organization: {}, platform: {} };
+const me = { account: {}, role: "", organization: {}, platform: {}, pages: [] };
 let pages = {}, nav = [];
 
 async function boot() {
@@ -14,7 +15,9 @@ async function boot() {
   me.name = me.account.name || me.account.email;
   if (APP === "ops" && !me.account.platform_admin) { location.href = "/"; return; }
   const mod = await import(APP === "ops" ? "./pages_ops.js" : "./pages_user.js");
-  pages = mod.pages; nav = mod.nav(me);
+  pages = { ...mod.pages }; nav = mod.nav(me);
+  for (const name of me.pages) addPages(name, await import(`/pages/${name}`));
+  for (const m of nav) for (const it of m.items) it.mod = m.mod;
   $("#brand").innerHTML = `<img class="logo" src="/static/mascot.png" alt=""><b>HarnessGateway${APP === "ops" ? " · Platform" : ""}</b>` +
     `<button class="ib" id="sideclose" title="Hide the sidebar">${ic(I.side, 18)}</button>`;
   $("#sideopen").innerHTML = ic(I.side, 18);
@@ -28,6 +31,19 @@ async function boot() {
   renderNav();
   window.addEventListener("hashchange", route);
   route();
+}
+
+// A deployment's page module: its `pages` join the console's, and the groups its `nav(me, app)` returns join the
+// sidebar (a group of a name the console has gets the items). A page id belongs to one module.
+function addPages(name, mod) {
+  for (const [id, page] of Object.entries(mod.pages)) {
+    if (pages[id]) throw new Error(`${name}: the console already has a page "${id}"`);
+    pages[id] = page;
+  }
+  for (const group of mod.nav(me, APP)) {
+    const own = nav.find(m => m.mod === group.mod);
+    if (own) own.items.push(...group.items); else nav.push(group);
+  }
 }
 
 function toggleSide() {

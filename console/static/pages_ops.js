@@ -1,18 +1,15 @@
 // The platform console (SPEC §14.3): the platform as infrastructure, for platform admins.
 import { api, esc, when } from "./api.js";
-import { $, card, confirm, fail, field, input, kv, modal, pill, rerender, reveal, select, stat, statusPill, table, then, toast } from "./ui.js";
+import { $, card, confirm, fail, field, input, kv, modal, pill, rerender, reveal, select, stat, statusPill, table, then, toast, top } from "./ui.js";
 import { auditPage, usagePage } from "./pages_user.js";
 
 export function nav() {
-  const mods = [{ mod: "Platform", items: [
+  return [{ mod: "Platform", items: [
     { id: "health", label: "Health", icon: "grid" }, { id: "boxes", label: "Boxes", icon: "nodes" },
     { id: "orgs", label: "Organizations", icon: "org" }, { id: "usage", label: "Platform usage", icon: "usage" },
     { id: "versions", label: "Versions", icon: "tag" }, { id: "config", label: "Configuration", icon: "cfg" },
     { id: "audit", label: "Audit log", icon: "log" }] }];
-  for (const m of mods) for (const it of m.items) it.mod = m.mod;
-  return mods;
 }
-const top = (title, lead, acts = "") => `<div class="top"><div><h1>${esc(title)}</h1><p class="lead">${esc(lead)}</p></div><div class="acts">${acts}</div></div>`;
 const ok = (b, text) => `<span class="dot" style="background:var(--${b ? "ok" : "bad"})"></span>${esc(text)}`;
 // The API as another host reaches it. The console knows only its own upstream (inside compose, a name no other host
 // resolves), so the guess is this page's host on the API's default port; the operator corrects it where it is used.

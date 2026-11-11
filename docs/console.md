@@ -100,10 +100,41 @@ usage*: all organizations by org or day. *Versions*, *Configuration* (settings a
 log* (every organization's and the platform's own). Prometheus scrapes the same numbers at `GET /internal/metrics`
 with the operator key.
 
+## Pages of your own
+
+A deployment adds pages to either console without changing it. Point the server at a directory
+(`HG_CONSOLE_PAGES`, or `--pages`): every `*.js` directly in it is a **page module**, served at `/pages/<name>` and
+loaded beside the console's own. A module exports the same two things the console's page modules do:
+
+```js
+// /srv/pages/notes.js
+import { api, esc } from "/static/api.js";               // the console's calls: /api/v1/* is the platform, as the signed-in person
+import { top, card } from "/static/ui.js";               // and its view helpers (tables, cards, modals, toasts, icons)
+
+export const pages = {
+  notes: { title: "Notes", async render(el, params, me) {          // me: the account, role, organization, platform
+    const org = await api("GET", "/v1/organization");
+    el.innerHTML = top("Notes", "A page of this deployment's own.") + card("Organization", esc(org.name));
+  } },
+};
+// The sidebar groups this module adds to a console: app is "user" (/) or "ops" (/ops). A group named like one of the
+// console's adds its items to that group.
+export const nav = (me, app) => app === "user" ? [{ mod: "Observability", items: [{ id: "notes", label: "Notes", icon: "file" }] }] : [];
+```
+
+A page id belongs to one module: a module that names a page the console already has stops the console from loading
+and says why. `#/notes/a/b` renders the page with `params` `["a", "b"]`. The modules run as the
+console's own scripts, from the console's origin, so they reach exactly what the signed-in person may: the platform
+refuses the rest. An [extension](extensions.md) that adds routes under `/v1/` gets its pages this way: ship the
+modules with it and set `HG_CONSOLE_PAGES` on the console. Other files in the directory (an image, a stylesheet) are
+served at `/pages/<name>` too; subdirectories are not.
+
 ## Security
 
 The server holds no credential of its own: the sign-in cookie is HttpOnly and the page only ever calls the server's own
-routes, which relay as the signed-in person. JSON requests are accepted from the page's origin only. The chat's
+routes, which relay as the signed-in person. JSON requests are accepted from the page's origin only. A pages
+directory is code the deployer chose to run in the console: treat it as part of the deployment. Its files are
+served like the console's own scripts, to anyone who can reach the console, so nothing secret goes in them. The chat's
 workspace files are served sandboxed in an origin of their own (see `console/chat/README.md`), and its caches are kept
 per person. The pages' Content-Security-Policy allows scripts from the server only. Secrets (provider keys, harness
 secrets, API keys, invitation links, the identity provider's client secret) are shown once at creation and never
@@ -112,7 +143,8 @@ again; the API never returns them.
 ## Layout
 
 ```
-console/server.py             the sign-in cookie, SSO start and callback, drafts, the relay to the platform, the chat UI under /chat/
+console/server.py             the sign-in cookie, SSO start and callback, drafts, the relay to the platform, the chat UI under /chat/,
+                              a deployment's own page modules under /pages/
 console/static/               app.js (shell, router), api.js, ui.js, pages_user.js, pages_ops.js, session.js,
                               app.css, index.html (/), ops.html (/ops), login.html + login.js (/login, /setup)
 console/chat/                 the chat, usable on its own or embedded

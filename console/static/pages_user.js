@@ -3,12 +3,12 @@
 // platform as the signed-in person; the platform refuses what the person may not do, so the pages only hide what
 // would be refused.
 import { METERS, actorOf, api, bytes, date, esc, meter, short, stream, when } from "./api.js";
-import { $, $$, I, card, confirm, copy, fail, field, ic, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "./ui.js";
+import { $, $$, I, card, confirm, copy, fail, field, ic, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast, top } from "./ui.js";
 import { session } from "./session.js";
 
 export function nav(me) {
   const admin = me.role === "admin";
-  const mods = [
+  return [
     { mod: "Setup", items: [{ id: "harnesses", label: "Harnesses", icon: "box" }, { id: "providers", label: "Providers", icon: "globe" },
                            { id: "egress", label: "Egress", icon: "shield" }] },
     { mod: "Workbench", items: [{ id: "chat", label: "Chat", icon: "chat" }, { id: "playground", label: "Playground", icon: "code" }] },
@@ -16,15 +16,12 @@ export function nav(me) {
                                                                                      { id: "sso", label: "Single sign-on", icon: "lock" }] : [])] },
     { mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" },
                                    ...(admin ? [{ id: "audit", label: "Audit log", icon: "log" }] : [])] }];
-  for (const m of mods) for (const it of m.items) it.mod = m.mod;
-  return mods;
 }
 
 const list = async path => (await api("GET", path)).data || [];
 const quiet = path => list(path).catch(() => []);
 const invitation = (a, title) => reveal(title, "Invitation link", a.invitation, (a.sent ? `Sent to ${a.email}. ` : "") +
   "The link is shown once, works once and expires in seven days; the person chooses their password with it.");
-const top = (title, lead, acts = "") => `<div class="top"><div><h1>${esc(title)}</h1><p class="lead">${esc(lead)}</p></div><div class="acts">${acts}</div></div>`;
 
 // ── Chat ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 const chat = { title: "Chat", full: true, render(el, params) {
@@ -401,7 +398,7 @@ export function usagePage(path, groups, lead) {
   } };
 }
 const usage = usagePage("/v1/usage", [["", "total"], ["day", "day"], ["created_by", "app (key) or person"], ["harness", "harness"], ["session", "session"], ["user", "end user"]],
-  "What this organization's boxes used: agent time (what a turn ran for), the CPU and memory behind it, bytes through the door, storage held.");
+  "What this organization's boxes used: agent time (turns, standby between them, installs), the CPU and memory behind it, bytes through the door, storage held.");
 
 // ── Accounts (admins) ─────────────────────────────────────────────────────────────────────────────────────────────
 const accounts = { title: "Accounts", async render(el, params, me) {

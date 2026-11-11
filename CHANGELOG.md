@@ -8,6 +8,23 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.4.0]
+
+The console takes pages of a deployment's own.
+
+### Added
+
+- **Pages of your own in the console** (`HG_CONSOLE_PAGES`, or `--pages`). Every `*.js` in the directory is a page
+  module the console loads beside its own, in the organization console and the platform console: it exports `pages`
+  and `nav(me, app)` as the console's own page modules do, imports the console's helpers from `/static/`, and calls
+  the platform through the console's relay as the signed-in person. An extension that adds routes gets its pages
+  without a change to the console. [`docs/console.md`](docs/console.md#pages-of-your-own) is the guide.
+
+### Fixed
+
+- The console's Usage page said agent time was what a turn ran for; the figure is every kind of box time (turns,
+  standby between them, installs), and the page now says so.
+
 ## [3.3.0]
 
 HarnessGateway runs on Kubernetes: each box a gVisor pod, fenced to the door.

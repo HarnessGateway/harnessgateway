@@ -44,6 +44,13 @@ Enable it with `HG_EXTENSIONS=my_extension.platform:Mine` on every role (install
 in the order configured; `observe`, `meter` and `turn_ended` run after the core's own write and never fail a turn
 (their exceptions are logged).
 
+## Pages in the console
+
+The console is an application on the public API, and it loads page modules of the deployment's own beside its pages:
+ship them with the extension and set `HG_CONSOLE_PAGES` to their directory on the console
+([console](console.md#pages-of-your-own)). A page calls the extension's routes through the console's relay, as the
+signed-in person.
+
 ## A launcher
 
 A `Launcher` starts a box from the sandbox image with the four values of `BoxSpec.env(api_url, door)` (`HG_BOX_ID`,

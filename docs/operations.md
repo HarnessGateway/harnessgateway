@@ -91,8 +91,8 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_API_URL` | api, worker, door | `http://localhost:8000` | the api as boxes and doors reach it (its host is always allowed through the door) |
 | `HG_DOOR` | worker, door | `hg-door:3128` | `host:port` of the door as boxes reach it; the door listens on that port |
 | `HG_HOST`, `HG_PORT` | api | `0.0.0.0`, `8000` | the api's listen address |
-| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.3.0` | the image every box runs (installs are keyed by it) |
-| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.3.0` | reported under `GET /internal/versions` |
+| `HG_SANDBOX_IMAGE` | api, worker | `ghcr.io/harnessgateway/sandbox:3.4.0` | the image every box runs (installs are keyed by it) |
+| `HG_PLATFORM_IMAGE` | api | `ghcr.io/harnessgateway/harnessgateway:3.4.0` | reported under `GET /internal/versions` |
 | `HG_SANDBOX_RUNTIME` | worker | `runsc` | gVisor for boxes (Docker's runtime, or the RuntimeClass on Kubernetes); `runc` runs them unisolated (logged) |
 | `HG_LAUNCHER` | worker | `docker` | `docker` (boxes are containers on the worker's host) or `kubernetes` (boxes are pods; [kubernetes.md](kubernetes.md)) |
 | `HG_K8S_NAMESPACE` | worker | required with `kubernetes` | the namespace box pods run in |
@@ -109,6 +109,7 @@ Environment variables only, validated at start with every problem reported at on
 | `HG_EXTENSIONS` | all | — | `module:Class,…` ([extensions](extensions.md)) |
 | `HG_BUILDER_DIR` | api | the image's `harness-package-builder` package | the built-in harness package builder `init` installs |
 | `HG_TEMPLATE_DIR` | console | the image's `shell` package | the template every new harness starts from |
+| `HG_CONSOLE_PAGES` | console | — | a directory of page modules of your own, loaded beside the console's ([console](console.md#pages-of-your-own)) |
 | `HG_LOG_LEVEL` | all | `info` | `debug`, `info`, `warning`, `error`; logs are JSON lines on stderr |
 | `HG_ADMIN_EMAIL` | `init`, `install.sh` | — | the first admin's login; `init --admin-email` names it too |
 | `HG_CONSOLE_PORT` | compose `console` | `8800` | the console's port (it holds no key: people sign in with their account) |

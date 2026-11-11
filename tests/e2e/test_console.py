@@ -1,6 +1,6 @@
 """The console as a person uses it (SPEC §10, §14): the invitation activates the account on the setup page, the
 organization and platform consoles open with the new pages, sign-out and sign-in work, SSO stays out of the way until
-it is configured, and a used invitation is refused."""
+it is configured, a used invitation is refused, and a deployment's own page module joins both consoles."""
 import httpx
 from playwright.sync_api import expect
 
@@ -72,6 +72,23 @@ def sign_in(page, stack):
     page.fill("input[name=password]", PASSWORD)
     page.click("#go")
     page.wait_for_url(f"{stack.console}/")
+
+
+def test_a_deployments_own_pages_join_both_consoles(page, stack):
+    sign_in(page, stack)
+    expect(page.locator("#nav a")).to_have_text(["Harnesses", "Providers", "Egress", "Chat", "Playground", "API keys", "Accounts",
+                                                 "Single sign-on", "Sessions", "Usage", "Audit log", "Notes"])
+    expect(page.locator("#nav .mod")).to_have_text(["Setup", "Workbench", "Access", "Observability"])   # joined a group
+    page.click("#nav a[href='#/notes']")
+    expect(page.locator("#content h1")).to_have_text("Notes")
+    expect(page.locator("#note")).to_have_text(f"{stack.email} · admin")
+    expect(page.locator("#crumb")).to_have_text("Observability / Notes")
+    page.goto(f"{stack.console}/ops")
+    expect(page.locator("#nav .mod")).to_have_text(["Platform", "Deployment"])                    # a group of its own
+    page.click("#nav a[href='#/notes']")
+    expect(page.locator("#note")).to_have_text(f"{stack.email} · admin")
+    assert httpx.get(f"{stack.console}/pages/notes.js").headers["content-type"] == "text/javascript; charset=utf-8"
+    assert httpx.get(f"{stack.console}/pages/../server.py").status_code == 404
 
 
 def test_an_admin_configures_sso_and_a_person_signs_in_through_it(page, stack, idp):

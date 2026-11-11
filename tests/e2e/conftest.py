@@ -1,6 +1,7 @@
 """The console in a real browser, on a real API: the processes a deploy runs, started from this checkout on a scratch
 database and Redis (tests/conftest.py) with the file object store, and Playwright's Chromium driving the pages. Needs
-HG_TEST_DATABASE_URL and Playwright's Chromium; skips without either. No worker runs: nothing here needs a box."""
+HG_TEST_DATABASE_URL and Playwright's Chromium; skips without either. No worker runs: nothing here needs a box. The
+console is started with a pages directory (tests/e2e/pages), as a deployment with pages of its own starts it."""
 from __future__ import annotations
 
 import base64
@@ -66,7 +67,8 @@ def stack(scratch_database, redis_url, tmp_path_factory: pytest.TempPathFactory)
         out = subprocess.run([sys.executable, "-m", "harnessgateway", "init", "--admin-email", EMAIL], env=env, cwd=ROOT,
                              capture_output=True, text=True, check=True).stdout
         procs.append(subprocess.Popen([sys.executable, str(ROOT / "console" / "server.py"), "--api", api, "--host", "127.0.0.1",
-                                       "--port", str(console_port), "--state", str(state)], cwd=ROOT))
+                                       "--port", str(console_port), "--state", str(state),
+                                       "--pages", str(ROOT / "tests" / "e2e" / "pages")], cwd=ROOT))
         wait_for(f"{console}/login")
         doc = json.loads(out)
         yield Stack(api, console, doc["invitation"], doc["admin_key"])

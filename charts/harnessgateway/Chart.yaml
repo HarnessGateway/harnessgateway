@@ -2,8 +2,8 @@ apiVersion: v2
 name: harnessgateway
 description: HarnessGateway on Kubernetes - the api, worker, door and console, with each box a gVisor pod fenced to the door.
 type: application
-version: 3.3.0
-appVersion: "3.3.0"
+version: 3.4.0
+appVersion: "3.4.0"
 home: https://github.com/HarnessGateway/harnessgateway
 sources:
   - https://github.com/HarnessGateway/harnessgateway
