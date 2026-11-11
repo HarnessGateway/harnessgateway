@@ -62,13 +62,16 @@ if [ "$RUNTIME" = runsc ] && ! docker info --format '{{json .Runtimes}}' | grep 
         > /etc/apt/sources.list.d/gvisor.list
       apt-get update -qq && apt-get install -y -qq runsc >/dev/null
     else
+      # the release archive: runsc, its containerd shim and gvisor-bin/, the helpers runsc looks for beside itself
+      archive=gvisor.tar.zstd
+      command -v zstd >/dev/null || archive=gvisor.tar.bz2
+      [ "$archive" = gvisor.tar.zstd ] || command -v bzip2 >/dev/null || fail "installing gVisor needs zstd or bzip2 to unpack its release"
       tmp=$(mktemp -d)
       url="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
-      for f in runsc runsc.sha512 containerd-shim-runsc-v1 containerd-shim-runsc-v1.sha512; do
-        curl -fsSL -o "$tmp/$f" "$url/$f"
-      done
-      (cd "$tmp" && sha512sum -c runsc.sha512 && sha512sum -c containerd-shim-runsc-v1.sha512)
-      install -m 0755 "$tmp/runsc" "$tmp/containerd-shim-runsc-v1" /usr/local/bin/
+      curl -fsSL -o "$tmp/$archive" "$url/$archive"
+      curl -fsSL -o "$tmp/$archive.sha512" "$url/$archive.sha512"
+      (cd "$tmp" && sha512sum -c --quiet "$archive.sha512")
+      tar -xf "$tmp/$archive" -C /usr/local/bin
       rm -rf "$tmp"
     fi
   fi

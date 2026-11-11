@@ -5,26 +5,76 @@ how-to and the configuration reference.
 
 ## One host
 
-Requirements: Linux, Docker with the Compose plugin, root. gVisor is installed by the installer if absent.
+The whole platform on one Linux machine, with Docker starting each box as a container under gVisor
+(`HG_LAUNCHER=docker`). For Kubernetes, see [`kubernetes.md`](kubernetes.md).
+
+### Before you start
+
+| What | Guide | Check |
+|---|---|---|
+| A Linux machine, x86_64 or arm64, kernel 5.6 or later, where you are root. Ubuntu or Debian is the simplest (gVisor comes from its apt repository); any distribution with Docker works. On macOS or Windows use a Linux virtual machine: the installer does not run against Docker Desktop | | `uname -srm` |
+| Docker Engine with the Compose plugin | [install Docker Engine](https://docs.docker.com/engine/install/) (it brings the plugin; otherwise [install Compose](https://docs.docker.com/compose/install/linux/)) | `sudo docker compose version` |
+| git and curl | your distribution's packages | |
+| Ports 8000 (the API) and 8800 (the console) free, or others named with `HG_HTTP_PORT` and `HG_CONSOLE_PORT` | | |
+| The first admin's email address, and a key for a model provider (Anthropic, OpenAI, Gemini or a compatible endpoint) | | |
+
+gVisor is not on the list: the installer installs it, from gVisor's apt repository on Debian and Ubuntu and from
+[gVisor's release archive](https://gvisor.dev/docs/user_guide/install/) elsewhere (that needs `zstd` or `bzip2`).
+
+The machine reaches out to `ghcr.io` (the two images), Docker Hub (Postgres and Redis), `gvisor.dev` and
+`storage.googleapis.com` (gVisor), and afterwards to whatever your harnesses install from and your model provider.
+Behind a proxy or a network that re-signs TLS, see [below](#networks-that-proxy-or-re-sign-tls).
+
+A box may use up to 2 CPUs and 4 GiB of memory by default, plus up to 4 GiB of `/tmp`: size the machine for the
+sessions you expect to run at once.
+
+### Install
 
 ```bash
-git clone https://github.com/harnessgateway/harnessgateway && cd harnessgateway
+git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
 sudo ./deploy/install.sh
 ```
+
+Or without a checkout, for a [release](https://github.com/HarnessGateway/harnessgateway/releases):
+`curl -fsSL https://raw.githubusercontent.com/harnessgateway/harnessgateway/v<version>/deploy/install.sh | sudo bash`.
 
 The installer:
 
 1. checks Docker; pulls `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`, or builds them
    from the checkout;
-2. installs gVisor (`runsc`) from gVisor's official repository (apt) or release binaries and registers it with
+2. installs gVisor (`runsc`, its containerd shim and the helpers beside them) if it is absent and registers it with
    Docker; adds `default-address-pools` to `/etc/docker/daemon.json` if absent (each box gets a network of its own, and
-   Docker's default pools hold only about 30);
+   Docker's default pools hold only about 30); restarts Docker when it changed either;
 3. writes `/opt/harnessgateway/.env` with fresh secrets (never overwritten on a re-run);
 4. asks for the first admin's email (`HG_ADMIN_EMAIL`), starts the compose project (`postgres`, `redis`, `api`,
    `worker`, `door`, `console`) and runs `harnessgateway init`, which creates the organization with the built-in
    harness package builder and the admin account, and prints **once** the invitation link that activates the account
-   (the console's `/setup` page; mailed too when `HG_SMTP_URL` is set) and an admin API key for automation. See
-   [`console.md`](console.md).
+   (the console's `/setup` page; mailed too when `HG_SMTP_URL` is set) and an admin API key for automation. Keep
+   both. See [`console.md`](console.md).
+
+Settings are environment variables on the installer's command line, read on the first run only. Afterwards they are
+in `/opt/harnessgateway/.env`: change them there, then `sudo docker compose up -d --wait` from that directory.
+
+```bash
+sudo HG_ADMIN_EMAIL=you@example.com ./deploy/install.sh                      # do not ask for the email
+sudo HG_BIND=0.0.0.0 HG_CONSOLE_URL=http://<host>:8800 ./deploy/install.sh    # open it from other machines
+sudo HG_SANDBOX_RUNTIME=runc ./deploy/install.sh                             # no gVisor: boxes are NOT isolated
+```
+
+`HG_CONSOLE_URL` is where people open the console: invitation and SSO links are built on it, so set it whenever
+that is not `http://localhost:8800`. `runc` is for a machine where gVisor cannot run, and for nothing you would let
+anyone else use.
+
+### First turn
+
+1. Open the invitation link and choose a password.
+2. **Setup → Providers**: add a model provider. **Setup → Harnesses**: add a harness from the template, or ask the
+   built-in `harness-package-builder` in the chat for one.
+3. **Workbench → Chat**: pick the harness and ask for something. A harness's first turn waits for its install box,
+   then for the session's box. `sudo docker ps --filter label=harnessgateway.box` shows them while they run.
+
+If a turn stays queued, `sudo docker compose logs worker` from `/opt/harnessgateway` says why; see
+[Troubleshooting](#troubleshooting).
 
 The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:8800` (`HG_BIND`, `HG_HTTP_PORT`,
 `HG_CONSOLE_PORT`). Put a TLS-terminating proxy in front of them before exposing them beyond the host.

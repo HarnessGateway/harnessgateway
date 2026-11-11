@@ -5,37 +5,169 @@ the console as Deployments, with a bundled Postgres and Redis or your own. The w
 (`HG_LAUNCHER=kubernetes`) in a namespace of its own, under gVisor, fenced by a NetworkPolicy so the only thing a box
 can reach is the door. The design is SPEC §8.1; every setting is in [`operations.md`](operations.md).
 
-## What the cluster needs
+## Before you start
+
+You need:
+
+- **A cluster you administer**, Kubernetes 1.25 or later, with `kubectl` pointed at it
+  ([install kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl)). The chart creates a namespace, a
+  NetworkPolicy, a Role and, if you ask, a RuntimeClass, so you need the rights to create those. No cluster yet:
+  [A cluster on one Linux machine](#a-cluster-on-one-linux-machine) builds one.
+- **Helm 3** ([install Helm](https://helm.sh/docs/intro/install/)) and **git**: the chart is in this repository.
+- **The first admin's email address**, and a key for a model provider (Anthropic, OpenAI, Gemini or a compatible
+  endpoint) to run a first turn with.
+
+The cluster needs:
 
 - **gVisor on the nodes that run boxes, and a RuntimeClass for it.** The chart's default is a RuntimeClass named
-  `gvisor` whose handler is `runsc`. GKE Sandbox provides it (`gvisor`). Elsewhere, install `runsc` and
-  `containerd-shim-runsc-v1` on those nodes and register the `runsc` runtime with containerd
-  ([gVisor's containerd guide](https://gvisor.dev/docs/user_guide/containerd/quick_start/)); then
-  `boxes.createRuntimeClass=true` makes the RuntimeClass, or make it yourself.
-- **A CNI that enforces NetworkPolicy**: Calico, Cilium, GKE Dataplane V2, or the VPC CNI with network policies
+  `gvisor` whose handler is `runsc`. GKE Sandbox provides it (`gvisor`). Elsewhere, install gVisor on those nodes
+  ([gVisor's installation guide](https://gvisor.dev/docs/user_guide/install/)) and register the `runsc` runtime with
+  containerd ([gVisor's containerd guide](https://gvisor.dev/docs/user_guide/containerd/quick_start/)); then
+  `boxes.createRuntimeClass=true` makes the RuntimeClass, or make it yourself. gVisor is `runsc`, its containerd shim
+  `containerd-shim-runsc-v1` and a `gvisor-bin/` directory of helpers that `runsc` looks for beside itself: a node
+  needs all three, in one directory on containerd's path. It needs Linux 5.6 or later, on x86_64 or arm64.
+- **A CNI that enforces NetworkPolicy**: [Calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/),
+  [Cilium](https://docs.cilium.io/en/stable/gettingstarted/), GKE Dataplane V2, or the VPC CNI with network policies
   enabled on EKS. Without enforcement a box could reach the api, Postgres and the cluster's API server directly. The
   worker checks this before it starts any box and refuses to run otherwise (below).
 - **A pid limit for pods**: the kubelet's `podPidsLimit` (a box's `pids` limit cannot be set per pod in Kubernetes).
 - **Storage**: a default StorageClass for Postgres, the console's drafts and, without S3, the objects volume.
-- Kubernetes 1.25 or later, and Helm 3.
+- **Images the nodes can pull**: `ghcr.io/harnessgateway/harnessgateway` and `ghcr.io/harnessgateway/sandbox`
+  (public), and `postgres` and `redis` from Docker Hub unless you bring your own.
+- **Room**: the platform's pods request about 0.65 CPU and 1.3 GiB of memory in all. Each box is limited to 2 CPUs
+  and 4 GiB by default (plus up to 4 GiB of `/tmp`) and reserves a quarter of that.
+
+Check it before installing:
+
+```bash
+kubectl version                          # the client, and the server at 1.25 or later
+kubectl get runtimeclass                 # one whose HANDLER is runsc (or let the chart make it)
+kubectl get storageclass                 # one marked (default)
+helm version --short
+```
 
 ## Install
 
 ```bash
+git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
 helm install hg charts/harnessgateway -n hg --create-namespace \
-  --set console.url=https://console.example.com
-kubectl -n hg rollout status deploy/hg-harnessgateway-worker
-kubectl -n hg exec deploy/hg-harnessgateway-api -- harnessgateway init --admin-email you@example.com
+  --set console.url=https://console.example.com --wait --timeout 10m
+kubectl -n hg exec deploy/hg-harnessgateway-api -c api -- harnessgateway init --admin-email you@example.com
 ```
 
-`init` prints, once, the first admin's invitation link and an admin API key. The console and the api are ClusterIP
-Services; reach them with `kubectl port-forward`, or set `ingress.enabled` with a host for each (and TLS). Invitation
-and SSO links are built on `console.url`.
+`console.url` is where people will open the console: invitation and SSO links are built on it. Add
+`--set boxes.createRuntimeClass=true` where containerd has the `runsc` handler and no RuntimeClass names it yet.
+`init` prints, once, the first admin's invitation link and an admin API key: keep both.
+
+The worker then proves the fence, which takes a minute or two the first time (a node pulls the sandbox image). Wait
+for this line before sending a turn; until it is there no box starts and turns wait in the queue:
+
+```bash
+kubectl -n hg logs deploy/hg-harnessgateway-worker -c worker | grep "network probe"
+# … "network probe: box pods reach the door and not the api"
+```
+
+If it does not appear, [How a box is fenced](#how-a-box-is-fenced) lists what the worker says instead.
+
+The console and the api are ClusterIP Services. Reach them with `kubectl port-forward`, or set `ingress.enabled` with
+a host for each (and TLS):
+
+```bash
+kubectl -n hg port-forward svc/hg-harnessgateway-console 8800:8800       # http://localhost:8800
+kubectl -n hg port-forward svc/hg-harnessgateway-api 8000:8000           # http://localhost:8000/v1
+```
+
+A port-forward listens on the machine `kubectl` runs on, and on `localhost` only. To open the console from another
+machine, add `--address 0.0.0.0` to both and install with `console.url` set to that machine's address
+(`http://<host>:8800`).
+
+Open the invitation link and choose a password. Then, as on any installation: add a provider under **Setup →
+Providers**, add a harness under **Setup → Harnesses** (or ask the built-in `harness-package-builder` in the chat),
+and run a turn in **Workbench → Chat**. A harness's first turn waits for its install box, then for the session's
+box; watch them with `kubectl -n hg-boxes get pods -w`.
 
 The chart generates the secret key, the door key, the operator key and the database passwords into the Secret
 `<release>-harnessgateway` on install, reads them back on every upgrade, and keeps the Secret after an uninstall, so a
 reinstall over the same volumes still opens its data. Back it up with the database: without the secret key no
 organization's data can be opened. `secrets.existingSecret` names a Secret of your own with the same keys instead.
+
+## A cluster on one Linux machine
+
+For a trial or for development: a one-node cluster made with [kind](https://kind.sigs.k8s.io/) (Kubernetes in a
+Docker container), with gVisor in the node and Calico enforcing NetworkPolicy. These steps were run on Ubuntu 26.04
+(arm64) with kind v0.30.0, Kubernetes v1.34, Calico v3.30.3 and gVisor release 20261109; they are the same on x86_64.
+On macOS or Windows, run them in a Linux virtual machine.
+
+Install these first, each by its own guide:
+
+| What | Guide | Check |
+|---|---|---|
+| Docker Engine, usable by your user without `sudo` | [install](https://docs.docker.com/engine/install/), then [post-install](https://docs.docker.com/engine/install/linux-postinstall/) | `docker ps` |
+| gVisor (on Debian and Ubuntu the apt package; its guide installs `gnupg` first) | [install](https://gvisor.dev/docs/user_guide/install/) | `runsc --version` |
+| kind | [install](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) | `kind version` |
+| kubectl | [install](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/) | `kubectl version --client` |
+| Helm 3 | [install](https://helm.sh/docs/intro/install/) | `helm version --short` |
+| git and curl | your distribution's packages | |
+
+1. **A node image with gVisor in it.** kind's node is a container, so gVisor goes into its image: `runsc`, the shim
+   and `gvisor-bin/`, together. Use the node image your kind release names for the Kubernetes version you want.
+
+   ```bash
+   bin=$(dirname "$(command -v runsc)")
+   mkdir kind-gvisor && cp -r "$bin/runsc" "$bin/containerd-shim-runsc-v1" "$bin/gvisor-bin" kind-gvisor/
+   printf 'FROM kindest/node:v1.34.0\nCOPY runsc containerd-shim-runsc-v1 /usr/local/bin/\nCOPY gvisor-bin /usr/local/bin/gvisor-bin\n' \
+     > kind-gvisor/Dockerfile
+   docker build -t kind-node:gvisor kind-gvisor
+   ```
+
+2. **The cluster**, without kind's own network (Calico replaces it) and with the `runsc` runtime registered in
+   containerd:
+
+   ```bash
+   cat > kind.yaml <<'EOF'
+   kind: Cluster
+   apiVersion: kind.x-k8s.io/v1alpha4
+   networking:
+     disableDefaultCNI: true
+     podSubnet: 192.168.0.0/16
+   nodes:
+     - role: control-plane
+       image: kind-node:gvisor
+   containerdConfigPatches:
+     - |-
+       [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]
+         runtime_type = "io.containerd.runsc.v1"
+   EOF
+   kind create cluster --name hg --config kind.yaml
+   ```
+
+3. **Calico.** Its manifest, with the images from Calico's own registry on quay.io (Docker Hub limits anonymous
+   pulls) and no IP-in-IP encapsulation, which one node does not need:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/projectcalico/calico/v3.30.3/manifests/calico.yaml \
+     | sed -e 's|docker.io/calico/|quay.io/calico/|' -e '/CALICO_IPV4POOL_IPIP/{n;s/Always/Never/}' \
+     | kubectl apply -f -
+   kubectl -n kube-system rollout status ds/calico-node --timeout=300s
+   ```
+
+4. **HarnessGateway**, as under [Install](#install), with the chart making the RuntimeClass:
+
+   ```bash
+   git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
+   helm install hg charts/harnessgateway -n hg --create-namespace --set boxes.createRuntimeClass=true \
+     --wait --timeout 10m
+   kubectl -n hg exec deploy/hg-harnessgateway-api -c api -- harnessgateway init --admin-email you@example.com
+   kubectl -n hg logs deploy/hg-harnessgateway-worker -c worker | grep "network probe"
+   ```
+
+   Then the port-forwards and the first turn, as under [Install](#install). `console.url` defaults to
+   `http://localhost:8800`, which is right when the browser runs on this machine.
+
+To run images you built from a checkout, build them under the release's names and load them into the node before
+`helm install`: `docker build -t ghcr.io/harnessgateway/harnessgateway:<version> .`,
+`docker build -t ghcr.io/harnessgateway/sandbox:<version> -f sandbox/Dockerfile .`, then
+`kind load docker-image <image> --name hg` for each. `kind delete cluster --name hg` removes everything.
 
 ## Values
 
@@ -83,6 +215,9 @@ cluster is fixed:
 | `RuntimeClass gvisor does not exist` | install gVisor on the nodes and make the RuntimeClass (`boxes.createRuntimeClass`) |
 | `a box pod reached the api … the cluster does not enforce the box NetworkPolicy` | the CNI ignores NetworkPolicy: use one that enforces it |
 | `a box pod cannot reach the door` | something else blocks box pods from the door (another policy, or the door is down) |
+| `the probe pod did not finish in 180s` | the probe pod never ran: `kubectl -n hg-boxes get events --sort-by=.lastTimestamp` says why. `sidecar "gvisor_sentry" not usable` there means a node has `runsc` without its `gvisor-bin/` directory |
+| `the probe pod cannot start: ErrImagePull` (or `ImagePullBackOff`) | the nodes cannot pull the sandbox image (`sandbox.repository`, `sandbox.tag`) |
+| nothing after the start-up lines | the probe is still running: a node is pulling the sandbox image, or the probe pod is waiting to start (the events above) |
 
 The worker's rights are a Role in the boxes namespace (pods and Secrets), reading the door's Service in its own, and
 reading that one RuntimeClass.
