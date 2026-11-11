@@ -8,6 +8,27 @@ add the entry, set the same version in `pyproject.toml`, `harnessgateway/__init_
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org).
 
+## [3.3.1]
+
+The install guides start with what a machine needs, and the installer installs gVisor as gVisor now ships it.
+
+### Changed
+
+- **The install guides can be followed on any Linux machine.** [`docs/operations.md`](docs/operations.md) (one host,
+  Docker) and [`docs/kubernetes.md`](docs/kubernetes.md) each open with what must be in place, with a link to each
+  thing's own install guide and a command that checks it, then go through the install, how to open it from another
+  machine, a first turn, and where to look when a turn waits.
+- **A cluster on one Linux machine.** The Kubernetes guide builds a one-node cluster with kind, gVisor in the node
+  and Calico enforcing NetworkPolicy, for a trial or for development.
+- The Kubernetes guide lists what the worker says when its probe pod cannot run.
+
+### Fixed
+
+- **The installer installs gVisor on hosts without apt.** gVisor is now `runsc`, its containerd shim and a
+  `gvisor-bin/` directory of helpers `runsc` looks for beside itself, published as one archive; the single files the
+  installer downloaded are gone. It unpacks the archive (with `zstd` or `bzip2`). Hosts with apt were not affected.
+- The Kubernetes guide said a node needs `runsc` and the shim; it needs `gvisor-bin/` beside them too.
+
 ## [3.3.0]
 
 HarnessGateway runs on Kubernetes: each box a gVisor pod, fenced to the door.
