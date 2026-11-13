@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import contextlib
+import json
 import ssl
 import time
 from collections.abc import AsyncIterator
@@ -244,6 +245,29 @@ async def test_the_provider_s_key_reaches_the_provider_and_the_body_is_untouched
     said = answer.json()
     assert said["headers"]["authorization"] == "Bearer the-provider-key"
     assert said["body"] == body
+
+
+async def test_plain_http_inside_a_tunnel_is_read_and_given_its_secret_too(world: World) -> None:
+    """Some clients open a tunnel for every destination and then speak plain HTTP through it."""
+    placeholder = world.placeholders["provider"]
+    credentials = base64.b64encode(f"{world.turn.id}:{world.token}".encode()).decode()
+    reader, writer = await asyncio.open_connection("127.0.0.1", world.proxy)
+    writer.write(f"CONNECT localhost:{world.http} HTTP/1.1\r\nHost: localhost:{world.http}\r\n"
+                 f"Proxy-Authorization: Basic {credentials}\r\n\r\n".encode())
+    assert (await reader.readuntil(b"\r\n\r\n")).startswith(b"HTTP/1.1 200")
+    body = b'{"model": "m"}'
+    writer.write(f"POST /echo?k={placeholder} HTTP/1.1\r\nHost: localhost:{world.http}\r\n"
+                 f"Authorization: Bearer {placeholder}\r\nContent-Type: application/json\r\n"
+                 f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    await writer.drain()
+    answer = await asyncio.wait_for(reader.read(), 10)
+    writer.close()
+    head, _, said = answer.partition(b"\r\n\r\n")
+    assert head.startswith(b"HTTP/1.1 200")
+    echoed = json.loads(said[said.index(b"{"):said.rindex(b"}") + 1])
+    assert echoed["headers"]["authorization"] == "Bearer the-provider-key"
+    assert echoed["query"] == {"k": "the-provider-key"}
+    assert echoed["body"] == body.decode()
 
 
 async def test_a_sandbox_that_trusts_only_the_platform_s_bundle_can_talk_to_an_intercepted_host(world: World) -> None:

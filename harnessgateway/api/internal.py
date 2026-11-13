@@ -170,7 +170,7 @@ def internal_app(stores: Stores) -> FastAPI:
     async def ca_bundle() -> str:
         """What a sandbox trusts: public, so anything on the control network may read it."""
         certificate, _ = await stores.platform.authority()
-        return bundle(certificate)
+        return bundle(certificate, extra=stores.settings.extra_ca)
 
     @app.get("/internal/proxy/authority", dependencies=[Proxy])
     async def authority() -> dict[str, Any]:

@@ -5,8 +5,11 @@ its turn's policy and against the addresses nothing may reach. Bytes to a host w
 A host a secret is bound to is answered with a certificate of the platform's own authority, so the request
 can be read, the secret put in, and the request sent on over a verified connection of the proxy's own.
 
-An intercepted connection carries one request: the proxy asks the host to close when it has answered. That
+A connection the proxy reads carries one request: the proxy asks the host to close when it has answered. That
 keeps the proxy from having to understand responses at all; they are relayed as they arrive.
+
+What a client sends through a tunnel to such a host is told apart by its first byte: TLS, or plain HTTP,
+which some clients send through a tunnel all the same.
 """
 
 import asyncio
@@ -20,6 +23,7 @@ import ssl
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from harnessgateway.domain.hosts import HostEntry, is_forbidden_address
@@ -34,6 +38,20 @@ HEAD_MAX = 64 * 1024
 CONNECT_TIMEOUT_S = 30
 _HOP = frozenset({"proxy-authorization", "proxy-connection"})
 _GONE = (ConnectionError, asyncio.IncompleteReadError, ssl.SSLError, TimeoutError, OSError)
+
+
+class Writes(Protocol):
+    """Where the proxy sends bytes to a client: its connection, or the inside of a tunnel it reads."""
+
+    def write(self, data: bytes) -> None: ...
+
+    async def drain(self) -> None: ...
+
+    def can_write_eof(self) -> bool: ...
+
+
+Client = tuple[asyncio.StreamReader, Writes]
+Upstream = tuple[asyncio.StreamReader, asyncio.StreamWriter]
 
 
 @dataclass
@@ -109,7 +127,7 @@ def _refusal(status: str, text: str, *extra: str) -> bytes:
     return ("\r\n".join(head) + "\r\n\r\n").encode() + body
 
 
-async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, counts: list[int], index: int) -> None:
+async def _pipe(reader: asyncio.StreamReader, writer: Writes, counts: list[int], index: int) -> None:
     with contextlib.suppress(*_GONE):
         while data := await reader.read(65536):
             writer.write(data)
@@ -117,8 +135,7 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, coun
             counts[index] += len(data)
 
 
-async def _relay(client: tuple[asyncio.StreamReader, asyncio.StreamWriter],
-                 upstream: tuple[asyncio.StreamReader, asyncio.StreamWriter], counts: list[int]) -> None:
+async def _relay(client: Client, upstream: Upstream, counts: list[int]) -> None:
     """Pass bytes both ways until the far side has finished answering."""
     up = asyncio.create_task(_pipe(client[0], upstream[1], counts, 0))
     down = asyncio.create_task(_pipe(upstream[0], client[1], counts, 1))
@@ -139,6 +156,104 @@ async def _close(writer: asyncio.StreamWriter) -> None:
     with contextlib.suppress(*_GONE):
         writer.close()
         await writer.wait_closed()
+
+
+class _Inner:
+    """What a client sends through a tunnel the proxy must read: TLS, which is ended here with a certificate of
+    the platform's authority, or plain HTTP, which some clients send through a tunnel all the same.
+
+    It is told apart by the first byte the client sends. It offers the reader and the writer methods the rest
+    of the proxy uses.
+    """
+
+    def __init__(self, raw_reader: asyncio.StreamReader, raw_writer: asyncio.StreamWriter,
+                 tls: ssl.SSLObject | None, incoming: ssl.MemoryBIO | None, outgoing: ssl.MemoryBIO | None) -> None:
+        self._raw_reader, self._raw_writer = raw_reader, raw_writer
+        self._tls, self._incoming, self._outgoing = tls, incoming, outgoing
+        self.reader = asyncio.StreamReader(limit=HEAD_MAX)
+        self._pump: asyncio.Task[None] | None = None
+
+    @property
+    def tls(self) -> bool:
+        return self._tls is not None
+
+    @classmethod
+    async def open(cls, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, authority: Authority,
+                   host: str) -> "_Inner | None":
+        first = await reader.read(65536)
+        if not first:
+            return None
+        if first[:1] != b"\x16":                                # not a TLS handshake: plain HTTP
+            inner = cls(reader, writer, None, None, None)
+            inner.reader.feed_data(first)
+        else:
+            incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+            tls = authority.context_for(host).wrap_bio(incoming, outgoing, server_side=True)
+            inner = cls(reader, writer, tls, incoming, outgoing)
+            incoming.write(first)
+            while True:
+                try:
+                    tls.do_handshake()
+                    break
+                except ssl.SSLWantReadError:
+                    await inner._flush()
+                    data = await reader.read(65536)
+                    if not data:
+                        return None
+                    incoming.write(data)
+            await inner._flush()
+        inner._pump = asyncio.create_task(inner._read())
+        return inner
+
+    async def _flush(self) -> None:
+        assert self._outgoing is not None
+        data = self._outgoing.read()
+        if data:
+            self._raw_writer.write(data)
+            await self._raw_writer.drain()
+
+    async def _read(self) -> None:
+        """Move what the client sends into `reader`, decrypted when it is TLS."""
+        try:
+            while True:
+                if self._tls is not None:
+                    try:
+                        data = self._tls.read(65536)
+                    except ssl.SSLWantReadError:
+                        data = None
+                    if data:
+                        self.reader.feed_data(data)
+                        continue
+                    if data == b"":                             # the client ended the TLS session
+                        break
+                raw = await self._raw_reader.read(65536)
+                if not raw:
+                    break
+                if self._incoming is not None:
+                    self._incoming.write(raw)
+                else:
+                    self.reader.feed_data(raw)
+        except _GONE:
+            pass
+        finally:
+            self.reader.feed_eof()
+
+    def write(self, data: bytes) -> None:
+        if self._tls is None:
+            return self._raw_writer.write(data)
+        assert self._outgoing is not None
+        self._tls.write(data)
+        self._raw_writer.write(self._outgoing.read())
+
+    async def drain(self) -> None:
+        await self._raw_writer.drain()
+
+    def can_write_eof(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        if self._pump is not None:
+            self._pump.cancel()
 
 
 class EgressProxy:
@@ -225,8 +340,8 @@ class EgressProxy:
                                   f"which a sandbox may not reach")
         return (addresses[0], "") if addresses else (None, f"{host} could not be resolved")
 
-    async def _connect(self, client: asyncio.StreamWriter, address: str, port: int, *, tls_for: str | None = None,
-                       ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
+    async def _connect(self, client: Writes, address: str, port: int, *, tls_for: str | None = None,
+                       ) -> Upstream | None:
         try:
             async with asyncio.timeout(CONNECT_TIMEOUT_S):
                 if tls_for is None:
@@ -255,18 +370,23 @@ class EgressProxy:
             return
         writer.write(established)
         await writer.drain()
-        await writer.start_tls(self._authority.context_for(host))
-        head = await read_head(reader)
-        if head is None:
+        inner = await _Inner.open(reader, writer, self._authority, host)
+        if inner is None:
             return
-        apply_secrets(head, secrets)
-        upstream = await self._connect(writer, address, port, tls_for=host)
-        if upstream is None:
-            return
-        await self._send(client, upstream, head, counts)
+        try:
+            head = await read_head(inner.reader)
+            if head is None:
+                return
+            apply_secrets(head, secrets)
+            upstream = await self._connect(inner, address, port, tls_for=host if inner.tls else None)
+            if upstream is None:
+                return
+            await self._send((inner.reader, inner), upstream, head, counts)
+        finally:
+            inner.close()
 
-    async def _plain(self, client: tuple[asyncio.StreamReader, asyncio.StreamWriter], head: Head, port: int,
-                     address: str, secrets: Sequence[BoundSecret], counts: list[int]) -> None:
+    async def _plain(self, client: Client, head: Head, port: int, address: str, secrets: Sequence[BoundSecret],
+                     counts: list[int]) -> None:
         url = urlsplit(head.target)
         head.target = (url.path or "/") + (f"?{url.query}" if url.query else "")
         head.drop(*_HOP)
@@ -277,8 +397,7 @@ class EgressProxy:
         await self._send(client, upstream, head, counts)
 
     @staticmethod
-    async def _send(client: tuple[asyncio.StreamReader, asyncio.StreamWriter],
-                    upstream: tuple[asyncio.StreamReader, asyncio.StreamWriter], head: Head, counts: list[int]) -> None:
+    async def _send(client: Client, upstream: Upstream, head: Head, counts: list[int]) -> None:
         try:
             sent = head.encode()
             upstream[1].write(sent)

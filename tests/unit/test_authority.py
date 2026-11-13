@@ -68,3 +68,13 @@ async def test_an_address_gets_a_certificate_too(tmp_path: Path) -> None:
     authority = Authority(cert_pem, key_pem, tmp_path / "certs")
     trusting = ssl.create_default_context(cadata=cert_pem)
     assert await _handshake(authority.context_for("127.0.0.1"), trusting, "127.0.0.1") == "hello"
+
+
+def test_an_operator_s_extra_authorities_are_part_of_what_sandboxes_trust() -> None:
+    """A network that inspects TLS re-signs it with an authority of its own (spec §11.5)."""
+    ours, _ = new_authority()
+    theirs, _ = new_authority()
+    text = bundle(ours, extra=theirs)
+    assert ours.strip() in text
+    assert theirs.strip() in text
+    assert bundle(ours, extra="") == bundle(ours)

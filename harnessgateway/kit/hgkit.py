@@ -197,6 +197,9 @@ class Cli:
 
     When HG_REPLAY names a file, the CLI is not started and the file's lines are given instead. That is how a
     package's translation is tested against a recording of its CLI's real output.
+
+    To make such a recording, give an environment the variable HGKIT_RECORD naming a file (in the work folder,
+    say): every line the CLI prints is also written there.
     """
 
     def __init__(self, command: Sequence[str], env: Mapping[str, str] | None = None, cwd: str | None = None,
@@ -235,8 +238,17 @@ class Cli:
             self._process.stdin.write(self._stdin)
             self._process.stdin.close()
         assert self._process.stdout is not None
-        for line in self._process.stdout:
-            yield line.rstrip("\n")
+        record_to = self._env.get("HGKIT_RECORD")
+        record = open(record_to, "a", encoding="utf-8") if record_to else None  # noqa: SIM115 - closed below
+        try:
+            for line in self._process.stdout:
+                if record is not None:
+                    record.write(line)
+                    record.flush()
+                yield line.rstrip("\n")
+        finally:
+            if record is not None:
+                record.close()
         self.exit_code = self._process.wait()
 
 

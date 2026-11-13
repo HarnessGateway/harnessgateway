@@ -4,6 +4,7 @@ import base64
 import binascii
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import harnessgateway
@@ -68,6 +69,19 @@ def _extensions(text: str) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _certificates(path: str) -> str:
+    """The PEM certificates in a file; "" when no file is named."""
+    if not path:
+        return ""
+    try:
+        text = Path(path).read_text()
+    except OSError as e:
+        raise ValueError(f"names a file of PEM certificates that cannot be read: {e}") from None
+    if "-----BEGIN CERTIFICATE-----" not in text:
+        raise ValueError("names a file that holds no PEM certificate")
+    return text
+
+
 def _url(text: str) -> str:
     if not text.startswith(("http://", "https://")):
         raise ValueError("is an http:// or https:// URL")
@@ -78,6 +92,7 @@ _Spec = dict[str, tuple[str, str | None, Callable[[str], Any]]]      # field: (v
 _INTERNAL_URL = ("HG_INTERNAL_URL", "http://serve:8001", _url)
 _PRIVATE_HOSTS = ("HG_PRIVATE_HOSTS", "", _hosts)
 _LOG_LEVEL = ("HG_LOG_LEVEL", "info", _one_of(_LOG_LEVELS))
+_EXTRA_CA = ("HG_EXTRA_CA", "", _certificates)
 
 
 def _read(env: Mapping[str, str], spec: _Spec) -> dict[str, Any]:
@@ -115,6 +130,7 @@ class Settings:
     max_turns: int
     volume_ttl_s: int
     private_hosts: tuple[HostEntry, ...]
+    extra_ca: str                              # PEM text: authorities the operator adds to what is trusted
     extensions: tuple[str, ...]
     log_level: str
 
@@ -137,6 +153,7 @@ class Settings:
             "max_turns": ("HG_MAX_TURNS", "8", _number(1)),
             "volume_ttl_s": ("HG_VOLUME_TTL_S", "3600", _number(0)),
             "private_hosts": _PRIVATE_HOSTS,
+            "extra_ca": _EXTRA_CA,
             "extensions": ("HG_EXTENSIONS", "", _extensions),
             "log_level": _LOG_LEVEL,
         }))
@@ -150,6 +167,7 @@ class ProxySettings:
     internal_url: str
     port: int
     private_hosts: tuple[HostEntry, ...]
+    extra_ca: str
     log_level: str
 
     @classmethod
@@ -159,5 +177,6 @@ class ProxySettings:
             "internal_url": _INTERNAL_URL,
             "port": ("HG_PROXY_PORT", "8080", _port),
             "private_hosts": _PRIVATE_HOSTS,
+            "extra_ca": _EXTRA_CA,
             "log_level": _LOG_LEVEL,
         }))

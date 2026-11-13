@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import signal
+import ssl
 import tempfile
 from pathlib import Path
 
@@ -33,8 +34,11 @@ async def run_proxy(settings: ProxySettings) -> None:
     platform = PlatformClient(settings.internal_url, settings.proxy_key)
     certificate, key = await _authority(platform)
     with tempfile.TemporaryDirectory(prefix="hg-proxy-") as folder:
+        outward = ssl.create_default_context()                  # how the proxy verifies the hosts it reads for
+        if settings.extra_ca:
+            outward.load_verify_locations(cadata=settings.extra_ca)
         proxy = EgressProxy(platform, Authority(certificate, key, Path(folder)),
-                            private_hosts=settings.private_hosts)
+                            private_hosts=settings.private_hosts, upstream_tls=outward)
         server = await proxy.start("0.0.0.0", settings.port)  # noqa: S104 - reached from the sandbox network
         flushing = asyncio.create_task(platform.flushing())
         stop = asyncio.Event()

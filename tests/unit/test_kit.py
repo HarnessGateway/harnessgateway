@@ -310,6 +310,15 @@ def test_with_a_recording_the_cli_is_not_started(tmp_path: Path) -> None:
     assert cli.exit_code == 0
 
 
+def test_a_cli_s_output_can_be_copied_to_a_file_to_make_a_recording(tmp_path: Path) -> None:
+    recording = tmp_path / "recording"
+    cli = hgkit.Cli([sys.executable, "-c", "print('one'); print('two')"], env={"HGKIT_RECORD": str(recording)})
+    assert list(cli.lines()) == ["one", "two"]
+    assert recording.read_text() == "one\ntwo\n"
+    replayed = hgkit.Cli(["/no/such/program"], env={"HG_REPLAY": str(recording)})
+    assert list(replayed.lines()) == ["one", "two"]
+
+
 def test_under_a_package_check_ids_are_counted_so_output_is_repeatable() -> None:
     def printed_under_check() -> str:
         out = io.StringIO()

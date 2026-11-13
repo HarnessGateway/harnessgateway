@@ -51,9 +51,12 @@ def new_authority() -> tuple[str, str]:
     return cert.public_bytes(serialization.Encoding.PEM).decode(), _pem(key)
 
 
-def bundle(authority_cert: str) -> str:
-    """What a sandbox trusts: the public roots, and the platform's own authority."""
-    return f"{certifi.contents().rstrip()}\n\n# HarnessGateway egress authority\n{authority_cert.strip()}\n"
+def bundle(authority_cert: str, *, extra: str = "") -> str:
+    """What a sandbox trusts: the public roots, the platform's own authority, and any the operator added."""
+    parts = [certifi.contents().rstrip(), f"# HarnessGateway egress authority\n{authority_cert.strip()}"]
+    if extra.strip():
+        parts.append(f"# Added by the operator (HG_EXTRA_CA)\n{extra.strip()}")
+    return "\n\n".join(parts) + "\n"
 
 
 class Authority:

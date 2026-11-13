@@ -1,6 +1,7 @@
 """Spec §18.4: settings come from the environment; a missing or invalid one stops the program and is named."""
 
 import base64
+from pathlib import Path
 
 import pytest
 
@@ -84,3 +85,16 @@ def test_the_proxy_needs_only_its_key_and_holds_no_database_address() -> None:
     assert not hasattr(proxy, "database_url")
     with pytest.raises(SettingsError, match="HG_PROXY_KEY is required"):
         ProxySettings.from_env({})
+
+
+def test_extra_authorities_are_read_from_a_file_that_must_exist(tmp_path: Path) -> None:
+    file = tmp_path / "corporate.pem"
+    file.write_text("-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----\n")
+    assert Settings.from_env({**REQUIRED, "HG_EXTRA_CA": str(file)}).extra_ca == file.read_text()
+    assert ProxySettings.from_env({"HG_PROXY_KEY": "k", "HG_EXTRA_CA": str(file)}).extra_ca == file.read_text()
+    assert Settings.from_env(REQUIRED).extra_ca == ""
+    with pytest.raises(SettingsError, match="HG_EXTRA_CA"):
+        Settings.from_env({**REQUIRED, "HG_EXTRA_CA": str(tmp_path / "absent.pem")})
+    (tmp_path / "empty.pem").write_text("not a certificate")
+    with pytest.raises(SettingsError, match="HG_EXTRA_CA"):
+        Settings.from_env({**REQUIRED, "HG_EXTRA_CA": str(tmp_path / "empty.pem")})
