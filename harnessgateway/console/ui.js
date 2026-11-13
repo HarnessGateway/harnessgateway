@@ -1,4 +1,6 @@
-// Small helpers for building pages without a framework.
+// Helpers for building a page out of DOM nodes, for the pages other editions add (spec §20). A page uses the
+// console's own styles (app.css): .card, .row, .field, .note (.warn, .bad), .pill (.ok, .warn, .bad, .b, .q),
+// .btn for the main action and .btn2 (.danger) for the others, .muted, .small, .mono.
 
 export function h(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -28,25 +30,26 @@ export function clear(node) {
 }
 
 export function field(label, control) {
-  return h("div", {}, h("label", {}, label), control);
+  return h("div", { class: "field" }, h("label", {}, label), control);
 }
 
-export function table(columns, rows, onPick) {
-  return h("table", {},
+export function table(columns, rows, onPick, wrap = "") {
+  const made = h("table", {},
     h("thead", {}, h("tr", {}, columns.map((column) => h("th", {}, column.title)))),
     h("tbody", {}, rows.length ? rows.map((row) =>
       h("tr", onPick ? { class: "pick", onclick: () => onPick(row) } : {},
         columns.map((column) => h("td", {}, column.cell(row))))) :
-      h("tr", {}, h("td", { colspan: columns.length, class: "muted" }, "Nothing here yet."))));
+      h("tr", {}, h("td", { colspan: columns.length, class: "empty" }, "Nothing here yet."))));
+  return wrap ? h("div", { class: wrap }, made) : made;
 }
 
-export function pill(text, kind = "") {
+export function pill(text, kind = "q") {
   return h("span", { class: `pill ${kind}` }, text);
 }
 
-const STATUS = { completed: "good", ready: "good", failed: "bad", cancelled: "warn", incomplete: "warn" };
+const STATUS = { completed: "ok", ready: "ok", failed: "bad", cancelled: "q", incomplete: "warn" };
 export function status(value) {
-  return pill(value, STATUS[value] || "");
+  return pill(value, STATUS[value] || "q");
 }
 
 export function when(text) {
@@ -65,7 +68,7 @@ export async function attempt(place, action) {
   try {
     return await action();
   } catch (error) {
-    put(place, h("div", { class: "error" }, error.message));
+    put(place, h("div", { class: "note bad" }, error.message));
     return undefined;
   }
 }
