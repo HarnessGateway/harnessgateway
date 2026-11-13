@@ -15,18 +15,19 @@ const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 try {
   await page.goto(url);
-  await page.waitForSelector("#key");                                   // nobody is signed in: the form
-  await page.click("a:has-text('Sign in the other way')");              // the extension's button
-  await page.waitForSelector("nav >> text=Signed in as developer");     // no key was ever typed
-  await page.click("nav >> text=Sessions");
-  await page.waitForSelector("h1 >> text=Sessions");
-  if (await page.locator("nav >> text=Keys").count()) throw new Error("a developer was shown an admin's page");
+  await page.waitForSelector("#signin:not([hidden]) #key");             // nobody is signed in: the form
+  await page.click("#ways a:has-text('Sign in the other way')");        // the extension's button
+  await page.waitForSelector("#who:has-text('developer')");             // no key was ever typed
+  await page.click("#nav .item:has-text('Sessions')");
+  await page.waitForSelector("#content h1:has-text('Sessions')");
+  if (await page.locator("#nav .item:has-text('API keys')").count()) throw new Error("a developer was shown an admin's page");
   await page.reload();
-  await page.waitForSelector("nav >> text=Signed in as developer");     // still signed in after a reload
-  await page.click("text=Sign out");
-  await page.waitForSelector("#key");
+  await page.waitForSelector("#who:has-text('developer')");             // still signed in after a reload
+  await page.click("#who");
+  await page.click(".menu [data-out]");
+  await page.waitForSelector("#signin:not([hidden]) #key");
   await page.reload();
-  await page.waitForSelector("#key");                                   // and signed out for good
+  await page.waitForSelector("#signin:not([hidden]) #key");             // and signed out for good
   if (errors.length) throw new Error(`the page raised errors: ${errors.join("; ")}`);
   console.log("signed in and out the extension's way");
 } catch (error) {

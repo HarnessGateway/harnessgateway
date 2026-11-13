@@ -21,7 +21,8 @@ export async function call(method, path, body, options = {}) {
   const key = options.key || session.key;
   const headers = key ? { Authorization: `Bearer ${key}` } : {};       // without a key, an edition's sign-in speaks
   let payload = body;
-  if (body !== undefined && !(body instanceof FormData)) {
+  if (body instanceof Blob) headers["Content-Type"] = "application/octet-stream";      // a file's bytes, as they are
+  else if (body !== undefined && body !== null && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
@@ -48,9 +49,10 @@ export async function text(path) {
   return (await call("GET", path, undefined, { raw: true })).text();
 }
 
-// Posts a request and gives each server-sent event to `onEvent` as it arrives.
+// Gives each server-sent event of a response to `onEvent` as it arrives: a request that is posted, or, with no
+// body, one that is read (a turn already running, followed from its first event).
 export async function stream(path, body, onEvent, signal) {
-  const response = await call("POST", path, body, { raw: true, signal });
+  const response = await call(body == null ? "GET" : "POST", path, body == null ? undefined : body, { raw: true, signal });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

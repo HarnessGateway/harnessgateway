@@ -1,13 +1,26 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HarnessGateway</title>
-  <link rel="stylesheet" href="/style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HarnessGateway</title>
+<link rel="icon" href="/mascot.png">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
 </head>
 <body>
-  <div id="app"></div>
-  <script type="module" src="/app.js"></script>
+<aside><div class="brand" id="brand"></div><div class="nav" id="nav"></div><div class="foot" id="foot"></div></aside>
+<main>
+  <header><button class="ib" id="sideopen" title="Show the sidebar" hidden></button><span class="crumb" id="crumb"></span><span class="who" id="who"></span></header>
+  <div id="content"></div>
+</main>
+<form class="lbox" id="signin" hidden>
+  <div class="brand"><img class="logo" src="/mascot.png" alt=""><b>HarnessGateway</b></div>
+  <div id="msg" class="note bad" hidden></div>
+  <div class="field"><label for="key">API key</label><input id="key" name="key" type="password" placeholder="hg_…" autocomplete="off">
+    <div class="help">It is kept in this browser tab only.</div></div>
+  <button class="btn" id="go" style="width:100%;justify-content:center">Sign in</button>
+  <div id="ways"></div>
+</form>
 </body>
 </html>

@@ -1,96 +1,136 @@
-// The console (spec §20): plain JavaScript, no build step, no endpoints of its own.
-
+// The console's shell (spec §20): signing in, the sidebar (modules and their pages, collapsible), the header, the
+// account menu, and a hash router that renders one page into #content. Plain JavaScript, no build step, and no
+// endpoints of its own: every page calls the platform's API as the person who signed in.
 import { get, session } from "/api.js";
 import { pages as added, signIns, signOut } from "/extensions.js";
-import { clear, h, put } from "/ui.js";
+import { esc } from "/lib.js";
+import { nav as ownNav, pages as ownPages } from "/pages.js";
+import { $, I, ic } from "/views.js";
 
 const ORDER = { runner: 0, developer: 1, admin: 2 };
-const PAGES = [
-  { id: "chat", title: "Chat", module: "/pages/chat.js", role: "runner" },
-  { id: "sessions", title: "Sessions", module: "/pages/sessions.js", role: "developer" },
-  { id: "harnesses", title: "Harnesses", module: "/pages/harnesses.js", role: "developer" },
-  { id: "environments", title: "Environments", module: "/pages/environments.js", role: "developer" },
-  { id: "providers", title: "Providers", module: "/pages/providers.js", role: "developer" },
-  { id: "keys", title: "Keys", module: "/pages/keys.js", role: "admin" },
-  { id: "activity", title: "Activity", module: "/pages/activity.js", role: "developer" },
-  ...added,
-];
+const SIDE = "hg-console-side";
+let me = null;                                       // /v1/platform: the role, the version, the isolation
+let pages = {}, nav = [];
 
-const app = document.getElementById("app");
-let about = null;
-
-function allowed(page) {
-  return ORDER[about.role] >= ORDER[page.role || "runner"];
+// A page another edition adds: its module's render(root, {about, args}), in a module of the sidebar it names.
+function extended(page) {
+  return { title: page.title, async render(el, params) {
+    el.replaceChildren();
+    await (await import(page.module)).render(el, { about: me, args: params });
+  } };
+}
+function build() {
+  pages = { ...ownPages }; nav = ownNav(me);
+  for (const page of added) {
+    if (ORDER[me.role] < ORDER[page.role || "runner"]) continue;
+    pages[page.id] = extended(page);
+    const title = page.group || "Organization";
+    let mod = nav.find(m => m.mod === title);
+    if (!mod) nav.push(mod = { mod: title, items: [] });
+    mod.items.push({ id: page.id, label: page.title, icon: page.icon || "org", mod: title });
+  }
 }
 
-function signIn(message) {
-  const key = h("input", { type: "password", placeholder: "hg_…", autofocus: true, id: "key" });
-  const problem = h("div", {});
-  const enter = async (event) => {
-    event.preventDefault();
-    try {
-      about = await get("/v1/platform", { key: key.value.trim() });
-      session.key = key.value.trim();
-      route();
-    } catch (error) {
-      put(clear(problem), h("div", { class: "error" }, error.message));
-    }
-  };
-  put(clear(app), h("form", { class: "signin card", onsubmit: enter },
-    h("h1", {}, "HarnessGateway"),
-    h("p", { class: "muted" }, "Sign in with an API key. It is kept in this browser tab only."),
-    message ? h("div", { class: "error" }, message) : null,
-    h("label", { for: "key" }, "API key"), key, problem,
-    h("p", {}, h("button", { class: "primary", type: "submit" }, "Sign in")),
-    signIns.map((way) => h("p", {}, h("a", { class: "button", href: way.href }, way.title)))));
+function signIn(message = "") {
+  me = null;
+  document.body.className = "login";
+  const form = $("#signin"), msg = $("#msg");
+  form.hidden = false;
+  msg.textContent = message; msg.hidden = !message;
+  $("#ways").innerHTML = signIns.map(way => `<a class="btn2 way" href="${esc(way.href)}">${esc(way.title)}</a>`).join("");
+  $("#key").value = ""; $("#key").focus();
 }
-
-function shell(current) {
-  const main = h("main", {});
-  put(clear(app),
-    h("nav", {},
-      h("div", { class: "brand" }, "HarnessGateway"),
-      PAGES.filter(allowed).map((page) =>
-        h("a", { href: `#/${page.id}`, class: page.id === current.id ? "here" : "" }, page.title)),
-      h("div", { class: "about" },
-        h("div", {}, `Version ${about.version}`),
-        h("div", { class: about.isolation === "none" ? "warn" : "" },
-          about.isolation === "none" ? "Isolation: none (sandboxes share the host kernel)" : `Isolation: ${about.isolation}`),
-        h("div", {}, `Signed in as ${about.role}`),
-        h("div", {}, h("a", { href: "#", onclick: leave }, "Sign out")))),
-    main);
-  return main;
-}
-
-async function leave(event) {
+$("#signin").addEventListener("submit", async event => {
   event.preventDefault();
+  const key = $("#key").value.trim();
+  try {
+    me = await get("/v1/platform", { key });
+    session.key = key;
+    start();
+  } catch (error) { $("#msg").textContent = error.message; $("#msg").hidden = false; }
+});
+async function leave() {
   session.key = null;
-  about = null;
   if (signOut) await signOut().catch(() => {});
   signIn();
 }
+window.addEventListener("hg-signed-out", () => { if (me) { session.key = null; signIn("Sign in again: the key is no longer valid."); } });
 
-async function route() {
-  if (!about) {
-    try {
-      about = await get("/v1/platform");       // answers for a key, or for whoever an edition's sign-in says it is
-    } catch (error) {
-      const hadKey = Boolean(session.key);
-      session.key = null;
-      if (error.status !== 401) return signIn(error.message);
-      return signIn(hadKey ? "That key is no longer valid." : undefined);
-    }
-  }
-  const [id, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
-  const page = PAGES.find((candidate) => candidate.id === id && allowed(candidate)) || PAGES[0];
-  const main = shell(page);
+async function boot() {
   try {
-    const module = await import(page.module);
-    await module.render(main, { about, args: rest.map(decodeURIComponent) });
+    me = await get("/v1/platform");                    // answers for a key, or for whoever an edition's sign-in says it is
   } catch (error) {
-    put(main, h("div", { class: "error" }, error.message));
+    const hadKey = Boolean(session.key);
+    session.key = null;
+    return signIn(error.status !== 401 ? error.message : hadKey ? "That key is no longer valid." : "");
   }
+  start();
 }
 
+function start() {
+  document.body.className = "";
+  $("#signin").hidden = true;
+  build();
+  $("#brand").innerHTML = `<img class="logo" src="/mascot.png" alt=""><b>HarnessGateway</b>` +
+    `<button class="ib" id="sideclose" title="Hide the sidebar">${ic(I.side, 18)}</button>`;
+  $("#sideopen").innerHTML = ic(I.side, 18);
+  $("#sideclose").onclick = toggleSide; $("#sideopen").onclick = toggleSide;
+  try { document.body.classList.toggle("noside", localStorage.getItem(SIDE) === "closed"); } catch { /* blocked */ }
+  $("#sideopen").hidden = !document.body.classList.contains("noside");
+  const unsafe = me.isolation === "none";
+  $("#foot").innerHTML = `<a href="https://github.com/HarnessGateway/harnessgateway#readme" target="_blank" rel="noopener">Docs ↗</a>` +
+    (unsafe ? `<span class="pill warn" title="Sandboxes share this host's kernel: for development and trusted code. Install gVisor to isolate them.">no isolation</span>` : "") +
+    `<span style="margin-left:auto">v${esc(me.version || "?")}</span>`;
+  $("#who").innerHTML = `<span>${esc(me.role)}</span><span class="av">${esc(me.role.slice(0, 1).toUpperCase())}</span>`;
+  $("#who").onclick = accountMenu;
+  route();
+}
+
+function toggleSide() {
+  const closed = document.body.classList.toggle("noside");
+  $("#sideopen").hidden = !closed;
+  try { localStorage.setItem(SIDE, closed ? "closed" : "open"); } catch { /* blocked */ }
+}
+
+function current() {
+  const [id, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
+  return { id: id || nav[0].items[0].id, params: rest.map(decodeURIComponent) };
+}
+
+function renderNav() {
+  const { id } = current();
+  $("#nav").innerHTML = nav.map(m => `<div class="mod">${esc(m.mod)}</div>` +
+    m.items.map(it => `<a class="item${it.id === id || (id === "drafts" && it.id === "harnesses") ? " on" : ""}" href="#/${it.id}">${ic(I[it.icon] || I.grid)}${esc(it.label)}</a>`).join("")).join("");
+}
+
+async function route() {
+  if (!me) return;
+  const { id, params } = current();
+  const page = pages[id] || pages[nav[0].items[0].id];
+  renderNav();
+  const label = nav.flatMap(m => m.items).find(it => it.id === (id === "drafts" ? "harnesses" : id));
+  $("#crumb").innerHTML = `${esc(label && label.mod ? label.mod : "")} / <b>${esc(label ? label.label : page.title)}</b>` +
+    (params[0] && id !== "chat" ? ` / <b>${esc(params[0])}</b>` : "");
+  const stale = $("#content"), el = stale.cloneNode(false);   // a fresh element: no listeners from the last page
+  stale.replaceWith(el);
+  el.className = page.full ? "full" : "";
+  el.innerHTML = page.full ? "" : `<div class="muted">Loading…</div>`;
+  try { await page.render(el, params, me); } catch (e) { el.innerHTML = `<div class="note bad">${esc(e.message || e)}</div>`; }
+}
 window.addEventListener("hashchange", route);
-route();
+
+function accountMenu(e) {
+  e.stopPropagation();
+  let menu = $(".menu");
+  if (menu) { menu.remove(); return; }
+  menu = document.createElement("div");
+  menu.className = "menu";
+  menu.innerHTML = `<div class="hd">Signed in as ${esc(me.role)}<br>Sandboxes: ${esc(me.driver)}, isolation ${esc(me.isolation)}</div>` +
+    `<button data-out>Sign out</button>`;
+  $("#who").appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener("click", close); };
+  setTimeout(() => document.addEventListener("click", close), 0);
+  menu.querySelector("[data-out]").addEventListener("click", leave);
+}
+
+boot();
