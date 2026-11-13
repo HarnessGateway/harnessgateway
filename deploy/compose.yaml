@@ -1,0 +1,77 @@
+# HarnessGateway on one host with Docker (spec §18.3). Written and started by deploy/install.sh; the values
+# come from the .env file beside it.
+#
+# Networks and volumes have fixed names because `serve` starts sibling containers that name them.
+
+name: harnessgateway
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hg
+      POSTGRES_PASSWORD: ${HG_DB_PASSWORD:?}
+      POSTGRES_DB: hg
+    volumes:
+      - hg-db:/var/lib/postgresql
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hg -d hg"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  serve:
+    image: ${HG_PLATFORM_IMAGE:?}
+    restart: unless-stopped
+    command: ["harnessgateway", "serve"]
+    environment:
+      HG_DATABASE_URL: postgresql://hg:${HG_DB_PASSWORD:?}@db:5432/hg
+      HG_SECRET_KEY: ${HG_SECRET_KEY:?}
+      HG_PROXY_KEY: ${HG_PROXY_KEY:?}
+      HG_PLATFORM_IMAGE: ${HG_PLATFORM_IMAGE:?}
+      HG_SANDBOX_IMAGE: ${HG_SANDBOX_IMAGE:?}
+      HG_INTERNAL_URL: http://serve:8001
+      HG_DATA: /data
+      HG_RUNTIME: ${HG_RUNTIME:-auto}
+      HG_MAX_TURNS: ${HG_MAX_TURNS:-8}
+      HG_PRIVATE_HOSTS: ${HG_PRIVATE_HOSTS:-}
+      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - hg-data:/data
+    ports:
+      - "${HG_BIND:-127.0.0.1}:${HG_PORT:-8000}:8000"
+    networks: [control]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  proxy:
+    image: ${HG_PLATFORM_IMAGE:?}
+    restart: unless-stopped
+    command: ["harnessgateway", "proxy"]
+    environment:
+      HG_PROXY_KEY: ${HG_PROXY_KEY:?}
+      HG_INTERNAL_URL: http://serve:8001
+      HG_PRIVATE_HOSTS: ${HG_PRIVATE_HOSTS:-}
+      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+    networks:
+      control:
+      sandbox:
+        aliases: [egress]
+    depends_on: [serve]
+
+networks:
+  control:
+    name: hg-control
+  sandbox:
+    name: hg-sandbox
+    internal: true
+
+volumes:
+  hg-db:
+    name: hg-db
+  hg-data:
+    name: hg-data

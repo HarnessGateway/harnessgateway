@@ -1,0 +1,52 @@
+name: ci
+# Every level of the test plan (SPEC §24) that a hosted runner can run, and both images built.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      HG_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - name: A browser, for the console's test
+        run: |
+          npm install --global playwright
+          npx playwright install --with-deps chromium
+          echo "NODE_PATH=$(npm root --global)" >> "$GITHUB_ENV"
+      - name: Unit, integration and browser tests
+        run: uv run pytest
+      - name: End-to-end tests, in real containers
+        run: uv run pytest tests/e2e
+        env:
+          HG_TEST_DOCKER: "1"
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f images/platform/Dockerfile -t harnessgateway:ci .
+      - run: docker build -f images/sandbox/Dockerfile -t sandbox:ci images/sandbox
+      - name: The platform image runs, and its catalog holds the template package
+        run: |
+          docker run --rm harnessgateway:ci harnessgateway version
+          docker run --rm harnessgateway:ci harnessgateway package check /packages/shell
+      - name: The sandbox image has what the shipped harnesses need, as user 10000
+        run: docker run --rm sandbox:ci sh -c 'test "$(id -u)" = 10000 && node --version && python3 --version && git --version'

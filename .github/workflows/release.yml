@@ -1,0 +1,86 @@
+name: release
+# A push to main whose version (pyproject.toml) has no tag yet is a release: both images are built for amd64
+# and arm64 and pushed to GHCR under the names deploy/install.sh uses, the commit is tagged v<version>, and
+# that version's CHANGELOG entry becomes the release notes. A push whose version is already tagged does nothing.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      release: ${{ steps.read.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)
+          [ -n "$version" ] || { echo "no version in pyproject.toml" >&2; exit 1; }
+          grep -q "^VERSION=$version\$" deploy/install.sh || { echo "deploy/install.sh names another version" >&2; exit 1; }
+          grep -q "^## $version\$" CHANGELOG.md || { echo "CHANGELOG.md has no entry for $version" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  images:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: harnessgateway
+            file: images/platform/Dockerfile
+            context: .
+          - name: sandbox
+            file: images/sandbox/Dockerfile
+            context: images/sandbox
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add the packages that ship with the platform to its catalog (SPEC §21)
+        if: matrix.name == 'harnessgateway'
+        run: |
+          git clone --depth 1 https://github.com/HarnessGateway/harness-packages /tmp/harness-packages
+          for package in /tmp/harness-packages/*/harness.json; do cp -r "$(dirname "$package")" packages/; done
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/harnessgateway/${{ matrix.name }}:${{ needs.version.outputs.version }}
+            ghcr.io/harnessgateway/${{ matrix.name }}:latest
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+  publish:
+    needs: [version, images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag the commit and publish the changelog entry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          awk -v v="## $VERSION" '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes-file notes.md
