@@ -1,52 +1,17 @@
-"""Identifiers and secret tokens (SPEC §8.3). An id carries its kind as a prefix, so an id of the wrong kind is refused
-by its shape before any lookup. A secret is a high-entropy token the platform keeps only as a keyed digest."""
-from __future__ import annotations
+"""Making identifiers: a type prefix and a ULID (spec §4). They sort by when they were made."""
 
-import hashlib
-import hmac
-import re
 import secrets
+import time
 
-from .domain.names import NAME
-from .errors import Invalid, NotFound
+from harnessgateway.domain.names import PREFIXES
 
-PREFIX = {"org": "org", "key": "key", "provider": "prv", "harness": "hns", "session": "cntr", "turn": "resp",
-          "file": "file", "box": "box", "install": "inst", "snapshot": "snap", "op": "cop", "usage": "use",
-          "trace": "trc", "account": "acct", "sign_in": "sgn", "audit": "aud"}
-SECRET = {"key": "hg_", "box": "hgb_", "door": "hgd_", "operator": "hgo_", "placeholder": "hgs_",
-          "sign_in": "hgl_", "invitation": "hgi_"}
-_SHAPE = re.compile(r"[a-z]+_[0-9a-f]{32}")
-_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
-def new(kind: str) -> str:
-    return f"{PREFIX[kind]}_{secrets.token_hex(16)}"
+def _base32(number: int, length: int) -> str:
+    return "".join(_ALPHABET[(number >> (5 * i)) & 31] for i in reversed(range(length)))
 
 
-def check(value: object, kind: str) -> str:
-    """The id when it has the kind's shape; otherwise NotFound, as if it named nothing."""
-    if not isinstance(value, str) or not _SHAPE.fullmatch(value) or not value.startswith(PREFIX[kind] + "_"):
-        raise NotFound(f"no {kind.replace('_', ' ')} {value!r}")
-    return value
-
-
-def check_name(value: object, what: str) -> str:
-    if not isinstance(value, str) or not NAME.fullmatch(value):
-        raise Invalid(f"a {what} name is lowercase letters, digits, dots, dashes and underscores, at most 63 characters, "
-                      f"starting with a letter or digit, not {value!r}", param="name")
-    return value
-
-
-def new_secret(kind: str) -> str:
-    if kind == "placeholder":
-        return SECRET[kind] + secrets.token_hex(16)
-    return SECRET[kind] + "".join(secrets.choice(_ALPHABET) for _ in range(40))
-
-
-def digest(secret: str, pepper: bytes) -> str:
-    """HMAC-SHA256 under the server's pepper: what is kept of a secret token."""
-    return hmac.new(pepper, secret.encode(), hashlib.sha256).hexdigest()
-
-
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def new_id(kind: str) -> str:
+    """A new identifier of `kind`: 48 bits of milliseconds, then 80 random bits."""
+    return f"{PREFIXES[kind]}_{_base32(time.time_ns() // 1_000_000, 10)}{_base32(secrets.randbits(80), 16)}"

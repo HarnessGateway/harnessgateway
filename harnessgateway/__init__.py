@@ -1,3 +1,3 @@
-"""HarnessGateway: any coding-agent harness as an API (see SPEC.md)."""
+"""HarnessGateway: any agent harness CLI, in a sandbox, behind the OpenAI Responses API."""
 
-__version__ = "3.3.1"
+__version__ = "4.0.0"

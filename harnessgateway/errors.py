@@ -1,48 +1,43 @@
-"""Errors a caller sees, in OpenAI's shape: {"error": {"type", "code", "message", "param"}} (SPEC §4.3)."""
-from __future__ import annotations
+"""What the platform refuses, and how a refusal is told to the caller (spec §13.7)."""
 
 
-class ApiError(Exception):
-    status = 500
-    type = "server_error"
+class Refused(Exception):
+    """A request the platform will not carry out. The message names what was wrong and what is allowed."""
 
-    def __init__(self, message: str, *, code: str | None = None, param: str | None = None):
+    status = 400
+    type = "invalid_request_error"
+
+    def __init__(self, message: str, *, param: str | None = None, code: str | None = None) -> None:
         super().__init__(message)
-        self.message, self.code, self.param = message, code, param
-
-    def body(self) -> dict[str, object]:
-        return {"error": {"type": self.type, "code": self.code, "message": self.message, "param": self.param}}
-
-
-class Invalid(ApiError):
-    status, type = 400, "invalid_request_error"
+        self.message = message
+        self.param = param
+        self.code = code
 
 
-class Unauthenticated(ApiError):
-    status, type = 401, "authentication_error"
+class Invalid(Refused):
+    """The request, a definition or a name is not valid."""
 
 
-class Forbidden(ApiError):
-    status, type = 403, "permission_error"
+class Unauthorized(Refused):
+    status = 401
+    type = "invalid_api_key"
 
 
-class NotFound(ApiError):
-    status, type = 404, "not_found_error"
+class Forbidden(Refused):
+    status = 403
+    type = "insufficient_permissions"
 
 
-class Conflict(ApiError):
-    status, type = 409, "conflict_error"
+class NotFound(Refused):
+    status = 404
+    type = "not_found"
 
 
-class TooLarge(ApiError):
-    status, type = 413, "invalid_request_error"
+class Conflict(Refused):
+    status = 409
+    type = "conflict"
 
 
-class Locked(ApiError):
-    """An account locked after repeated failed sign-ins (SPEC §10.1)."""
-    status, type = 423, "authentication_error"
-
-
-class Refused(ApiError):
-    """An extension's refusal of a turn (a quota, a plan): 429 by default, or the status it names."""
-    status, type = 429, "rate_limit_error"
+class TooLarge(Refused):
+    status = 413
+    type = "request_too_large"

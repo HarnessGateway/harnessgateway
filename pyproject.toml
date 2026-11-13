@@ -1,63 +1,51 @@
 [project]
 name = "harnessgateway"
-version = "3.3.1"
-description = "Any coding-agent harness as an API: OpenAI Responses in, a sandboxed harness package, Responses out."
+version = "4.0.0"
+description = "Runs any agent harness CLI in a sandbox, behind the OpenAI Responses API."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
-    "fastapi>=0.115,<1",
-    "uvicorn[standard]>=0.30,<1",
-    "pydantic>=2.7,<3",
-    "openai==3.46.0",                # the Responses schema requests and package output are validated against
-    "psycopg[binary,pool]>=3.2,<4",
-    "redis>=5.0,<9",
-    "boto3>=1.34,<2",                # adapters only: the s3:// object store and the KMS key wrapper
-    "cryptography>=42",
-    "httpx>=0.27,<1",
-    "authlib>=1.3,<2",               # OIDC: discovery, the code exchange, ID token verification
-    "python-multipart>=0.0.9",
+    "fastapi",
+    "uvicorn",
+    "psycopg[binary,pool]",
+    "pydantic",
+    "openai",
+    "cryptography",
+    "httpx",
+    "python-multipart",
 ]
 
-[dependency-groups]
-# `uv sync` installs these with the project; `uv.lock` pins every version, and Dependabot moves the lock.
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "mypy>=1.10", "playwright>=1.45", "pip-audit>=2.9"]
-
 [project.scripts]
-harnessgateway = "harnessgateway.__main__:main"
+harnessgateway = "harnessgateway.cli:main"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "ruff", "mypy"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["harnessgateway", "sandbox/hgkit", "sandbox/hgsnapshot"]   # shared with packages and the runner
+packages = ["harnessgateway"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages"]
-norecursedirs = ["seeds", ".*"]
-addopts = "--import-mode=importlib"
-pythonpath = [".", "sandbox"]
+testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["integration: needs a live stack (HG_TEST_STACK=1)"]
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q -ra"
 
 [tool.ruff]
-line-length = 130
-target-version = "py314"
-extend-exclude = ["packages/*/seeds"]
+line-length = 120
+target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "S", "SIM"]
-ignore = ["S101", "S104", "S603", "S607", "S608", "B008"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "C4", "PT"]
+ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S105", "S106", "S108", "B017"]
-"packages/**" = ["S108", "S310"]
-"console/**" = ["S108"]
-"sandbox/**" = ["S108", "S310"]
-"harnessgateway/door/**" = ["S108"]
+"tests/**" = ["S104", "S105", "S106", "S108", "S603", "S607"]
 
 [tool.mypy]
-python_version = "3.14"
-ignore_missing_imports = true
-files = ["harnessgateway", "sandbox/hgkit", "sandbox/runner.py"]
+strict = true
+files = ["harnessgateway"]
