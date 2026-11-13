@@ -45,13 +45,15 @@ class Running:
 
 @contextlib.asynccontextmanager
 async def running(stores: Stores, org: str, tmp_path: Path, extensions: Extensions | None = None,
-                  ) -> AsyncIterator[Running]:
+                  driver: Any = None) -> AsyncIterator[Running]:
+    """A running platform. It runs turns on the local driver unless another driver is given: another edition
+    tests its own driver with the same platform around it."""
     async with stores.db.system() as conn:               # the queue is shared: start with nothing waiting
         await conn.execute("UPDATE turns SET status = 'cancelled' WHERE status IN ('queued', 'in_progress')")
     stores = dataclasses.replace(stores, settings=dataclasses.replace(stores.settings, catalog=str(SHELL.parent)))
     keys = {role: (await stores.keys.create(org, name=f"the {role}", role=role))[1]
             for role in ("admin", "developer", "runner")}
-    driver = LocalDriver(tmp_path / "volumes", internal_app(stores))
+    driver = driver or LocalDriver(tmp_path / "volumes", internal_app(stores))
     platform = Platform.of(stores, driver, extensions)
     runner = asyncio.create_task(Runner(stores, driver, installer=platform.installer, heartbeat_s=0.2).run())
     try:
