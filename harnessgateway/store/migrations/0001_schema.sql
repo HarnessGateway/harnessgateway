@@ -89,6 +89,7 @@ CREATE TABLE installs (
     digest            text NOT NULL,
     image_id          text NOT NULL,
     status            text NOT NULL CHECK (status IN ('pending', 'ready', 'failed')),
+    environment       text,                          -- the environment the current attempt runs with
     log_tail          text NOT NULL DEFAULT '',
     step_token_hash   text,
     proxy_token_hash  text,
@@ -202,9 +203,7 @@ CREATE TABLE usage (
     input_tokens     bigint NOT NULL DEFAULT 0,
     output_tokens    bigint NOT NULL DEFAULT 0,
     sandbox_seconds  double precision NOT NULL DEFAULT 0,
-    bytes_up         bigint NOT NULL DEFAULT 0,
-    bytes_down       bigint NOT NULL DEFAULT 0,
-    snapshot_bytes   bigint NOT NULL DEFAULT 0
+    snapshot_bytes   bigint NOT NULL DEFAULT 0     -- bytes through the proxy are summed from egress
 );
 CREATE INDEX usage_org ON usage (org_id, at);
 
@@ -220,3 +219,25 @@ CREATE TABLE keys (
     revoked_at    timestamptz
 );
 CREATE INDEX keys_org ON keys (org_id, created_at);
+
+-- Single values that belong to the installation: the certificate authority (spec §11.5).
+CREATE TABLE platform (
+    name   text PRIMARY KEY,
+    value  jsonb NOT NULL
+);
+
+-- Every connection a sandbox made, or tried to make, through the egress proxy (spec §11.6).
+CREATE TABLE egress (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    subject_id  text NOT NULL,                     -- the turn, or the install
+    host        text NOT NULL,
+    port        integer NOT NULL,
+    allowed     boolean NOT NULL,
+    reason      text NOT NULL DEFAULT '',
+    bytes_up    bigint NOT NULL DEFAULT 0,
+    bytes_down  bigint NOT NULL DEFAULT 0,
+    started_at  timestamptz NOT NULL,
+    ended_at    timestamptz NOT NULL
+);
+CREATE INDEX egress_subject ON egress (org_id, subject_id, id);

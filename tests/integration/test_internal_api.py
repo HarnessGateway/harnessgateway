@@ -207,7 +207,7 @@ async def test_an_install_s_step_unpacks_its_package_and_reads_nothing_else(
     harness = await stores.harnesses.get(org, "shell")
     install = await stores.harnesses.install_for(org, harness.digest, "sha256:image")
     token = new_token()
-    await stores.harnesses.begin_install(org, install.id, step_token_hash=stores.hash(token),
+    await stores.harnesses.begin_install(org, install.id, environment="default", step_token_hash=stores.hash(token),
                                          proxy_token_hash=stores.hash(new_token()))
     client = client_for(stores, token)
     target = tmp_path / "harness"

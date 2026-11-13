@@ -5,7 +5,7 @@ import base64
 import pytest
 
 import harnessgateway
-from harnessgateway.settings import Settings, SettingsError
+from harnessgateway.settings import ProxySettings, Settings, SettingsError
 
 KEY = base64.b64encode(bytes(range(32))).decode()
 REQUIRED = {"HG_DATABASE_URL": "postgresql://u:p@db/hg", "HG_SECRET_KEY": KEY, "HG_PROXY_KEY": "proxy-secret"}
@@ -74,3 +74,13 @@ def test_the_error_never_shows_a_secret_s_value() -> None:
     with pytest.raises(SettingsError) as e:
         Settings.from_env({**REQUIRED, "HG_SECRET_KEY": "c2VjcmV0LXZhbHVl"})
     assert "c2VjcmV0LXZhbHVl" not in str(e.value)
+
+
+def test_the_proxy_needs_only_its_key_and_holds_no_database_address() -> None:
+    proxy = ProxySettings.from_env({"HG_PROXY_KEY": "k", "HG_PRIVATE_HOSTS": "ollama.lan:11434"})
+    assert (proxy.proxy_key, proxy.internal_url, proxy.port, proxy.log_level) == (
+        "k", "http://serve:8001", 8080, "info")
+    assert [(h.host, h.port) for h in proxy.private_hosts] == [("ollama.lan", 11434)]
+    assert not hasattr(proxy, "database_url")
+    with pytest.raises(SettingsError, match="HG_PROXY_KEY is required"):
+        ProxySettings.from_env({})

@@ -102,6 +102,7 @@ def _network_variables(user: str, token: str) -> dict[str, str]:
     return {
         **dict.fromkeys(contract.PROXY_VARIABLES, proxy),
         **dict.fromkeys(contract.NO_PROXY_VARIABLES, ""),
+        contract.NODE_PROXY_VARIABLE: "1",
         **dict.fromkeys(contract.CA_VARIABLES, contract.CA_BUNDLE),
     }
 
@@ -255,3 +256,10 @@ def unpack_step(*, org_id: str, install_id: str, internal_url: str, token: str) 
     return _step("unpack", install_id, labels={"hg.org": org_id, "hg.install": install_id},
                  mounts=[Mount(install_volume(install_id), contract.HARNESS, read_only=False)],
                  internal_url=internal_url, token=token)
+
+
+def ca_step(*, internal_url: str) -> StepPlan:
+    """Writes the certificate bundle sandboxes trust into its volume (spec §11.5)."""
+    return _step("ca", "bundle", labels={"hg.org": "platform"},
+                 mounts=[Mount(CA_VOLUME, contract.CA_BUNDLE.rpartition("/")[0], read_only=False)],
+                 internal_url=internal_url, token="")

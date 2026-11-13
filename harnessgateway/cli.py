@@ -11,7 +11,8 @@ import harnessgateway
 from harnessgateway import logs, packaging, serve
 from harnessgateway.domain.archive import read_archive
 from harnessgateway.errors import Refused
-from harnessgateway.settings import Settings, SettingsError
+from harnessgateway.proxy.command import run_proxy
+from harnessgateway.settings import ProxySettings, Settings, SettingsError
 from harnessgateway.steps.command import KINDS, run_step
 
 
@@ -55,6 +56,17 @@ def _serve(_: argparse.Namespace) -> int:
     return 0
 
 
+def _proxy(_: argparse.Namespace) -> int:
+    try:
+        settings = ProxySettings.from_env(os.environ)
+    except SettingsError as e:
+        print(f"settings: {e}", file=sys.stderr)
+        return 2
+    logs.setup(settings.log_level)
+    asyncio.run(run_proxy(settings))
+    return 0
+
+
 def _init(_: argparse.Namespace) -> int:
     settings = _settings()
     if settings is None:
@@ -76,6 +88,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version", help="print the version").set_defaults(run=_version)
     commands.add_parser("serve", help="run the APIs, the turn runner and housekeeping").set_defaults(run=_serve)
+    commands.add_parser("proxy", help="run the egress proxy").set_defaults(run=_proxy)
     commands.add_parser("init", help="first-time setup: the organization, the default environment, an admin key"
                         ).set_defaults(run=_init)
 

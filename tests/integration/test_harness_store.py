@@ -130,7 +130,8 @@ async def test_an_install_is_one_per_package_and_image(harnesses: Harnesses, org
 async def test_an_install_s_token_lives_only_while_it_is_being_installed(harnesses: Harnesses, org: str) -> None:
     harness = await harnesses.add(org, packaging.pack(SHELL))
     install = await harnesses.install_for(org, harness.digest, "sha256:image-a")
-    await harnesses.begin_install(org, install.id, step_token_hash="hash-of-step", proxy_token_hash="hash-of-proxy")
+    await harnesses.begin_install(org, install.id, environment="default", step_token_hash="hash-of-step",
+                                  proxy_token_hash="hash-of-proxy")
     assert await harnesses.install_of_token("hash-of-step") == (org, install.id, package_key(org, harness.digest))
     assert await harnesses.install_of_token("hash-of-another") is None
 
@@ -141,7 +142,8 @@ async def test_an_install_s_token_lives_only_while_it_is_being_installed(harness
     assert failed.log_tail.endswith("the end")
     assert await harnesses.install_of_token("hash-of-step") is None
 
-    await harnesses.begin_install(org, install.id, step_token_hash="again", proxy_token_hash="again-proxy")
+    await harnesses.begin_install(org, install.id, environment="default", step_token_hash="again",
+                                  proxy_token_hash="again-proxy")
     assert (await harnesses.install(org, install.id)).status == "pending"
     await harnesses.end_install(org, install.id, ready=True, log="installed")
     assert (await harnesses.install(org, install.id)).status == "ready"

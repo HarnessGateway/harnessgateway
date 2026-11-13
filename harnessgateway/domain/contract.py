@@ -19,7 +19,9 @@ NO_PROXY_VARIABLES = ("NO_PROXY", "no_proxy")
 CA_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS",
                 "PIP_CERT")
 
-_RESERVED = frozenset({"HOME", *PROXY_VARIABLES, *NO_PROXY_VARIABLES, *CA_VARIABLES})
+NODE_PROXY_VARIABLE = "NODE_USE_ENV_PROXY"           # makes Node's own HTTP clients honour the proxy variables
+
+_RESERVED = frozenset({"HOME", *PROXY_VARIABLES, *NO_PROXY_VARIABLES, *CA_VARIABLES, NODE_PROXY_VARIABLE})
 
 
 def is_reserved(name: str) -> bool:

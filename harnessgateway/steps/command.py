@@ -8,6 +8,8 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+import httpx
+
 from harnessgateway.domain import contract
 from harnessgateway.steps.errors import StepError
 from harnessgateway.steps.http import HttpStepClient
@@ -16,9 +18,25 @@ from harnessgateway.steps.save import save
 from harnessgateway.steps.unpack import unpack
 from harnessgateway.steps.watch import OVER_LIMIT, watch
 
-KINDS = ("restore", "save", "watch", "unpack")
+KINDS = ("restore", "save", "watch", "unpack", "ca")
 ROOTS = {"mind": Path(contract.MIND), "work": Path(contract.WORK)}
 _MIB = 1024 * 1024
+
+
+async def write_bundle(api: str, target: Path) -> int:
+    """Fetch the certificate bundle sandboxes trust and put it where they will find it (spec §11.5)."""
+    try:
+        async with httpx.AsyncClient(base_url=api, timeout=60, transport=httpx.AsyncHTTPTransport(retries=3)) as http:
+            answer = await http.get("/internal/ca")
+            answer.raise_for_status()
+    except httpx.HTTPError as e:
+        print(f"ca failed: the platform could not be reached: {e!r}", file=sys.stderr)
+        return 1
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(answer.text)
+    target.chmod(0o644)
+    print(f"wrote {target}")
+    return 0
 
 
 async def run_step(kind: str, target: str, *, limit_mb: int, env: Mapping[str, str]) -> int:
@@ -27,6 +45,8 @@ async def run_step(kind: str, target: str, *, limit_mb: int, env: Mapping[str, s
         size = watch(ROOTS, limit_bytes=limit_mb * _MIB)
         print(f"the session's folders hold {size // _MIB} MiB, over the limit of {limit_mb} MiB")
         return OVER_LIMIT
+    if kind == "ca":
+        return await write_bundle(env["HG_API"], Path(contract.CA_BUNDLE))
     client = HttpStepClient(env["HG_API"], env["HG_STEP_TOKEN"])
     try:
         if kind == "restore":

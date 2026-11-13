@@ -21,6 +21,7 @@ from harnessgateway.api.internal import internal_app
 from harnessgateway.domain.plan import CONTROL_NETWORK, SANDBOX_NETWORK, install_volume, mind_volume, work_volume
 from harnessgateway.drivers.docker import DockerDriver
 from harnessgateway.runner.runner import Runner
+from harnessgateway.serve import trust_bundle
 from harnessgateway.stores import Stores
 from tests.helpers import SHELL, Platform, free_port, serving
 
@@ -99,3 +100,53 @@ async def platform(stores: Stores, org: str, platform_image: str) -> AsyncIterat
             await driver.remove_volume(work_volume(row["id"]))
         for row in installs:
             await driver.remove_volume(install_volume(row["id"]))
+
+
+OUTSIDE = "hg-test-outside"
+ECHO = """
+import http.server, json
+
+class Echo(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"path": self.path, "headers": dict(self.headers)}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+http.server.ThreadingHTTPServer(("0.0.0.0", 8000), Echo).serve_forever()
+"""
+
+
+async def _docker(*args: str) -> str:
+    process = await asyncio.create_subprocess_exec("docker", *args, stdout=asyncio.subprocess.PIPE,
+                                                   stderr=asyncio.subprocess.STDOUT)
+    out, _ = await process.communicate()
+    assert process.returncode == 0, out.decode()
+    return out.decode().strip()
+
+
+@pytest.fixture
+async def egress(platform: Platform, platform_image: str) -> AsyncIterator[str]:
+    """The egress proxy in front of the platform's sandboxes, and a server standing in for the outside world.
+    Yields that server's host:port. It is on a private network, so the operator's setting lists it."""
+    settings = platform.stores.settings
+    proxy = f"hg-test-egress-{uuid.uuid4().hex[:8]}"
+    await trust_bundle(platform.stores, platform.driver)
+    for name in (OUTSIDE, proxy):
+        await _docker("rm", "--force", name)
+    await _docker("run", "--detach", "--name", OUTSIDE, "--network", CONTROL_NETWORK, SANDBOX_IMAGE,
+                  "python3", "-c", ECHO)
+    await _docker("run", "--detach", "--name", proxy, "--network", CONTROL_NETWORK,
+                  "--env", f"HG_PROXY_KEY={settings.proxy_key}", "--env", f"HG_INTERNAL_URL={settings.internal_url}",
+                  "--env", f"HG_PRIVATE_HOSTS={OUTSIDE}:8000", platform_image, "harnessgateway", "proxy")
+    await _docker("network", "connect", "--alias", "egress", SANDBOX_NETWORK, proxy)
+    try:
+        yield f"{OUTSIDE}:8000"
+    finally:
+        print(await _docker("logs", "--tail", "30", proxy))
+        await _docker("rm", "--force", OUTSIDE, proxy)

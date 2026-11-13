@@ -93,7 +93,7 @@ def test_the_sandbox_s_variables_are_the_contract_then_the_environment_then_sett
         "HG_MODEL": "deepseek-flash",
         "HG_HANDOVER": "Handover from codex. Review /mind/.codex.",
         "HTTPS_PROXY": proxy, "HTTP_PROXY": proxy, "https_proxy": proxy, "http_proxy": proxy,
-        "NO_PROXY": "", "no_proxy": "",
+        "NO_PROXY": "", "no_proxy": "", "NODE_USE_ENV_PROXY": "1",
         "SSL_CERT_FILE": "/etc/hg/ca.pem", "REQUESTS_CA_BUNDLE": "/etc/hg/ca.pem", "CURL_CA_BUNDLE": "/etc/hg/ca.pem",
         "GIT_SSL_CAINFO": "/etc/hg/ca.pem", "NODE_EXTRA_CA_CERTS": "/etc/hg/ca.pem", "PIP_CERT": "/etc/hg/ca.pem",
         "TZ": "UTC",

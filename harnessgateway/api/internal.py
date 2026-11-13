@@ -1,21 +1,27 @@
-"""The internal API: what trusted steps ask of the platform (spec §15.1).
+"""The internal API: what trusted steps and the egress proxy ask of the platform (spec §15).
 
-It listens on its own port, on the control network only. A caller proves itself with the token made for one
-turn or one install, and can reach only that turn's or that install's organization.
+It listens on its own port, on the control network only. A step proves itself with the token made for one
+turn or one install, and can reach only that turn's or that install's organization. The proxy proves itself
+with the key it shares with the platform.
 """
 
+import hmac
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from harnessgateway.api import errors
 from harnessgateway.domain.handover import gap
 from harnessgateway.domain.request import file_ids
 from harnessgateway.errors import Forbidden, Invalid, NotFound, Unauthorized
+from harnessgateway.policies import Policies
+from harnessgateway.proxy.authority import bundle
 from harnessgateway.store.blobs import BlobMissing
+from harnessgateway.store.egress import Connection
 from harnessgateway.store.snapshots import chunk_key
 from harnessgateway.store.turns import Turn
 from harnessgateway.stores import Stores
@@ -148,6 +154,46 @@ def internal_app(stores: Stores) -> FastAPI:
     @app.put("/internal/blobs/{digest}")
     async def put_chunk(digest: str, request: Request, caller: Caller) -> dict[str, Any]:
         await stores.snapshots.put_chunk(caller.org_id, digest, await request.body())
+        return {}
+
+    # for the egress proxy (spec §15.2)
+
+    def proxy(authorization: Annotated[str | None, Header()] = None) -> None:
+        scheme, _, key = (authorization or "").partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(key.encode(), stores.settings.proxy_key.encode()):
+            raise Unauthorized("the proxy key is required")
+
+    Proxy = Depends(proxy)
+    policies = Policies(stores)
+
+    @app.get("/internal/ca", response_class=PlainTextResponse)
+    async def ca_bundle() -> str:
+        """What a sandbox trusts: public, so anything on the control network may read it."""
+        certificate, _ = await stores.platform.authority()
+        return bundle(certificate)
+
+    @app.get("/internal/proxy/authority", dependencies=[Proxy])
+    async def authority() -> dict[str, Any]:
+        certificate, key = await stores.platform.authority()
+        return {"certificate": certificate, "key": key}
+
+    @app.post("/internal/proxy/policy", dependencies=[Proxy])
+    async def policy(request: Request) -> dict[str, Any]:
+        asked = await request.json()
+        found = await policies.of(str(asked.get("id")), str(asked.get("token")))
+        if found is None:
+            raise NotFound("no running turn or install has that id and token")
+        return found.to_json()
+
+    @app.post("/internal/proxy/records", dependencies=[Proxy])
+    async def records(request: Request) -> dict[str, Any]:
+        by_org: dict[str, list[Connection]] = {}
+        for record in (await request.json())["records"]:
+            by_org.setdefault(record.pop("org_id"), []).append(Connection(
+                **{**record, "started_at": datetime.fromtimestamp(record["started_at"], UTC),
+                   "ended_at": datetime.fromtimestamp(record["ended_at"], UTC)}))
+        for org_id, connections in by_org.items():
+            await stores.egress.add(org_id, connections)
         return {}
 
     return app

@@ -13,6 +13,7 @@ from harnessgateway import __version__
 from harnessgateway.api.internal import internal_app
 from harnessgateway.api.public import public_app
 from harnessgateway.domain.names import DEFAULT_ORG
+from harnessgateway.domain.plan import CA_VOLUME, ca_step
 from harnessgateway.drivers.base import Driver
 from harnessgateway.drivers.docker import DockerDriver
 from harnessgateway.extensions import Extensions
@@ -71,6 +72,15 @@ async def init(settings: Settings) -> str | None:
         return key
 
 
+async def trust_bundle(stores: Stores, driver: Driver) -> None:
+    """Make sure the certificate authority exists and the bundle sandboxes trust is in its volume (spec §11.5)."""
+    await stores.platform.authority()
+    await driver.ensure_volume(CA_VOLUME)
+    written = await driver.run_step(ca_step(internal_url=stores.settings.internal_url))
+    if written.exit_code != 0:
+        raise RuntimeError(f"the certificate bundle could not be written for sandboxes: {written.output}")
+
+
 class _Server(uvicorn.Server):
     """A server that leaves signals to the process: two of them run side by side here."""
 
@@ -105,6 +115,9 @@ async def serve(settings: Settings) -> None:
         for name in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(name, stop.set)
         serving = [asyncio.create_task(server.serve()) for server in servers]
+        while not all(server.started for server in servers):
+            await asyncio.sleep(0.05)
+        await trust_bundle(stores, driver)
         working = [asyncio.create_task(runner.run()), asyncio.create_task(Housekeeping(stores, driver).run())]
         await stop.wait()
         log.info("stopping: running turns are stopped, saved and ended")

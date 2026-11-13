@@ -261,6 +261,14 @@ class Turns:
                 f"SELECT {_COLUMNS} FROM turns WHERE step_token_hash = %s", [token_hash])).fetchone()
         return _turn(row) if row else None
 
+    async def by_proxy_token(self, turn_id: str, token_hash: str) -> Turn | None:
+        """The turn a proxy token belongs to, while it runs."""
+        async with self._db.system() as conn:
+            row = await (await conn.execute(
+                f"SELECT {_COLUMNS} FROM turns WHERE id = %s AND proxy_token_hash = %s",
+                [turn_id, token_hash])).fetchone()
+        return _turn(row) if row else None
+
     # the stream
 
     @staticmethod

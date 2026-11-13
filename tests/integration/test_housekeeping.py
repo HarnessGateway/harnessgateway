@@ -37,7 +37,8 @@ async def test_idle_volumes_unstored_turns_and_unused_chunks_are_removed(
                                [org])
             await conn.execute("UPDATE turns SET completed_at = now() - interval '1 hour' WHERE id = %s",
                                [unstored.id])
-        await stores.snapshots.put_chunk(org, "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", b"test")
+        unused = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"       # the hash of b"test"
+        await stores.snapshots.put_chunk(org, unused, b"test")
         async with stores.db.org(org) as conn:
             await conn.execute("UPDATE blobs SET unreferenced_at = now() - interval '2 hours' WHERE refs = 0")
         await housekeeping.once()
@@ -45,8 +46,7 @@ async def test_idle_volumes_unstored_turns_and_unused_chunks_are_removed(
         assert not driver.volume(work_volume(kept.session_id)).exists()
         assert not driver.volume(mind_volume(kept.session_id)).exists()
         assert await stores.turns.unstored(final_for_s=0) == []
-        assert await stores.snapshots.missing(
-            org, ["9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"]) != []
+        assert await stores.snapshots.missing(org, [unused]) == [unused]
 
         after = await platform.run("cat a.txt", previous_response_id=kept.id)      # restored from the snapshot
         assert text_of(after) == "kept\n"

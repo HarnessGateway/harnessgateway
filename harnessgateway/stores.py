@@ -8,11 +8,13 @@ from harnessgateway.domain.sealing import Sealer, keyed_hash
 from harnessgateway.settings import Settings
 from harnessgateway.store.blobs import BlobStore
 from harnessgateway.store.db import Database
+from harnessgateway.store.egress import Egress
 from harnessgateway.store.environments import Environments
 from harnessgateway.store.files import Files
 from harnessgateway.store.harnesses import Harnesses
 from harnessgateway.store.keys import Keys
 from harnessgateway.store.orgs import Orgs
+from harnessgateway.store.platform import PlatformStore
 from harnessgateway.store.providers import Providers
 from harnessgateway.store.snapshots import Snapshots
 from harnessgateway.store.turns import Turns
@@ -31,6 +33,8 @@ class Stores:
     harnesses: Harnesses
     files: Files
     turns: Turns
+    egress: Egress
+    platform: PlatformStore
 
     @classmethod
     def of(cls, settings: Settings, db: Database, blobs: BlobStore) -> "Stores":
@@ -45,6 +49,8 @@ class Stores:
             harnesses=Harnesses(db, blobs, sealer),
             files=Files(db, blobs),
             turns=Turns(db),
+            egress=Egress(db),
+            platform=PlatformStore(db, sealer),
         )
 
     async def resolve(self, org_id: str, path: ModelPath) -> Resolved:

@@ -29,7 +29,8 @@ class Installer:
             if (await harnesses.install(org_id, install_id)).status == "ready":
                 return install_id
             step_token, proxy_token = new_token(), new_token()
-            await harnesses.begin_install(org_id, install_id, step_token_hash=self._stores.hash(step_token),
+            await harnesses.begin_install(org_id, install_id, environment=environment.name,
+                                          step_token_hash=self._stores.hash(step_token),
                                           proxy_token_hash=self._stores.hash(proxy_token))
             try:
                 log = await self._attempt(org_id, install_id, harness, environment, image_id, step_token, proxy_token)
