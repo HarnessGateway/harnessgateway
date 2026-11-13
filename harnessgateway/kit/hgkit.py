@@ -15,9 +15,12 @@ any language can print the same lines itself.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import filecmp
+import functools
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -96,9 +99,19 @@ class Request:
                 texts.extend(_texts(item.get("content")))
         return "\n\n".join(texts)
 
-    def prompt_with_handover(self) -> str:
-        """The prompt, with the handover line in front of it when another harness worked on this session last."""
-        return f"{self.handover}\n\n{self.prompt}" if self.handover else self.prompt
+    def brief(self, *, instructions: bool = True) -> str:
+        """What the agent is asked this turn, as one text: the handover line, when another harness worked on
+        this session last; the request's instructions (pass instructions=False when the CLI takes them some
+        other way); where the request's files were put; then the prompt."""
+        work = self._env["HG_WORK"]
+        placed = [os.path.relpath(path, work) for path in self.place_files()]
+        parts = [
+            self.handover,
+            f"Instructions for this request:\n{self.instructions}" if instructions and self.instructions else "",
+            "Files given with this request: " + ", ".join(placed) if placed else "",
+            self.prompt,
+        ]
+        return "\n\n".join(part for part in parts if part)
 
     @property
     def instructions(self) -> str | None:
@@ -124,19 +137,71 @@ class Request:
                 found.append(InputFile(file_id, filename, os.path.join(folder, file_id, filename)))
         return found
 
+    def _inline(self) -> list[tuple[str, str, str]]:
+        """Files and images sent inside the request itself, in order: a name, a second name for when the first
+        is another file's, and the content as the request carries it."""
+        found: list[tuple[str, str, str]] = []
+        given = self.body.get("input")
+        for item in given if isinstance(given, list) else []:
+            content = item.get("content") if isinstance(item, dict) else None
+            for part in content if isinstance(content, list) else []:
+                if not isinstance(part, dict):
+                    continue
+                number = len(found) + 1
+                if part.get("type") == "input_file" and isinstance(part.get("file_data"), str):
+                    name = os.path.basename(str(part.get("filename") or ""))        # a name, never a path
+                    if name in ("", ".", ".."):
+                        name = f"file-{number}"
+                    found.append((name, f"inline-{number}-{name}", part["file_data"]))
+                elif part.get("type") == "input_image" and str(part.get("image_url") or "").startswith("data:"):
+                    media = part["image_url"][5:].split(",")[0].split(";")[0]
+                    name = f"image-{number}{mimetypes.guess_extension(media) or '.bin'}"
+                    found.append((name, f"inline-{number}-{name}", part["image_url"]))
+        return found
+
     def place_files(self) -> list[str]:
-        """Copy the input files into `inputs/` in the work folder, where the agent can open them. Their paths."""
+        """Put the request's files into `inputs/` in the work folder, where the agent can open them: the
+        uploaded files it names, then the files and images sent inside it. Their paths.
+
+        A file takes the place of one of the same name left by an earlier turn: what is there is what this
+        request sent. Two files of one name in the same request both stay, the second under a longer name.
+        Placing again changes nothing. Content the request only gives a URL for is not fetched."""
         folder = os.path.join(self._env["HG_WORK"], "inputs")
+        taken: set[str] = set()
+
+        def place(name: str, other: str, same: Callable[[str], bool], write: Callable[[str], Any]) -> str:
+            os.makedirs(folder, exist_ok=True)
+            name = other if name in taken else name                     # this request already sent that name
+            taken.add(name)
+            target = os.path.join(folder, name)
+            if not (os.path.exists(target) and same(target)):
+                write(target)
+            return target
+
         placed = []
         for file in self.files:
-            os.makedirs(folder, exist_ok=True)
-            target = os.path.join(folder, file.filename)
-            if os.path.exists(target) and not filecmp.cmp(file.path, target, shallow=False):
-                target = os.path.join(folder, f"{file.id}-{file.filename}")       # another file has that name
-            if not os.path.exists(target):
-                shutil.copyfile(file.path, target)
-            placed.append(target)
+            placed.append(place(file.filename, f"{file.id}-{file.filename}",
+                                functools.partial(filecmp.cmp, file.path, shallow=False),
+                                functools.partial(shutil.copyfile, file.path)))
+        for name, other, data in self._inline():
+            try:
+                content = base64.b64decode(data.partition(",")[2] if data.startswith("data:") else data,
+                                           validate=True)
+            except ValueError:
+                raise ValueError(f"the file {name!r} sent in the request is not valid base64") from None
+            placed.append(place(name, other, functools.partial(_holds, content=content),
+                                functools.partial(_write, content=content)))
         return placed
+
+
+def _holds(path: str, content: bytes) -> bool:
+    with open(path, "rb") as file:
+        return file.read() == content
+
+
+def _write(path: str, content: bytes) -> None:
+    with open(path, "wb") as file:
+        file.write(content)
 
 
 # ── what stays with the session ────────────────────────────────────────────────────────────────────────────

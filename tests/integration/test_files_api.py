@@ -3,8 +3,10 @@
 Everything here goes through the official OpenAI SDK.
 """
 
+import base64
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import openai
 import pytest
@@ -59,6 +61,23 @@ async def test_a_file_named_in_a_request_is_there_for_the_turn(api: Running) -> 
     with pytest.raises(openai.BadRequestError, match="a file that does not exist"):
         await api.openai.responses.create(model="shell", input=[{"role": "user", "content": [
             {"type": "input_text", "text": "ls"}, {"type": "input_file", "file_id": "file_absent"}]}])
+
+
+async def test_a_file_sent_inside_a_request_is_in_the_work_folder_and_stays_with_the_session(api: Running) -> None:
+    def sent(content: bytes) -> list[Any]:
+        return [{"role": "user", "content": [
+            {"type": "input_text", "text": "cat inputs/customers.json"},
+            {"type": "input_file", "filename": "customers.json",
+             "file_data": "data:application/json;base64," + base64.b64encode(content).decode()}]}]
+
+    first = await api.openai.responses.create(model="shell", input=sent(b"monday"))
+    assert first.output_text == "monday\n"
+    assert first.metadata is not None
+    container = "cntr_" + first.metadata["hg_session"].removeprefix("sess_")
+    assert [file.path for file in (await api.openai.containers.files.list(container)).data] == [
+        "/work/inputs/customers.json"]
+    later = await api.openai.responses.create(model="shell", input=sent(b"tuesday"), previous_response_id=first.id)
+    assert later.output_text == "tuesday\n"                     # sent again, it takes the earlier one's place
 
 
 async def test_what_an_agent_made_is_listed_and_downloaded_with_the_containers_api(api: Running) -> None:

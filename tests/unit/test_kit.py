@@ -1,6 +1,7 @@
 """Spec §8.8: the kit. Every line its Emitter prints must be one the platform accepts (§8.7)."""
 
 import ast
+import base64
 import io
 import json
 import os
@@ -228,12 +229,20 @@ def test_a_list_input_gives_the_text_of_its_user_messages(tmp_path: Path) -> Non
     assert hgkit.Request(turn(tmp_path, body)).prompt == "First part.\n\nSecond part.\n\nThird part."
 
 
-def test_the_handover_goes_in_front_of_the_prompt_when_there_is_one(tmp_path: Path) -> None:
-    with_one = hgkit.Request(turn(tmp_path, {"input": "Carry on."}, handover="Handover from pi. Review /mind/.pi."))
-    assert with_one.handover == "Handover from pi. Review /mind/.pi."
-    assert with_one.prompt_with_handover() == "Handover from pi. Review /mind/.pi.\n\nCarry on."
-    without = hgkit.Request(turn(tmp_path, {"input": "Carry on."}))
-    assert without.prompt_with_handover() == "Carry on."
+def test_the_brief_is_the_handover_the_instructions_and_the_prompt(tmp_path: Path) -> None:
+    handed = hgkit.Request(turn(tmp_path, {"input": "Carry on.", "instructions": "Be brief."},
+                                handover="Handover from pi. Review /mind/.pi."))
+    assert handed.handover == "Handover from pi. Review /mind/.pi."
+    assert handed.brief() == (
+        "Handover from pi. Review /mind/.pi.\n\nInstructions for this request:\nBe brief.\n\nCarry on.")
+    assert handed.brief(instructions=False) == "Handover from pi. Review /mind/.pi.\n\nCarry on."
+    assert hgkit.Request(turn(tmp_path, {"input": "Carry on."})).brief() == "Carry on."
+
+
+def test_the_brief_says_where_the_request_s_files_are(tmp_path: Path) -> None:
+    variables = turn(tmp_path, {"input": "Read it."}, files={"file_1": {"report.pdf": b"PDF"}})
+    assert hgkit.Request(variables).brief() == "Files given with this request: inputs/report.pdf\n\nRead it."
+    assert (Path(variables["HG_WORK"]) / "inputs" / "report.pdf").read_bytes() == b"PDF"
 
 
 def test_reasoning_effort_history_and_mcp_servers_are_read(tmp_path: Path) -> None:
@@ -261,6 +270,50 @@ def test_input_files_are_listed_and_placed_in_the_work_folder(tmp_path: Path) ->
     assert (work / "inputs" / "report.pdf").read_bytes() == b"PDF"
     assert (work / "inputs" / "file_3-report.pdf").read_bytes() == b"OTHER"
     assert request.place_files() == placed                              # placing again changes nothing
+
+
+def test_files_and_images_sent_inline_are_written_to_the_work_folder(tmp_path: Path) -> None:
+    data = base64.b64encode(b'{"customers": 75}').decode()
+    variables = turn(tmp_path, {"input": [{"role": "user", "content": [
+        {"type": "input_text", "text": "Read them."},
+        {"type": "input_file", "filename": "customers.json", "file_data": f"data:application/json;base64,{data}"},
+        {"type": "input_file", "filename": "../../etc/bare.txt", "file_data": base64.b64encode(b"bare").decode()},
+        {"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(b"PNG").decode()},
+        {"type": "input_image", "image_url": "https://example.com/elsewhere.png"},
+        {"type": "input_file", "file_id": "file_1"},
+        {"type": "input_file", "file_url": "https://example.com/report.pdf"},
+    ]}]}, files={"file_1": {"customers.json": b"another"}})
+    request = hgkit.Request(variables)
+    work = Path(variables["HG_WORK"])
+    assert request.place_files() == [str(work / "inputs" / name) for name in (
+        "customers.json", "inline-1-customers.json", "bare.txt", "image-3.png")]     # uploaded first, then inline
+    assert (work / "inputs" / "customers.json").read_bytes() == b"another"
+    assert (work / "inputs" / "inline-1-customers.json").read_bytes() == b'{"customers": 75}'
+    assert (work / "inputs" / "bare.txt").read_bytes() == b"bare"           # a name never leaves the folder
+    assert (work / "inputs" / "image-3.png").read_bytes() == b"PNG"
+    assert request.place_files() == request.place_files()
+    assert sorted(path.name for path in (work / "inputs").iterdir()) == [
+        "bare.txt", "customers.json", "image-3.png", "inline-1-customers.json"]
+
+
+def test_a_file_sent_again_in_a_later_turn_replaces_the_one_from_before(tmp_path: Path) -> None:
+    def sent(content: bytes) -> dict[str, Any]:
+        return {"input": [{"role": "user", "content": [{"type": "input_file", "filename": "customers.json",
+                                                        "file_data": base64.b64encode(content).decode()}]}]}
+    first = hgkit.Request(turn(tmp_path, sent(b"monday's customers")))
+    assert first.brief() == "Files given with this request: inputs/customers.json"
+    later = hgkit.Request(turn(tmp_path, sent(b"tuesday's customers")))          # the same work folder, a new turn
+    assert later.brief() == "Files given with this request: inputs/customers.json"
+    inputs = tmp_path / "work" / "inputs"
+    assert [path.name for path in inputs.iterdir()] == ["customers.json"]
+    assert (inputs / "customers.json").read_bytes() == b"tuesday's customers"
+
+
+def test_inline_data_that_is_not_base64_is_refused_by_name(tmp_path: Path) -> None:
+    variables = turn(tmp_path, {"input": [{"role": "user", "content": [
+        {"type": "input_file", "filename": "broken.bin", "file_data": "data:application/octet-stream;base64,@@@"}]}]})
+    with pytest.raises(ValueError, match=r"broken\.bin.*base64"):
+        hgkit.Request(variables).place_files()
 
 
 def test_state_keeps_small_named_values_in_the_mind(tmp_path: Path) -> None:

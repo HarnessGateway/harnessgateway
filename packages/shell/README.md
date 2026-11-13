@@ -37,7 +37,8 @@ the session.
 - The working directory is `/work`. `$HOME` is `/mind`. Both stay with the session; nothing else does.
 - `/turn/request.json` is the Responses request exactly as it was sent. `/turn/handover.txt` is one line when
   another harness worked on the session last. `/turn/history.json` is the turns this harness has not seen.
-  `/turn/files/<id>/<name>` are the uploaded files the request refers to.
+  `/turn/files/<id>/<name>` are the uploaded files the request refers to. `Request.place_files()` puts them,
+  and files sent inside the request, under `inputs/` in the work folder.
 - Variables: `HG_MODEL`, `HG_PROVIDER_API`, `HG_PROVIDER_URL`, `HG_PROVIDER_KEY` (a placeholder; the real key
   is added outside the sandbox), `HG_STATE` (a folder in the mind for the package's own small state),
   `HG_HANDOVER`, and the rest of the table in the specification.
@@ -63,8 +64,9 @@ The kit at `/harness/kit/hgkit.py` (Python, standard library only) reads the inp
    its install and its turns need.
 2. In `install`, install the CLI at a pinned version under `/harness/tools`, by the CLI's own documented
    method, and check the version you got.
-3. In `run`, start the CLI headless with `hgkit.Cli`, translate each line it prints into `Emitter` calls, and
-   keep the CLI's session id with `hgkit.State` so the next turn resumes it.
+3. In `run`, start the CLI headless with `hgkit.Cli`, giving it `request.brief()` (the handover, the
+   instructions, where the request's files are, and the prompt, as one text). Translate each line it prints
+   into `Emitter` calls, and keep the CLI's session id with `hgkit.State` so the next turn resumes it.
 4. Record the CLI's real output into `tests/<case>/recording` beside a `request.json`, then:
 
 ```

@@ -20,6 +20,8 @@ command = request.prompt
 if not command.strip():
     emit.failed("no_command", "The input is empty: there is no command to run.")
     sys.exit(0)
+request.place_files()          # the request's files, under inputs/ in the work folder. (For an agent, use
+                               # request.brief(): it places them and tells the agent where they are.)
 
 # 2. Start the CLI the way it runs headless. Here: the shell, with errors joined to the output.
 cli = hgkit.Cli(["sh", "-c", "exec 2>&1\n" + command])
