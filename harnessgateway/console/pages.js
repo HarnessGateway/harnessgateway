@@ -2,11 +2,9 @@
 // what an admin does for the organization (providers, environments, keys, the audit log). Every call goes to the
 // platform as the signed-in person; the platform refuses what the person may not do, so the pages only hide what
 // would be refused.
-import { actorOf, api, bytes, date, duration, esc, fitting, list, loadCatalog, modelString, num, quiet, short, stream, when } from "/lib.js";
+import { BUILDER, actorOf, api, bytes, date, duration, esc, fitting, list, loadCatalog, modelString, num, quiet, short, stream, when } from "/lib.js";
 import { $, $$, card, confirm, fail, field, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "/views.js";
 import { session } from "/session.js";
-
-const BUILDER = "harness-package-builder";         // the harness that writes harness packages (spec §21)
 
 export function nav(me) {
   const developer = me.role !== "runner", admin = me.role === "admin";

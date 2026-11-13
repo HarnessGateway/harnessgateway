@@ -1,6 +1,10 @@
 // What the console's own pages share: calls to the platform as the signed-in person, and how values are shown.
 import { call, stream as events } from "/api.js";
 
+/** The harness that writes harness packages (spec §21). Only its sessions hold packages to take in: it is the
+ *  one harness that is taught the platform's package contract. */
+export const BUILDER = "harness-package-builder";
+
 /** One call to the platform. A call refused for want of a sign-in sends the person back to the sign-in page. */
 export async function api(method, path, body = undefined, { raw = false } = {}) {
   try {

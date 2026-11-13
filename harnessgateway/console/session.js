@@ -1,7 +1,7 @@
 // One session: its responses as a conversation trace (live while a turn runs), what the platform measured about each
 // turn, and the session's files beside it (the chat's file panel, embedded). Everything here is read from the API:
 // the session's turns, each one's response, input items and event stream, and each turn's trace.
-import { api, bytes, esc, seconds, short, stream, when } from "/lib.js";
+import { BUILDER, api, bytes, esc, seconds, short, stream, when } from "/lib.js";
 import { $, confirm, fail, field, input, modal, pre, statusPill, toast } from "/views.js";
 import { ensureView, wsUrl } from "/chat/backend.js";
 import { markdown } from "/chat/markdown.js";
@@ -185,6 +185,7 @@ export const session = { title: "Session", async render(el, params) {
   await ensureView(sid).catch(() => {});              // so that images in replies show
   const turns = [];                                   // {response, items, input, trace, streaming, open}
   let frame = 0;
+  let builder = summary.harness === BUILDER;          // whether the harness package builder worked in this session
 
   el.innerHTML = `<p><a href="#/sessions">← Sessions</a></p>` +
     `<div class="card shead" id="shead"></div>` +
@@ -206,7 +207,7 @@ export const session = { title: "Session", async render(el, params) {
       (summary.forked_from_response_id ? `<div class="kv"><span class="k">Forked from</span><span class="v mono">${esc(summary.forked_from_response_id)}</span></div>` : "") +
       `<div class="acts" style="margin-left:auto">` +
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : `<a class="btn2" href="#/chat/${encodeURIComponent(sid)}">Continue in chat</a>`) +
-      `<button class="btn2" id="mk" title="Copy a harness package written in this session's work folder into a draft">New harness from workspace</button>` +
+      (builder ? `<button class="btn2" id="mk" title="Copy a harness package the builder wrote in this session's work folder into a draft">New harness from workspace</button>` : "") +
       `<button class="btn2 danger" id="del">Delete</button></div>`;
   };
 
@@ -265,7 +266,9 @@ export const session = { title: "Session", async render(el, params) {
 
   const load = async () => {
     const known = new Set(turns.map(t => t.response.id));
-    for (const t of (await api("GET", `${at}/turns`)).data) if (!known.has(t.id) && !t.deleted) await add(t.id);
+    const listed = (await api("GET", `${at}/turns`)).data;
+    if (!builder && listed.some(t => t.harness === BUILDER)) { builder = true; header(); }
+    for (const t of listed) if (!known.has(t.id) && !t.deleted) await add(t.id);
     draw();
   };
 

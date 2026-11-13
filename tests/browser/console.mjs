@@ -132,12 +132,31 @@ try {
     await page.frameLocator(".spanel iframe").frameLocator("#pbody iframe").locator("h1:has-text('made in a sandbox')").waitFor();
   });
 
-  await step("a package written in a session becomes a draft and installs", async () => {
+  await step("only a session of the harness package builder offers its work as a harness", async () => {
+    await go(`sessions/${session}`);                                                 // a shell session
+    await page.waitForSelector("#turns .turn");
+    if (await page.locator("#mk").count()) throw new Error("a session of another harness offers New harness from workspace");
+  });
+
+  await step("a package the builder wrote in its session becomes a draft and installs", async () => {
+    // The catalog here holds only the shell package, so the builder is stood in for by the template under
+    // its name: the console goes by the harness's name.
+    const builder = "harness-package-builder";
+    await go("harnesses", "Harnesses");
+    if (!(await page.locator(`a.hcard[href="#/harnesses/${builder}"]`).count())) {
+      await page.click("#new");
+      await dialog().locator("[name=name]").fill(builder);
+      await submit();
+      await page.waitForSelector(`#tree .f.on:has-text("harness.json")`);
+      await page.click("#install");
+      await page.waitForSelector("#content .tabs a:has-text('Installs')");
+    }
     const name = `b${stamp}`;
     const manifest = JSON.stringify({ contract: 1, name, version: "0.1.0", description: "Written in a session.", apis: [] });
     await go("chat");
     await chat().locator("#new").click();
-    await chat().locator("#harness").selectOption("shell");
+    await chat().locator(`#harness option[value=${builder}]`).waitFor({ state: "attached" });
+    await chat().locator("#harness").selectOption(builder);
     await say(`mkdir -p ${name} && cd ${name} && echo '${manifest}' > harness.json && printf '#!/bin/sh\\n' > install && cp $HG_HARNESS/run run && chmod +x install run && echo packaged`);
     const made = (await chat().locator("#session").innerText()).trim();
     await go(`sessions/${made}`);
