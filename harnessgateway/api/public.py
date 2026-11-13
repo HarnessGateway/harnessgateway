@@ -13,10 +13,9 @@ from harnessgateway.domain.names import check_id
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.request import validate
 from harnessgateway.errors import Invalid, NotFound, TooLarge
-from harnessgateway.extensions import Extensions
 from harnessgateway.intake import Intake
+from harnessgateway.platform import Platform
 from harnessgateway.store.turns import Turn
-from harnessgateway.stores import Stores
 
 BODY_MAX = 32 * 1024 * 1024
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -56,8 +55,9 @@ def _input_items(turn: Turn) -> list[dict[str, Any]]:
     return listed
 
 
-def responses_router(stores: Stores, extensions: Extensions, caller: Any) -> APIRouter:
+def responses_router(platform: Platform, caller: Any) -> APIRouter:
     router = APIRouter()
+    stores, extensions = platform.stores, platform.extensions
     intake, turns = Intake(stores), stores.turns
     Caller = Annotated[Principal, Depends(caller)]
 
@@ -67,7 +67,7 @@ def responses_router(stores: Stores, extensions: Extensions, caller: Any) -> API
                 yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
         finally:
             if forget:
-                await turns.forget(org_id, turn_id)
+                await platform.forget(org_id, turn_id)
 
     def stream(org_id: str, turn_id: str, *, after: int = -1, forget: bool = False) -> StreamingResponse:
         return StreamingResponse(sse(org_id, turn_id, after, forget), media_type="text/event-stream",
@@ -92,7 +92,7 @@ def responses_router(stores: Stores, extensions: Extensions, caller: Any) -> API
             return (await turns.get(principal.org_id, turn.id)).response()
         finally:
             if forget:
-                await turns.forget(principal.org_id, turn.id)
+                await platform.forget(principal.org_id, turn.id)
 
     @router.get("/v1/responses/{turn_id}")
     async def retrieve(turn_id: str, principal: Caller, following: Annotated[bool, Query(alias="stream")] = False,
@@ -137,16 +137,43 @@ def responses_router(stores: Stores, extensions: Extensions, caller: Any) -> API
     return router
 
 
-def public_app(stores: Stores, extensions: Extensions) -> FastAPI:
+def public_app(platform: Platform) -> FastAPI:
+    """Everything applications and administrators call: the Responses API and what goes with it (spec §13),
+    the management API (§14), and whatever the extensions add (§19)."""
+    from harnessgateway.api import files, management  # they build on this module's helpers
+
     app = FastAPI(title="HarnessGateway", docs_url=None, redoc_url=None, openapi_url=None)
     errors.install(app)
-    caller = Authenticator(stores, extensions)
-    app.include_router(responses_router(stores, extensions, caller))
-    for router in extensions.routers(stores):
+    caller = Authenticator(platform.stores, platform.extensions)
+
+    def role(name: str) -> Any:
+        async def allowed(principal: Annotated[Principal, Depends(caller)]) -> Principal:
+            principal.require(name)
+            return principal
+        return allowed
+
+    app.include_router(responses_router(platform, caller))
+    app.include_router(files.files_router(platform, caller))
+    app.include_router(files.containers_router(platform, caller))
+    for build in (management.providers_router, management.environments_router, management.harnesses_router,
+                  management.sessions_router, management.organization_router):
+        app.include_router(build(platform, role))
+    for router in platform.extensions.routers(platform):
         app.include_router(router)
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
         return JSONResponse({"status": "ok"})
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """Whether the process can do its work: reach the database, and reach the driver."""
+        try:
+            async with platform.stores.db.system() as conn:
+                await conn.execute("SELECT 1")
+            await platform.driver.isolation()
+        except Exception as error:
+            return JSONResponse({"status": "not ready", "reason": str(error)[:200]}, 503)
+        return JSONResponse({"status": "ready"})
 
     return app

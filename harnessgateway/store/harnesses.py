@@ -225,3 +225,22 @@ class Harnesses:
                 "SELECT i.org_id, i.environment, p.manifest FROM installs i JOIN packages p USING (org_id, digest) "
                 "WHERE i.id = %s AND i.proxy_token_hash = %s", [install_id, token_hash])).fetchone()
         return (row["org_id"], row["environment"], Manifest.load(row["manifest"])) if row else None
+
+    async def unused_packages(self) -> list[tuple[str, str, str, list[str]]]:
+        """Uploaded packages no harness uses, each as (organization, digest, archive key, its installs' ids)."""
+        async with self._db.system() as conn:
+            rows = await (await conn.execute(
+                "SELECT p.org_id, p.digest, p.object_key, "
+                "COALESCE(array_agg(i.id) FILTER (WHERE i.id IS NOT NULL), '{}') AS installs "
+                "FROM packages p LEFT JOIN installs i ON i.org_id = p.org_id AND i.digest = p.digest "
+                "WHERE NOT EXISTS (SELECT 1 FROM harnesses h WHERE h.org_id = p.org_id AND h.digest = p.digest) "
+                "AND NOT EXISTS (SELECT 1 FROM installs b WHERE b.org_id = p.org_id AND b.digest = p.digest "
+                "                AND b.status = 'pending') GROUP BY p.org_id, p.digest, p.object_key")).fetchall()
+        return [(row["org_id"], row["digest"], row["object_key"], list(row["installs"])) for row in rows]
+
+    async def remove_package(self, org_id: str, digest: str, object_key: str) -> None:
+        """Forget an uploaded package and its installs. The caller removes the installs' volumes."""
+        async with self._db.org(org_id) as conn:
+            await conn.execute("DELETE FROM installs WHERE org_id = %s AND digest = %s", [org_id, digest])
+            await conn.execute("DELETE FROM packages WHERE org_id = %s AND digest = %s", [org_id, digest])
+        await self._blobs.delete(object_key)

@@ -5,10 +5,12 @@ paths, whether each is executable, and their contents, so the same folder gives 
 tool packed it.
 """
 
+import gzip
 import hashlib
 import io
 import json
 import tarfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from harnessgateway.domain.package import Manifest
@@ -103,3 +105,15 @@ def read_archive(data: bytes) -> Package:
         if not by_path[name].executable:
             raise Invalid(f"{name} is not executable")
     return Package(manifest=manifest, files=files, digest=_digest(files))
+
+
+def write_archive(files: Iterable[PackageFile]) -> bytes:
+    """Files as a package archive. The same files give the same bytes, whoever packs them and whenever."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for file in sorted(files, key=lambda file: file.path):
+            info = tarfile.TarInfo(file.path)
+            info.size = len(file.content)
+            info.mode = 0o755 if file.executable else 0o644
+            tar.addfile(info, io.BytesIO(file.content))
+    return gzip.compress(raw.getvalue(), mtime=0)

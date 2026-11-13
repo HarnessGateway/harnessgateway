@@ -20,6 +20,7 @@ from harnessgateway.api.public import public_app
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Forbidden
 from harnessgateway.extensions import Extension, Extensions
+from harnessgateway.platform import Platform
 from harnessgateway.runner.runner import Runner
 from harnessgateway.stores import Stores
 from tests.helpers import SHELL, serving
@@ -50,7 +51,7 @@ async def running_api(stores: Stores, org: str, tmp_path: Path, extensions: Exte
     driver = LocalDriver(tmp_path / "volumes", internal_app(stores))
     runner = asyncio.create_task(Runner(stores, driver, heartbeat_s=0.2).run())
     try:
-        async with serving(public_app(stores, extensions)) as url:
+        async with serving(public_app(Platform.of(stores, driver, extensions))) as url:
             api = Api(stores, org, url, key)
             yield api
             await api.client.close()

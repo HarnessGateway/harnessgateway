@@ -17,6 +17,7 @@ from harnessgateway.domain.plan import CA_VOLUME, ca_step
 from harnessgateway.drivers.base import Driver
 from harnessgateway.drivers.docker import DockerDriver
 from harnessgateway.extensions import Extensions
+from harnessgateway.platform import Platform
 from harnessgateway.runner.housekeeping import Housekeeping
 from harnessgateway.runner.runner import Runner
 from harnessgateway.settings import Settings, SettingsError
@@ -94,7 +95,8 @@ async def serve(settings: Settings) -> None:
     extensions = Extensions.load(settings.extensions)
     async with opened(settings, extensions) as stores:
         driver = driver_for(settings, extensions)
-        runner = Runner(stores, driver, extensions=extensions)
+        platform = Platform.of(stores, driver, extensions)
+        runner = Runner(stores, driver, extensions=extensions, installer=platform.installer)
         gone = await driver.reap(keep=set())
         ended = await runner.recover()
         isolation = await driver.isolation()
@@ -105,7 +107,7 @@ async def serve(settings: Settings) -> None:
                         "for trusted code only. Install gVisor (runsc) to isolate them.")
 
         servers = [
-            _Server(uvicorn.Config(public_app(stores, extensions), host="0.0.0.0", port=settings.port,  # noqa: S104
+            _Server(uvicorn.Config(public_app(platform), host="0.0.0.0", port=settings.port,  # noqa: S104
                                    log_config=None, access_log=False)),
             _Server(uvicorn.Config(internal_app(stores), host="0.0.0.0", port=settings.internal_port,  # noqa: S104
                                    log_config=None, access_log=False)),
@@ -118,7 +120,7 @@ async def serve(settings: Settings) -> None:
         while not all(server.started for server in servers):
             await asyncio.sleep(0.05)
         await trust_bundle(stores, driver)
-        working = [asyncio.create_task(runner.run()), asyncio.create_task(Housekeeping(stores, driver).run())]
+        working = [asyncio.create_task(runner.run()), asyncio.create_task(Housekeeping(platform).run())]
         await stop.wait()
         log.info("stopping: running turns are stopped, saved and ended")
         for task in working:

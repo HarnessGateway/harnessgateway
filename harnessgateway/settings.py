@@ -104,6 +104,7 @@ class Settings:
     secret_key: bytes
     proxy_key: str
     data: str
+    catalog: str
     driver: str
     runtime: str
     platform_image: str
@@ -125,6 +126,7 @@ class Settings:
             "secret_key": ("HG_SECRET_KEY", None, _secret_key),
             "proxy_key": ("HG_PROXY_KEY", None, str),
             "data": ("HG_DATA", "/data", str),
+            "catalog": ("HG_CATALOG", "/packages", str),
             "driver": ("HG_DRIVER", "docker", str),
             "runtime": ("HG_RUNTIME", "auto", _one_of(_RUNTIMES)),
             "platform_image": ("HG_PLATFORM_IMAGE", f"ghcr.io/harnessgateway/harnessgateway:{version}", str),

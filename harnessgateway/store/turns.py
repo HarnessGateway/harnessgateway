@@ -13,7 +13,7 @@ from harnessgateway.domain.modelpath import ModelPath
 from harnessgateway.domain.outcome import Outcome
 from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.response import TurnView, envelope_event, response_object, terminal_event_type
-from harnessgateway.errors import Conflict, NotFound
+from harnessgateway.errors import Conflict, Invalid, NotFound
 from harnessgateway.ids import new_id
 from harnessgateway.store.db import Connection, Database
 
@@ -103,6 +103,17 @@ class Session:
 
 
 @dataclass(frozen=True)
+class SessionSummary:
+    id: str
+    head_turn_id: str | None
+    forked_from_turn_id: str | None
+    created_at: datetime
+    last_active_at: datetime
+    turns: int
+    bytes: int                                 # the size of the head turn's snapshot
+
+
+@dataclass(frozen=True)
 class ChainTurn:
     """An earlier turn of a chain, as the handover and the history need it."""
 
@@ -120,6 +131,13 @@ class ChainTurn:
 
 _COLUMNS = ", ".join(field.name for field in fields(Turn))
 _SESSION_COLUMNS = ", ".join(field.name for field in fields(Session))
+_SUMMARY = (
+    "SELECT s.id, s.head_turn_id, s.forked_from_turn_id, s.created_at, s.last_active_at, "
+    "(SELECT count(*) FROM turns t WHERE t.session_id = s.id) AS turns, "
+    "COALESCE((SELECT n.bytes FROM turns h JOIN snapshots n ON n.id = h.snapshot_id WHERE h.id = s.head_turn_id), 0) "
+    "AS bytes FROM sessions s"
+)
+USAGE_GROUPS = ("harness", "provider", "model", "environment", "day")
 
 
 def _turn(row: Mapping[str, Any]) -> Turn:
@@ -405,3 +423,87 @@ class Turns:
                 "  SELECT 1 FROM turns t WHERE t.session_id = s.id AND t.status IN ('queued', 'in_progress')) "
                 "RETURNING org_id, id", [idle_for_s])).fetchall()
         return [(row["org_id"], row["id"]) for row in rows]
+
+    # sessions, as an organization looks at them
+
+    async def sessions(self, org_id: str, *, after: str | None = None, limit: int = 20) -> list[SessionSummary]:
+        """Sessions, most recently active first; those after `after` in that order when it is given."""
+        async with self._db.org(org_id) as conn:
+            rows = await (await conn.execute(
+                f"{_SUMMARY} WHERE s.org_id = %s AND (%s::text IS NULL OR (s.last_active_at, s.id) < "
+                "(SELECT last_active_at, id FROM sessions WHERE id = %s)) "
+                "ORDER BY s.last_active_at DESC, s.id DESC LIMIT %s", [org_id, after, after, limit])).fetchall()
+        return [SessionSummary(**row) for row in rows]
+
+    async def session_summary(self, org_id: str, session_id: str) -> SessionSummary:
+        async with self._db.org(org_id) as conn:
+            row = await (await conn.execute(f"{_SUMMARY} WHERE s.org_id = %s AND s.id = %s",
+                                            [org_id, session_id])).fetchone()
+        if row is None:
+            raise NotFound(f"there is no session {session_id}")
+        return SessionSummary(**row)
+
+    async def turns_of(self, org_id: str, session_id: str) -> list[Turn]:
+        """A session's turns, oldest first, deleted ones included (their content is gone, their record is not)."""
+        await self.session(org_id, session_id)
+        async with self._db.org(org_id) as conn:
+            rows = await (await conn.execute(
+                f"SELECT {_COLUMNS} FROM turns WHERE org_id = %s AND session_id = %s ORDER BY number, created_at",
+                [org_id, session_id])).fetchall()
+        return [_turn(row) for row in rows]
+
+    async def remove_session(self, org_id: str, session_id: str) -> list[str]:
+        """Delete a session, its turns and their events. Returns the ids of its snapshots, for the caller to
+        release. Refused while one of its turns is waiting or running."""
+        async with self._db.org(org_id) as conn:
+            row = await (await conn.execute(
+                "SELECT id FROM sessions WHERE org_id = %s AND id = %s FOR UPDATE", [org_id, session_id])).fetchone()
+            if row is None:
+                raise NotFound(f"there is no session {session_id}")
+            busy = await (await conn.execute(
+                "SELECT id FROM turns WHERE session_id = %s AND status IN ('queued', 'in_progress') LIMIT 1",
+                [session_id])).fetchone()
+            if busy is not None:
+                raise Conflict(f"the session has a turn in progress: {busy['id']}; cancel it first")
+            snapshots = await (await conn.execute(
+                "SELECT id FROM snapshots WHERE org_id = %s AND session_id = %s", [org_id, session_id])).fetchall()
+            await conn.execute("DELETE FROM sessions WHERE id = %s", [session_id])
+        return [snapshot["id"] for snapshot in snapshots]
+
+    async def empty_session_of(self, org_id: str, turn_id: str) -> str | None:
+        """The session of a deleted turn, if every one of its turns is deleted: there is nothing left to keep."""
+        async with self._db.org(org_id) as conn:
+            row = await (await conn.execute(
+                "SELECT t.session_id FROM turns t WHERE t.org_id = %s AND t.id = %s AND NOT EXISTS ("
+                "  SELECT 1 FROM turns o WHERE o.session_id = t.session_id AND o.deleted_at IS NULL)",
+                [org_id, turn_id])).fetchone()
+        return row["session_id"] if row else None
+
+    async def expired_sessions(self) -> list[tuple[str, str]]:
+        """Sessions idle for longer than their organization keeps them, as (organization, session)."""
+        async with self._db.system() as conn:
+            rows = await (await conn.execute(
+                "SELECT s.org_id, s.id FROM sessions s JOIN orgs o ON o.id = s.org_id "
+                "WHERE o.retention_days > 0 AND s.last_active_at < now() - make_interval(days => o.retention_days) "
+                "AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id "
+                "                AND t.status IN ('queued', 'in_progress'))")).fetchall()
+        return [(row["org_id"], row["id"]) for row in rows]
+
+    async def usage(self, org_id: str, *, start: datetime, end: datetime, group_by: str) -> list[dict[str, Any]]:
+        """Usage between two times, summed by harness, provider, model, environment or day (spec §22.1)."""
+        if group_by not in USAGE_GROUPS:
+            raise Invalid(f"group_by is one of {', '.join(USAGE_GROUPS)}", param="group_by")
+        key = "to_char(date_trunc('day', u.at), 'YYYY-MM-DD')" if group_by == "day" else f"u.{group_by}"
+        async with self._db.org(org_id) as conn:
+            rows = await (await conn.execute(
+                f"SELECT {key} AS \"group\", count(*) AS turns, sum(u.input_tokens)::bigint AS input_tokens, "
+                "sum(u.output_tokens)::bigint AS output_tokens, sum(u.sandbox_seconds)::float AS sandbox_seconds, "
+                "sum(u.snapshot_bytes)::bigint AS snapshot_bytes, "
+                "COALESCE(sum(e.bytes_up), 0)::bigint AS bytes_up, "
+                "COALESCE(sum(e.bytes_down), 0)::bigint AS bytes_down "
+                "FROM usage u LEFT JOIN ("
+                "  SELECT subject_id, sum(bytes_up) AS bytes_up, sum(bytes_down) AS bytes_down "
+                "  FROM egress WHERE org_id = %s GROUP BY subject_id) e ON e.subject_id = u.turn_id "
+                "WHERE u.org_id = %s AND u.at >= %s AND u.at < %s GROUP BY 1 ORDER BY 1 NULLS LAST",
+                [org_id, org_id, start, end])).fetchall()
+        return [dict(row) for row in rows]

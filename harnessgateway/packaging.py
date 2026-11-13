@@ -4,12 +4,9 @@
 the person writing the package; the platform itself only ever runs a package inside a sandbox.
 """
 
-import gzip
-import io
 import json
 import os
 import subprocess
-import tarfile
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -17,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from harnessgateway.domain import contract
-from harnessgateway.domain.archive import KIT_DIR, Package, read_archive
+from harnessgateway.domain.archive import KIT_DIR, Package, PackageFile, read_archive, write_archive
 from harnessgateway.domain.events import LineError, RunOutput
 from harnessgateway.domain.outcome import Terminal
 from harnessgateway.domain.sealing import new_placeholder
@@ -42,15 +39,9 @@ def _members(folder: Path) -> Iterator[Path]:
 
 def pack(folder: Path) -> bytes:
     """A folder as a package archive. The same files give the same bytes, whenever and wherever it is packed."""
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
-        for path in _members(folder):
-            content = path.read_bytes()
-            info = tarfile.TarInfo(path.relative_to(folder).as_posix())
-            info.size = len(content)
-            info.mode = 0o755 if path.stat().st_mode & 0o100 else 0o644
-            tar.addfile(info, io.BytesIO(content))
-    return gzip.compress(raw.getvalue(), mtime=0)
+    return write_archive(
+        PackageFile(path.relative_to(folder).as_posix(), bool(path.stat().st_mode & 0o100), path.read_bytes())
+        for path in _members(folder))
 
 
 def lay_out(package: Package, target: Path) -> None:

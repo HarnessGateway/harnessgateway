@@ -5,11 +5,11 @@ a manifest, recorded only when every chunk it names is stored.
 """
 
 import hashlib
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
 from itertools import batched
 
-from harnessgateway.domain.snapshot import CHUNK, ManifestError, SnapshotManifest, is_hash
+from harnessgateway.domain.snapshot import CHUNK, Entry, ManifestError, SnapshotManifest, is_hash
 from harnessgateway.errors import Invalid, NotFound
 from harnessgateway.ids import new_id
 from harnessgateway.store.blobs import BlobMissing, BlobStore
@@ -132,6 +132,11 @@ class Snapshots:
     async def manifest(self, org_id: str, snapshot_id: str) -> SnapshotManifest:
         snapshot = await self.get(org_id, snapshot_id)
         return SnapshotManifest.loads((await self._blobs.get(snapshot.manifest_key)).decode())
+
+    async def content(self, org_id: str, entry: Entry) -> AsyncIterator[bytes]:
+        """A file of a snapshot, chunk by chunk."""
+        for digest in entry.hashes:
+            yield await self.chunk(org_id, digest)
 
     async def release(self, org_id: str, snapshot_ids: Sequence[str]) -> None:
         """Forget snapshots. Their chunks lose one reference each; one nobody names starts its grace period."""

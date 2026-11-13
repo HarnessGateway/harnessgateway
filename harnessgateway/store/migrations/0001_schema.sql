@@ -241,3 +241,15 @@ CREATE TABLE egress (
     ended_at    timestamptz NOT NULL
 );
 CREATE INDEX egress_subject ON egress (org_id, subject_id, id);
+
+-- Who changed what (spec §22.2). Secret values never appear.
+CREATE TABLE audit (
+    id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    org_id  text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    at      timestamptz NOT NULL DEFAULT now(),
+    key_id  text,
+    action  text NOT NULL,
+    target  text NOT NULL,
+    detail  jsonb NOT NULL DEFAULT '{}'
+);
+CREATE INDEX audit_org ON audit (org_id, id DESC);
