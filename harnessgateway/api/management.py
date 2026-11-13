@@ -420,7 +420,7 @@ def organization_router(platform: Platform, role: Role) -> APIRouter:
     @router.get("/v1/platform")
     async def about(principal: Anyone) -> Any:
         return {"version": __version__, "contract": CONTRACT_VERSION, "driver": platform.driver.name,
-                "isolation": await platform.driver.isolation()}
+                "isolation": await platform.driver.isolation(), "role": principal.role}
 
     @router.get("/v1/organization")
     async def organization(principal: Admin) -> Any:

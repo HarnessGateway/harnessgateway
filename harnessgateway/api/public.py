@@ -2,10 +2,11 @@
 
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from harnessgateway.api import errors
 from harnessgateway.api.auth import Authenticator
@@ -17,6 +18,7 @@ from harnessgateway.intake import Intake
 from harnessgateway.platform import Platform
 from harnessgateway.store.turns import Turn
 
+CONSOLE = Path(__file__).parents[1] / "console"
 BODY_MAX = 32 * 1024 * 1024
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -175,5 +177,15 @@ def public_app(platform: Platform) -> FastAPI:
         except Exception as error:
             return JSONResponse({"status": "not ready", "reason": str(error)[:200]}, 503)
         return JSONResponse({"status": "ready"})
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def console(path: str) -> FileResponse:
+        """The console's files (spec §20). An extension's folder is looked in first, then the core's."""
+        name = path or "index.html"
+        for folder in (*platform.extensions.console(), CONSOLE):
+            file = (folder / name).resolve()
+            if file.is_file() and file.is_relative_to(folder.resolve()):
+                return FileResponse(file)
+        raise NotFound(f"there is nothing at /{path}")
 
     return app

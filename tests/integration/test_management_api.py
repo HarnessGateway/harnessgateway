@@ -343,7 +343,8 @@ async def test_every_change_is_in_the_audit_record_without_any_secret(api: Runni
 
 async def test_the_platform_says_what_it_is_and_the_organization_keeps_its_retention(api: Running) -> None:
     about = (await api.runner.get("/v1/platform")).json()
-    assert about == {"version": "4.0.0", "contract": 1, "driver": "local", "isolation": "none"}
+    assert about == {"version": "4.0.0", "contract": 1, "driver": "local", "isolation": "none", "role": "runner"}
+    assert (await api.admin.get("/v1/platform")).json()["role"] == "admin"
     assert (await api.admin.get("/v1/organization")).json() == {"id": api.org, "name": "Test", "retention_days": 0}
     changed = await api.admin.patch("/v1/organization", json={"retention_days": 7})
     assert changed.json()["retention_days"] == 7
@@ -359,3 +360,41 @@ async def test_what_packaging_made_is_what_the_api_reports(api: Running) -> None
     from harnessgateway.domain.archive import read_archive
     assert added["digest"] == read_archive(packaging.pack(SHELL)).digest
     assert added["manifest"]["name"] == "shell"
+
+
+# ── the console ─────────────────────────────────────────────────────────────────────────────────────
+
+async def test_the_console_is_served_at_the_root_without_a_key(api: Running) -> None:
+    import httpx
+    async with httpx.AsyncClient(base_url=api.url) as anyone:
+        page = await anyone.get("/")
+        script = await anyone.get("/app.js")
+        missing = await anyone.get("/no-such-file.js")
+        api_still = await anyone.get("/v1/harnesses")
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert "<title>HarnessGateway</title>" in page.text
+    assert (script.status_code, "javascript" in script.headers["content-type"]) == (200, True)
+    assert missing.status_code == 404
+    assert api_still.status_code == 401                       # the API is not shadowed, and still needs a key
+
+
+async def test_an_extension_adds_pages_to_the_console(stores: Stores, org: str, tmp_path: Path) -> None:
+    import httpx
+
+    from harnessgateway.extensions import Extension, Extensions
+
+    pages = tmp_path / "pages"
+    pages.mkdir()
+    (pages / "extensions.js").write_text("export const pages = [{id: 'billing', title: 'Billing'}];")
+    (pages / "billing.js").write_text("export const hello = 1;")
+
+    class WithPages(Extension):
+        def console(self) -> list[Path]:
+            return [pages]
+
+    async with running(stores, org, tmp_path, Extensions([WithPages()])) as api, httpx.AsyncClient(
+            base_url=api.url) as anyone:
+        assert "billing" in (await anyone.get("/extensions.js")).text       # the extension's file wins
+        assert (await anyone.get("/billing.js")).status_code == 200
+        assert (await anyone.get("/app.js")).status_code == 200            # the core's files are still there
