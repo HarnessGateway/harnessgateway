@@ -30,7 +30,7 @@ def test_a_sandbox_is_rendered_as_the_command_of_the_specification() -> None:
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--user", "10000:10000",
         "--workdir", "/work",
-        "--volume", "hg-mind-sess_X:/mind", "--volume", "hg-harness-inst_Z:/harness:ro",
+        "--volume", "hg-mind-sess_X:/mind:nocopy", "--volume", "hg-harness-inst_Z:/harness:ro,nocopy",
         "--env", "HOME=/mind", "--env", "HG_HANDOVER=Handover from codex. Review /mind/.codex.", "--env", "EMPTY=",
         "sha256:abc", "/harness/run",
     ]
@@ -71,7 +71,7 @@ def test_a_step_runs_from_the_platform_image_as_root_and_removes_itself() -> Non
         "--label", "hg.org=org_default", "--label", "hg.turn=resp_Y",
         "--network", "hg-control",
         "--user", "0:0",
-        "--volume", "hg-mind-sess_X:/mind:ro",
+        "--volume", "hg-mind-sess_X:/mind:ro,nocopy",
         "--env", "HG_API=http://serve:8001", "--env", "HG_STEP_TOKEN=stok",
         "platform:4", "harnessgateway", "step", "save", "resp_Y",
     ]

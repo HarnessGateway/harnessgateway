@@ -10,7 +10,7 @@ from harnessgateway.ids import new_id
 from harnessgateway.store.blobs import DirectoryBlobs
 from harnessgateway.store.db import Database
 from harnessgateway.store.snapshots import Snapshots
-from tests.integration.conftest import make_org
+from tests.conftest import make_org
 
 MB = 1024 * 1024
 

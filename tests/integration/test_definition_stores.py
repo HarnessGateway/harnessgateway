@@ -9,7 +9,7 @@ from harnessgateway.errors import Conflict, Invalid, NotFound
 from harnessgateway.store.db import Database
 from harnessgateway.store.environments import Environments
 from harnessgateway.store.providers import Providers
-from tests.integration.conftest import make_org
+from tests.conftest import make_org
 
 DEEPSEEK = {"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic",
                                          "openai-chat": "https://api.deepseek.com/v1"},

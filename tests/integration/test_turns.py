@@ -15,7 +15,7 @@ from harnessgateway.domain.resolve import Resolved
 from harnessgateway.errors import Conflict, NotFound
 from harnessgateway.store.db import Database
 from harnessgateway.store.turns import CANCEL, CONTROL, QUEUED, Turn, Turns
-from tests.integration.conftest import make_org
+from tests.conftest import make_org
 
 ENVIRONMENT = Environment.load({"name": "default"}, default_image="sandbox:test")
 MESSAGE = {"type": "message", "id": "msg_1", "role": "assistant", "status": "completed", "content": []}

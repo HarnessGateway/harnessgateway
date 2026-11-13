@@ -1,6 +1,10 @@
-"""Integration tests use a real PostgreSQL. They run only when HG_TEST_DATABASE_URL is set (spec §24).
+"""Fixtures shared by every level of test, and the rule for which levels run (spec §24).
 
-Each run makes its own database on that server and drops it afterwards. Each test gets its own organization,
+Unit tests always run. Integration tests need a PostgreSQL server (HG_TEST_DATABASE_URL). End-to-end tests
+need Docker (HG_TEST_DOCKER=1), and most need the server too. A level that is not enabled is skipped, never
+passed.
+
+Each run makes its own database on the server and drops it afterwards. Each test gets its own organization,
 so tests share the database without seeing each other's rows.
 """
 
@@ -21,14 +25,18 @@ from harnessgateway.store.db import Database
 from harnessgateway.stores import Stores
 
 SERVER = os.environ.get("HG_TEST_DATABASE_URL")
+DOCKER = os.environ.get("HG_TEST_DOCKER") == "1"
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    if not SERVER:
-        skip = pytest.mark.skip(reason="set HG_TEST_DATABASE_URL to run tests that need PostgreSQL")
-        for item in items:
-            if "/integration/" in str(item.path):
-                item.add_marker(skip)
+    no_server = pytest.mark.skip(reason="set HG_TEST_DATABASE_URL to run tests that need PostgreSQL")
+    no_docker = pytest.mark.skip(reason="set HG_TEST_DOCKER=1 to run tests that need Docker")
+    for item in items:
+        path = str(item.path)
+        if "/e2e/" in path and not DOCKER:
+            item.add_marker(no_docker)
+        elif not SERVER and ("/integration/" in path or "database_url" in getattr(item, "fixturenames", ())):
+            item.add_marker(no_server)
 
 
 async def _migrate(url: str) -> None:

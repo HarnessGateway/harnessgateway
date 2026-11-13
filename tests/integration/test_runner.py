@@ -11,7 +11,6 @@ import json
 import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -19,58 +18,13 @@ from harnessgateway import packaging
 from harnessgateway.api.internal import internal_app
 from harnessgateway.domain.plan import install_volume, mind_volume, turn_volume, work_volume
 from harnessgateway.errors import Conflict, Invalid
-from harnessgateway.intake import Intake
 from harnessgateway.runner.installer import Installer
 from harnessgateway.runner.runner import Runner
 from harnessgateway.runner.turn import TurnRunner
 from harnessgateway.settings import Settings
-from harnessgateway.store.turns import Turn
 from harnessgateway.stores import Stores
+from tests.helpers import SHELL, Platform, text_of, variant
 from tests.integration.local_driver import LocalDriver
-
-SHELL = Path(__file__).parents[2] / "packages" / "shell"
-
-
-def variant(tmp_path: Path, name: str, **changes: Any) -> bytes:
-    """The shell package under another name: a second harness to switch to."""
-    folder = tmp_path / f"package-{name}"
-    shutil.copytree(SHELL, folder)
-    manifest = json.loads((folder / "harness.json").read_text())
-    (folder / "harness.json").write_text(json.dumps({**manifest, "name": name, **changes}))
-    return packaging.pack(folder)
-
-
-class Platform:
-    """The pieces of a running platform, and the few things a test does with them."""
-
-    def __init__(self, stores: Stores, org: str, driver: LocalDriver) -> None:
-        self.stores, self.org, self.driver = stores, org, driver
-        self.intake = Intake(stores)
-
-    async def ask(self, text: Any, model: str = "shell", **request: Any) -> Turn:
-        return await self.intake.accept(self.org, {"model": model, "input": text, **request})
-
-    async def final(self, turn: Turn, timeout: float = 30) -> Turn:
-        """Wait for a turn's final event, then read the turn."""
-        async def last() -> None:
-            async for _ in self.stores.turns.follow(self.org, turn.id):
-                pass
-        await asyncio.wait_for(last(), timeout)
-        return await self.stores.turns.get(self.org, turn.id)
-
-    async def run(self, text: Any, model: str = "shell", **request: Any) -> Turn:
-        return await self.final(await self.ask(text, model, **request))
-
-    async def started(self, turn: Turn, marker: str = "started") -> None:
-        """Wait until a running turn has printed `marker`."""
-        async with asyncio.timeout(20):
-            while not any(marker in event.get("delta", "") for event in await self.stores.turns.events(
-                    self.org, turn.id)):
-                await asyncio.sleep(0.05)
-
-
-def text_of(turn: Turn) -> str:
-    return "".join(part["text"] for item in turn.output if item["type"] == "message" for part in item["content"])
 
 
 @pytest.fixture

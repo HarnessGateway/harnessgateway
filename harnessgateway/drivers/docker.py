@@ -32,7 +32,9 @@ def _common(labels: dict[str, str], network: str | None) -> list[str]:
 def _mounts_and_env(mounts: list[Mount], env: dict[str, str]) -> list[str]:
     argv = []
     for mount in mounts:
-        argv += ["--volume", f"{mount.volume}:{mount.path}{':ro' if mount.read_only else ''}"]
+        # nocopy: Docker would otherwise fill an empty volume from the image's folder at that path, and give
+        # the volume that folder's owner. A session's folders belong to the session, whatever the image holds.
+        argv += ["--volume", f"{mount.volume}:{mount.path}:{'ro,' if mount.read_only else ''}nocopy"]
     for name, value in env.items():
         argv += ["--env", f"{name}={value}"]
     return argv
