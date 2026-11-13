@@ -55,7 +55,7 @@ def render_sandbox(plan: SandboxPlan, *, runtime: str | None) -> list[str]:
         "--user", f"{SANDBOX_UID}:{SANDBOX_UID}",
         "--workdir", plan.workdir,
         *_mounts_and_env(plan.mounts, plan.env),
-        plan.image, *plan.command,
+        "--entrypoint", plan.command[0], plan.image, *plan.command[1:],      # whatever ENTRYPOINT the image names
     ]
 
 

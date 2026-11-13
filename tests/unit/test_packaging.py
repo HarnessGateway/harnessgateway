@@ -116,6 +116,16 @@ def test_a_case_with_a_recording_replays_it_in_place_of_the_cli(package: Path) -
     assert result.output[0]["content"][0]["text"] == "a recorded line\nanother\n"
 
 
+def test_a_folder_named_from_where_the_check_is_run_is_found(package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case = package / "tests" / "replayed"
+    case.mkdir()
+    (case / "request.json").write_text(json.dumps({"model": "shell", "input": "exit 9"}))
+    (case / "recording").write_text("a recorded line\n")
+    monkeypatch.chdir(package.parent)
+    result = next(case for case in packaging.check(Path(package.name)) if case.name == "replayed")
+    assert result.output[0]["content"][0]["text"] == "a recorded line\n"     # `run` starts in another folder
+
+
 def test_recording_writes_what_each_case_printed(package: Path) -> None:
     expected = package / "tests" / "echo" / "expected.jsonl"
     expected.write_text('{"type": "hg.done"}\n')

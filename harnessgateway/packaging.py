@@ -146,6 +146,7 @@ def check(folder: Path, *, record: bool = False) -> list[CaseResult]:
     is wrong. With `record`, what each case printed is written as its expected.jsonl."""
     if not folder.is_dir():
         raise Invalid(f"{folder} is not a folder")
+    folder = folder.resolve()                      # `run` starts in a folder of its own: name files in full
     package = read_archive(pack(folder))
     results = []
     tests = folder / "tests"

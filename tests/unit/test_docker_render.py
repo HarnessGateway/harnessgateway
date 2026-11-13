@@ -32,8 +32,17 @@ def test_a_sandbox_is_rendered_as_the_command_of_the_specification() -> None:
         "--workdir", "/work",
         "--volume", "hg-mind-sess_X:/mind:nocopy", "--volume", "hg-harness-inst_Z:/harness:ro,nocopy",
         "--env", "HOME=/mind", "--env", "HG_HANDOVER=Handover from codex. Review /mind/.codex.", "--env", "EMPTY=",
-        "sha256:abc", "/harness/run",
+        "--entrypoint", "/harness/run", "sha256:abc",
     ]
+
+
+def test_the_image_s_own_entrypoint_never_runs_and_the_command_s_arguments_follow_the_image() -> None:
+    """An image may name an ENTRYPOINT of its own. What runs in a sandbox is the platform's command, whatever
+    the image says."""
+    from dataclasses import replace
+
+    argv = render_sandbox(replace(SANDBOX, command=["/bin/sh", "-c", "echo hi"]), runtime=None)
+    assert argv[-5:] == ["--entrypoint", "/bin/sh", "sha256:abc", "-c", "echo hi"]
 
 
 def test_an_isolating_runtime_is_named_when_there_is_one() -> None:
