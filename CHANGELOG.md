@@ -20,9 +20,11 @@ schema, the package format, or the configuration. There is no upgrade path; inst
 - Management API: providers, harnesses, environments, sessions with traces, keys, usage, audit.
 - The console of version 3, on this version's API: the chat with its file panel and previews, interrupt,
   rewind and branch; each session's transcript, traces and files; the harness editor (drafts) and the
-  catalog; the playground; and New harness from workspace for what the harness package builder wrote.
+  catalog; the playground; and New harness from workspace, on a session of the harness package builder,
+  for the package it wrote.
 - Drafts (`/v1/drafts`), a package's files as installed, and links a browser can open to a session's files
   (`POST /v1/containers/{id}/view`), served sandboxed.
+- The default sandbox image is Debian 13 with Node.js 24 and Python 3.13.
 - One host with Docker and PostgreSQL. gVisor isolation where the runtime is installed.
 - Extension points for other editions: drivers, blob stores, authentication, routes, schema, console files,
   and hooks before and after a turn.

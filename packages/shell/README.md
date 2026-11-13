@@ -62,7 +62,7 @@ The kit at `/harness/kit/hgkit.py` (Python, standard library only) reads the inp
 1. Copy this folder. Change `name`, `version` and `description` in `harness.json`. Set `mind` to the CLI's
    dot directory under `$HOME`, `apis` to the provider APIs it can speak, and the egress lists to the hosts
    its install and its turns need.
-2. In `install`, install the CLI at a pinned version under `/harness/tools`, by the CLI's own documented
+2. In `install`, install the CLI at a pinned version under `$HG_HARNESS/tools`, by the CLI's own documented
    method, and check the version you got.
 3. In `run`, start the CLI headless with `hgkit.Cli`, giving it `request.brief()` (the handover, the
    instructions, where the request's files are, and the prompt, as one text). Translate each line it prints

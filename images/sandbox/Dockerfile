@@ -3,7 +3,9 @@
 #
 #   docker build -f images/sandbox/Dockerfile -t ghcr.io/harnessgateway/sandbox:<version> images/sandbox
 
-FROM node:24-slim
+# Debian 13: its Python is 3.13. The platform's own package checker, which a package author may install in
+# a sandbox, needs 3.12 or later.
+FROM node:24-trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \

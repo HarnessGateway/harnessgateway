@@ -49,4 +49,4 @@ jobs:
           docker run --rm harnessgateway:ci harnessgateway version
           docker run --rm harnessgateway:ci harnessgateway package check /packages/shell
       - name: The sandbox image has what the shipped harnesses need, as user 10000
-        run: docker run --rm sandbox:ci sh -c 'test "$(id -u)" = 10000 && node --version && python3 --version && git --version'
+        run: docker run --rm sandbox:ci sh -c 'test "$(id -u)" = 10000 && node --version && python3 -c "import sys; assert sys.version_info >= (3, 12)" && git --version'
