@@ -16,6 +16,7 @@ def file(path: str, size: int = 10, hashes: tuple[str, ...] = (H1,), mtime: int 
 def test_a_manifest_round_trips_through_its_text_form() -> None:
     manifest = SnapshotManifest([
         file("work/src/main.py"),
+        Entry(path="work/src", kind="d", mode=0o755),
         Entry(path="mind/.claude", kind="d", mode=0o755),
         Entry(path="work/latest", kind="l", target="build/2026"),
         file("work/empty", size=0, hashes=()),
@@ -91,6 +92,18 @@ def test_the_work_listing_is_files_only_with_paths_relative_to_work() -> None:
     manifest = SnapshotManifest([
         file("work/out/report.md", size=120, mtime=3_000_000_000),
         file("mind/.claude/session.jsonl"),
+        Entry(path="mind/.claude", kind="d", mode=0o755),
         Entry(path="work/out", kind="d", mode=0o755),
     ])
     assert manifest.listing("work") == [{"path": "out/report.md", "bytes": 120, "modified_at": 3}]
+
+
+def test_an_entry_whose_parent_is_not_a_listed_directory_is_refused() -> None:
+    """A restore writes entries where they say; nothing may sit under a link, a file or an unlisted folder."""
+    with pytest.raises(ManifestError, match="work/src"):
+        SnapshotManifest([file("work/src/main.py")])
+    with pytest.raises(ManifestError, match="work/link"):
+        SnapshotManifest([Entry(path="work/link", kind="l", target="/etc"), file("work/link/passwd")])
+    with pytest.raises(ManifestError, match="work/a"):
+        SnapshotManifest([file("work/a"), file("work/a/b")])
+    SnapshotManifest([file("work/src/main.py"), Entry(path="work/src", kind="d", mode=0o755)])

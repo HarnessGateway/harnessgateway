@@ -1,0 +1,122 @@
+"""Settings: read once from the environment, checked together, and named when wrong (spec §18.4)."""
+
+import base64
+import binascii
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import harnessgateway
+from harnessgateway.domain.hosts import HostEntry
+from harnessgateway.errors import Invalid
+
+_RUNTIMES = ("auto", "runsc", "runc")
+_LOG_LEVELS = ("debug", "info", "warning", "error")
+
+
+class SettingsError(Exception):
+    """One or more settings are missing or invalid. The message names each, never a secret's value."""
+
+
+def _secret_key(text: str) -> bytes:
+    try:
+        key = base64.b64decode(text, validate=True)
+    except binascii.Error:
+        raise ValueError("is 32 bytes, base64-encoded") from None
+    if len(key) != 32:
+        raise ValueError(f"is 32 bytes, base64-encoded; it decodes to {len(key)}")
+    return key
+
+
+def _one_of(choices: tuple[str, ...]) -> Callable[[str], str]:
+    def check(text: str) -> str:
+        if text not in choices:
+            raise ValueError(f"is one of {', '.join(choices)}")
+        return text
+    return check
+
+
+def _number(minimum: int) -> Callable[[str], int]:
+    def check(text: str) -> int:
+        if not text.isdigit() or int(text) < minimum:
+            raise ValueError(f"is a whole number, at least {minimum}")
+        return int(text)
+    return check
+
+
+def _listed(text: str) -> list[str]:
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _hosts(text: str) -> tuple[HostEntry, ...]:
+    try:
+        return tuple(HostEntry.parse(item) for item in _listed(text))
+    except Invalid as e:
+        raise ValueError(e.message) from None
+
+
+def _extensions(text: str) -> tuple[str, ...]:
+    items = _listed(text)
+    if any(item.count(":") != 1 or not all(item.split(":")) for item in items):
+        raise ValueError("is a comma-separated list of module:Class")
+    return tuple(items)
+
+
+def _url(text: str) -> str:
+    if not text.startswith(("http://", "https://")):
+        raise ValueError("is an http:// or https:// URL")
+    return text.rstrip("/")
+
+
+@dataclass(frozen=True)
+class Settings:
+    database_url: str
+    secret_key: bytes
+    proxy_key: str
+    data: Path
+    driver: str
+    runtime: str
+    platform_image: str
+    sandbox_image: str
+    internal_url: str
+    max_turns: int
+    volume_ttl_s: int
+    private_hosts: tuple[HostEntry, ...]
+    extensions: tuple[str, ...]
+    log_level: str
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "Settings":
+        version = harnessgateway.__version__
+        # field: (variable, default or None when required, how to read it)
+        spec: dict[str, tuple[str, str | None, Callable[[str], Any]]] = {
+            "database_url": ("HG_DATABASE_URL", None, str),
+            "secret_key": ("HG_SECRET_KEY", None, _secret_key),
+            "proxy_key": ("HG_PROXY_KEY", None, str),
+            "data": ("HG_DATA", "/data", Path),
+            "driver": ("HG_DRIVER", "docker", str),
+            "runtime": ("HG_RUNTIME", "auto", _one_of(_RUNTIMES)),
+            "platform_image": ("HG_PLATFORM_IMAGE", f"ghcr.io/harnessgateway/harnessgateway:{version}", str),
+            "sandbox_image": ("HG_SANDBOX_IMAGE", f"ghcr.io/harnessgateway/sandbox:{version}", str),
+            "internal_url": ("HG_INTERNAL_URL", "http://serve:8001", _url),
+            "max_turns": ("HG_MAX_TURNS", "8", _number(1)),
+            "volume_ttl_s": ("HG_VOLUME_TTL_S", "3600", _number(0)),
+            "private_hosts": ("HG_PRIVATE_HOSTS", "", _hosts),
+            "extensions": ("HG_EXTENSIONS", "", _extensions),
+            "log_level": ("HG_LOG_LEVEL", "info", _one_of(_LOG_LEVELS)),
+        }
+        values: dict[str, Any] = {}
+        problems = []
+        for field, (variable, default, read) in spec.items():
+            text = env.get(variable, default)
+            if text is None or (default is None and not text):
+                problems.append(f"{variable} is required")
+                continue
+            try:
+                values[field] = read(text)
+            except ValueError as e:
+                problems.append(f"{variable} {e}")
+        if problems:
+            raise SettingsError("; ".join(problems))
+        return cls(**values)

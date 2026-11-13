@@ -23,6 +23,10 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def is_hash(value: object) -> bool:
+    return isinstance(value, str) and _HASH.fullmatch(value) is not None
+
+
 def check_path(path: object) -> str:
     if not isinstance(path, str) or not 0 < len(path) <= PATH_MAX or "\x00" in path:
         raise ManifestError(f"a path is 1 to {PATH_MAX} characters: {str(path)[:80]!r}")
@@ -54,7 +58,7 @@ class Entry:
             if len(self.hashes) != -(-self.size // CHUNK):
                 raise ManifestError(f"{self.path}: {self.size} bytes is {-(-self.size // CHUNK)} chunks, "
                                     f"not {len(self.hashes)}")
-            if not all(isinstance(h, str) and _HASH.fullmatch(h) for h in self.hashes):
+            if not all(is_hash(h) for h in self.hashes):
                 raise ManifestError(f"{self.path}: a hash is 64 hexadecimal characters")
         if self.kind == "l" and (not isinstance(self.target, str) or not self.target):
             raise ManifestError(f"{self.path}: a link has a target")
@@ -82,7 +86,11 @@ class Entry:
 
 
 class SnapshotManifest:
-    """Every path of one snapshot. Immutable once made."""
+    """Every path of one snapshot. Immutable once made.
+
+    Every entry below a root sits in a listed directory, so writing the entries out never passes through a
+    link or a file.
+    """
 
     def __init__(self, entries: Iterable[Entry]) -> None:
         self.entries: dict[str, Entry] = {}
@@ -92,6 +100,10 @@ class SnapshotManifest:
             self.entries[entry.path] = entry
             if len(self.entries) > ENTRIES_MAX:
                 raise ManifestError(f"a snapshot holds at most {ENTRIES_MAX} entries")
+        for path in self.entries:
+            parent = path.rpartition("/")[0]
+            if parent not in ROOTS and (parent not in self.entries or self.entries[parent].kind != "d"):
+                raise ManifestError(f"{path}: {parent} is not a listed directory")
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, SnapshotManifest) and self.entries == other.entries
