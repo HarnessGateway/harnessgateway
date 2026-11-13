@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from openai.types.responses import ResponseUsage
 
-from harnessgateway.domain.events import LINE_MAX, LineError, OutputEvents, read_line
+from harnessgateway.domain.events import LINE_MAX, LineError, OutputEvents, RunOutput, read_line
 
 MESSAGE = {"id": "msg_1", "type": "message", "role": "assistant", "status": "in_progress", "content": []}
 MESSAGE_DONE = {**MESSAGE, "status": "completed",
@@ -125,3 +125,31 @@ def test_an_item_that_was_started_but_never_finished_is_not_output() -> None:
     events = OutputEvents(first_sequence_number=0)
     events.accept(dict(ADDED))
     assert events.output() == []
+
+
+def test_a_run_s_output_is_read_line_by_line_until_its_terminal_line() -> None:
+    """Spec §8.7, the five things the platform does with each line."""
+    run = RunOutput(first_sequence_number=2)
+    assert run.terminal is None
+
+    event = run.read(json.dumps(ADDED))
+    assert event is not None
+    assert (event.kind, event.event and event.event["sequence_number"]) == ("event", 2)
+    log = run.read('{"type": "hg.log", "text": "working"}')
+    assert log is not None
+    assert (log.kind, log.text) == ("log", "working")
+    assert run.read(json.dumps(DONE)) is not None
+
+    end = run.read('{"type": "hg.done"}')
+    assert end is not None
+    assert end.kind == "terminal"
+    assert run.terminal is not None
+    assert run.terminal.kind == "done"
+    assert run.read("anything at all, even this") is None                 # after the terminal line: ignored
+    assert [item["id"] for item in run.output()] == ["msg_1"]
+    assert run.next_sequence_number == 4
+
+
+def test_a_bad_line_in_a_run_s_output_is_refused() -> None:
+    with pytest.raises(LineError):
+        RunOutput(first_sequence_number=2).read("plain text")

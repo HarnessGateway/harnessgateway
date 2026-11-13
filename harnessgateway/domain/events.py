@@ -147,3 +147,30 @@ class OutputEvents:
     def output(self) -> list[dict[str, Any]]:
         """The finished items, in the order of their place in the output."""
         return [item for _, item in sorted(self._done, key=lambda pair: pair[0])]
+
+
+class RunOutput:
+    """Everything one run prints, read a line at a time (spec §8.7)."""
+
+    def __init__(self, first_sequence_number: int) -> None:
+        self._events = OutputEvents(first_sequence_number)
+        self.terminal: Terminal | None = None
+
+    @property
+    def next_sequence_number(self) -> int:
+        return self._events.next_sequence_number
+
+    def read(self, text: str) -> Line | None:
+        """What a printed line is, with an event numbered and validated. None once the terminal line has come:
+        whatever is printed after it is ignored. A line that is not allowed raises LineError."""
+        if self.terminal is not None:
+            return None
+        line = read_line(text)
+        if line.terminal is not None:
+            self.terminal = line.terminal
+        if line.event is not None:
+            return Line("event", event=self._events.accept(line.event))
+        return line
+
+    def output(self) -> list[dict[str, Any]]:
+        return self._events.output()

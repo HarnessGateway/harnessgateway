@@ -1,0 +1,12 @@
+#!/bin/sh
+# install: runs once for each environment image, in /harness, before the first turn (spec §8.3).
+#
+# A package for a real agent CLI installs that CLI here, at a pinned version, under /harness/tools, and
+# checks the version it got. This package has nothing to install. It only checks that the image has what
+# its `run` needs, so a missing piece is reported now and not at the first turn.
+set -eu
+
+command -v python3 >/dev/null 2>&1 || {
+  echo "this image has no python3, which this package's run needs" >&2
+  exit 1
+}

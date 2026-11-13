@@ -1,0 +1,1 @@
+{"model": "shell", "input": "echo hello; echo to-stderr >&2; printf 'no newline'"}

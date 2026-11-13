@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""run: one turn (spec §8.4). Called as /harness/run, in /work, with the turn's inputs under /turn.
+
+This package's "agent" is the shell: the request's input is the command. A package for a real agent CLI has
+the same four steps; only the middle differs.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))
+
+import hgkit  # noqa: E402 - the kit is found through the path set above
+
+# 1. Read the turn's inputs.
+request = hgkit.Request()
+emit = hgkit.Emitter()
+
+command = request.prompt
+if not command.strip():
+    emit.failed("no_command", "The input is empty: there is no command to run.")
+    sys.exit(0)
+
+# 2. Start the CLI the way it runs headless. Here: the shell, with errors joined to the output.
+cli = hgkit.Cli(["sh", "-c", "exec 2>&1\n" + command])
+
+# 3. Print events as it works. Here: every line it prints is a piece of the answer.
+for line in cli.lines():
+    emit.say(line + "\n")
+
+# 4. Print one terminal line, and exit 0.
+if cli.exit_code == 0:
+    emit.done()
+else:
+    emit.failed("command_failed", f"The command exited with code {cli.exit_code}.")

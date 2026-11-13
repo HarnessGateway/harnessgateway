@@ -1,0 +1,7 @@
+{
+  "contract": 1,
+  "name": "shell",
+  "version": "1.0.0",
+  "description": "Runs the request's input as a shell command and answers with what it printed. The smallest possible harness package, and the template for new ones.",
+  "apis": []
+}

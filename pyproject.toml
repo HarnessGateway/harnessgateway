@@ -39,6 +39,9 @@ addopts = "-q -ra"
 line-length = 120
 target-version = "py312"
 
+[tool.ruff.per-file-target-version]
+"harnessgateway/kit/hgkit.py" = "py39"      # the kit runs in any environment image, on Python 3.9 or later
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "C4", "PT"]
 ignore = ["S101"]
