@@ -24,7 +24,7 @@ A turn is: restore step, then the sandbox, then save step, with a watch step bes
 | `harnessgateway/proxy/` | The egress proxy: the sandbox's only way out, and where secrets are put in |
 | `harnessgateway/api/` | Public (Responses, Files, Containers), management, and internal routes |
 | `harnessgateway/kit/hgkit.py` | What packages import. Standard library only, Python 3.9 or later |
-| `harnessgateway/console/` | The console: static files, plain JavaScript modules, no build step |
+| `harnessgateway/console/` | The console: static files, plain JavaScript modules, no build step. `app.js` is the shell, `pages.js` and `session.js` the pages, `chat/` the chat (`chat/backend.js` is its only way to the platform). `api.js`, `ui.js` and `extensions.js` are what other editions' pages build on: keep their exports |
 | `packages/shell/` | The template package, and what the tests run |
 
 ## Rules

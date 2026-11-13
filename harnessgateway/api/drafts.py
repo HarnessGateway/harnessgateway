@@ -1,4 +1,4 @@
-"""Drafts: a harness package written in the console, file by file, then installed (spec §14.3)."""
+"""Drafts: a harness package written in the console, file by file, then installed (spec §14.2)."""
 
 import json
 from pathlib import Path

@@ -82,7 +82,7 @@ CREATE TABLE harnesses (
     FOREIGN KEY (org_id, digest) REFERENCES packages (org_id, digest)
 );
 
--- A harness package being written in the console, before it is installed (spec §14.3).
+-- A harness package being written in the console, before it is installed (spec §14.2).
 CREATE TABLE drafts (
     org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
     name        text NOT NULL,

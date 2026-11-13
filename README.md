@@ -95,7 +95,11 @@ curl -s $HG/v1/harnesses -H "Authorization: Bearer $KEY" -H 'Content-Type: appli
   Chat Completions) and a key. A package picks the API its CLI speaks.
 - **A trace of every turn.** The command that ran, its output, its log, what it cost in tokens and time,
   and every host it reached.
-- **A console.** Chat with any harness, browse sessions and files, manage harnesses, environments,
+- **A harness package builder.** One of the packages that ship is an agent that writes harness packages.
+  Ask it in the chat for a harness for another CLI, turn the folder it wrote into a draft, read and edit the
+  files, and install it.
+- **A console.** Chat with any harness and see what it made beside the reply; a transcript, a trace and the
+  files of every session; a harness editor; a playground; manage harnesses, environments,
   providers and keys.
 
 ## Harness packages

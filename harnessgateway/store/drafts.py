@@ -1,4 +1,4 @@
-"""Harness packages being written, before they are installed (spec §14.3)."""
+"""Harness packages being written, before they are installed (spec §14.2)."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass

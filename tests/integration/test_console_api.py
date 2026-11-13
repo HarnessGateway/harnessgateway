@@ -1,4 +1,4 @@
-"""Spec §14.2a, §14.2b, §13.11, §20: what the console needs of the API beyond the rest of it: a package's files
+"""Spec §14.2, §13.11, §20: what the console needs of the API beyond the rest of it: a package's files
 as installed, harness drafts, and links to a session's files that a browser can open without a key."""
 
 import json
