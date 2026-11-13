@@ -237,10 +237,13 @@ class Turns:
             await conn.execute(f"UPDATE turns SET {name}_at = now(), command = COALESCE(%s, command) WHERE id = %s",
                                [command, turn.id])
 
-    async def heartbeat(self, runner_id: str) -> None:
+    async def heartbeat(self, runner_id: str) -> list[str]:
+        """Say that this runner is alive. The ids of its turns that have been asked to stop."""
         async with self._db.system() as conn:
-            await conn.execute(
-                "UPDATE turns SET heartbeat_at = now() WHERE runner_id = %s AND status = 'in_progress'", [runner_id])
+            rows = await (await conn.execute(
+                "UPDATE turns SET heartbeat_at = now() WHERE runner_id = %s AND status = 'in_progress' "
+                "RETURNING id, cancel_requested", [runner_id])).fetchall()
+        return [row["id"] for row in rows if row["cancel_requested"]]
 
     async def abandoned(self, *, silent_for_s: float) -> list[Turn]:
         """Turns in progress whose runner has not been heard from for this long."""

@@ -159,6 +159,9 @@ class DockerDriver:
             output = await self._checked("image", "inspect", "--format", "{{.Id}}", ref)
         return output
 
+    async def describe(self, plan: SandboxPlan) -> str:
+        return mask(render_sandbox(plan, runtime=await self._resolve_runtime()))
+
     async def ensure_network(self, name: str, *, internal: bool) -> None:
         code, _ = await self._docker("network", "inspect", name)
         if code != 0:

@@ -36,6 +36,9 @@ class Driver(Protocol):
     async def image_id(self, ref: str) -> str:
         """The immutable id of an image reference, fetching the image if this host does not have it."""
 
+    async def describe(self, plan: SandboxPlan) -> str:
+        """The plan as this driver will run it, for an operator to read: every token masked."""
+
     async def ensure_volume(self, name: str) -> None: ...
 
     async def remove_volume(self, name: str) -> None: ...

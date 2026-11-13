@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from harnessgateway.domain.modelpath import ModelPath
+from harnessgateway.domain.resolve import Resolved, resolve
 from harnessgateway.domain.sealing import Sealer, keyed_hash
 from harnessgateway.settings import Settings
 from harnessgateway.store.blobs import BlobStore
@@ -37,6 +39,15 @@ class Stores:
             harnesses=Harnesses(db, blobs, sealer),
             files=Files(db, blobs),
             turns=Turns(db),
+        )
+
+    async def resolve(self, org_id: str, path: ModelPath) -> Resolved:
+        """What a model string means for this organization, as its definitions stand now (spec §10.2)."""
+        return resolve(
+            path,
+            environments={environment.name: environment for environment in await self.environments.all(org_id)},
+            harnesses={harness.name: harness for harness in await self.harnesses.all(org_id)},
+            providers=[record.provider for record in await self.providers.all(org_id)],
         )
 
     def hash(self, token: str) -> str:
