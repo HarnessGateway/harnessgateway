@@ -16,6 +16,7 @@ from harnessgateway.extensions import Extensions
 from harnessgateway.platform import Platform
 from harnessgateway.runner.runner import Runner
 from harnessgateway.stores import Stores
+from tests.conftest import loaded_extensions
 from tests.helpers import SHELL, serving
 from tests.integration.local_driver import LocalDriver
 
@@ -45,7 +46,7 @@ class Running:
 
 @contextlib.asynccontextmanager
 async def running(stores: Stores, org: str, tmp_path: Path, extensions: Extensions | None = None,
-                  driver: Any = None) -> AsyncIterator[Running]:
+                  driver: Any = None, port: int | None = None) -> AsyncIterator[Running]:
     """A running platform. It runs turns on the local driver unless another driver is given: another edition
     tests its own driver with the same platform around it."""
     async with stores.db.system() as conn:               # the queue is shared: start with nothing waiting
@@ -54,10 +55,11 @@ async def running(stores: Stores, org: str, tmp_path: Path, extensions: Extensio
     keys = {role: (await stores.keys.create(org, name=f"the {role}", role=role))[1]
             for role in ("admin", "developer", "runner")}
     driver = driver or LocalDriver(tmp_path / "volumes", internal_app(stores))
-    platform = Platform.of(stores, driver, extensions)
-    runner = asyncio.create_task(Runner(stores, driver, installer=platform.installer, heartbeat_s=0.2).run())
+    platform = Platform.of(stores, driver, extensions or loaded_extensions())
+    runner = asyncio.create_task(Runner(stores, driver, extensions=platform.extensions,
+                                        installer=platform.installer, heartbeat_s=0.2).run())
     try:
-        async with serving(public_app(platform)) as url:
+        async with serving(public_app(platform), port=port) as url:
             api = Running(platform, org, url, keys)
             try:
                 yield api

@@ -18,14 +18,22 @@ import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
 
+from harnessgateway.extensions import Extensions
 from harnessgateway.ids import new_id
 from harnessgateway.settings import Settings
 from harnessgateway.store.blobs import DirectoryBlobs
-from harnessgateway.store.db import Database
+from harnessgateway.store.db import MIGRATIONS, Database
 from harnessgateway.stores import Stores
 
 SERVER = os.environ.get("HG_TEST_DATABASE_URL")
 DOCKER = os.environ.get("HG_TEST_DOCKER") == "1"
+
+
+def loaded_extensions() -> Extensions:
+    """The extensions HG_TEST_EXTENSIONS names (`module:Class`, comma-separated); none by default. Another
+    edition runs this whole suite with itself loaded: every test must pass as it does without (spec §19)."""
+    names = [name.strip() for name in os.environ.get("HG_TEST_EXTENSIONS", "").split(",") if name.strip()]
+    return Extensions.load(names)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -43,7 +51,7 @@ async def _migrate(url: str) -> None:
     db = Database(url)
     await db.open()
     try:
-        await db.migrate()
+        await db.migrate([MIGRATIONS, *loaded_extensions().migrations()])
     finally:
         await db.close()
 

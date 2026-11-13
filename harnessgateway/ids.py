@@ -12,6 +12,11 @@ def _base32(number: int, length: int) -> str:
     return "".join(_ALPHABET[(number >> (5 * i)) & 31] for i in reversed(range(length)))
 
 
+def ulid() -> str:
+    """26 characters that sort by when they were made: 48 bits of milliseconds, then 80 random bits."""
+    return f"{_base32(time.time_ns() // 1_000_000, 10)}{_base32(secrets.randbits(80), 16)}"
+
+
 def new_id(kind: str) -> str:
-    """A new identifier of `kind`: 48 bits of milliseconds, then 80 random bits."""
-    return f"{PREFIXES[kind]}_{_base32(time.time_ns() // 1_000_000, 10)}{_base32(secrets.randbits(80), 16)}"
+    """A new identifier of `kind`: its prefix and a ULID."""
+    return f"{PREFIXES[kind]}_{ulid()}"

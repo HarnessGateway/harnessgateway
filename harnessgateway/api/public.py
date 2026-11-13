@@ -148,18 +148,12 @@ def public_app(platform: Platform) -> FastAPI:
     errors.install(app)
     caller = Authenticator(platform.stores, platform.extensions)
 
-    def role(name: str) -> Any:
-        async def allowed(principal: Annotated[Principal, Depends(caller)]) -> Principal:
-            principal.require(name)
-            return principal
-        return allowed
-
     app.include_router(responses_router(platform, caller))
     app.include_router(files.files_router(platform, caller))
     app.include_router(files.containers_router(platform, caller))
     for build in (management.providers_router, management.environments_router, management.harnesses_router,
                   management.sessions_router, management.organization_router):
-        app.include_router(build(platform, role))
+        app.include_router(build(platform, caller.role))
     for router in platform.extensions.routers(platform):
         app.include_router(router)
 

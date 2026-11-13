@@ -12,8 +12,9 @@ async def test_the_schema_is_applied_and_recorded(db: Database) -> None:
     async with db.system() as conn:
         rows = await (await conn.execute("SELECT name FROM migrations ORDER BY name")).fetchall()
     applied = [row["name"] for row in rows]
-    assert applied == sorted(path.name for path in MIGRATIONS.glob("*.sql"))
-    assert applied
+    core = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
+    assert core
+    assert set(core) <= set(applied)                    # and, with another edition loaded, that edition's too
 
 
 async def test_migrating_again_changes_nothing(db: Database) -> None:
