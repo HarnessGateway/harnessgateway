@@ -9,14 +9,12 @@ import asyncio
 import contextlib
 import dataclasses
 import os
-import socket
 import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-import uvicorn
 
 from harnessgateway import packaging
 from harnessgateway.api.internal import internal_app
@@ -24,7 +22,7 @@ from harnessgateway.domain.plan import CONTROL_NETWORK, SANDBOX_NETWORK, install
 from harnessgateway.drivers.docker import DockerDriver
 from harnessgateway.runner.runner import Runner
 from harnessgateway.stores import Stores
-from tests.helpers import SHELL, Platform
+from tests.helpers import SHELL, Platform, free_port, serving
 
 IMAGE = os.environ.get("HG_TEST_IMAGE", "node:22-slim")      # any image with sh; steps stand in with it too
 SANDBOX_IMAGE = os.environ.get("HG_TEST_SANDBOX_IMAGE", "python:3.13")
@@ -56,13 +54,6 @@ def platform_image() -> str:
     return tag
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("", 0))
-        port: int = s.getsockname()[1]
-        return port
-
-
 async def _gateway(network: str) -> str:
     """The address at which containers on a network reach this machine."""
     process = await asyncio.create_subprocess_exec(
@@ -81,7 +72,7 @@ async def platform(stores: Stores, org: str, platform_image: str) -> AsyncIterat
     driver = DockerDriver(platform_image=platform_image, runtime=RUNTIME)
     await driver.ensure_network(CONTROL_NETWORK, internal=False)
     await driver.ensure_network(SANDBOX_NETWORK, internal=True)
-    port = _free_port()
+    port = free_port()
     settings = dataclasses.replace(
         stores.settings, sandbox_image=SANDBOX_IMAGE,
         internal_url=f"http://{await _gateway(CONTROL_NETWORK)}:{port}")
@@ -89,20 +80,17 @@ async def platform(stores: Stores, org: str, platform_image: str) -> AsyncIterat
     await stores.environments.update(org, "default", {"image": SANDBOX_IMAGE})
     await stores.harnesses.add(org, packaging.pack(SHELL))
 
-    server = uvicorn.Server(uvicorn.Config(internal_app(stores), host="0.0.0.0", port=port, log_level="warning"))
-    serving = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.02)
-    running = asyncio.create_task(Runner(stores, driver, heartbeat_s=0.5).run())
+    async with serving(internal_app(stores), host="0.0.0.0", port=port):
+        running = asyncio.create_task(Runner(stores, driver, heartbeat_s=0.5).run())
+        try:
+            yield Platform(stores, org, driver)
+        finally:
+            running.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await running
     try:
-        yield Platform(stores, org, driver)
-    finally:
-        running.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await running
-        server.should_exit = True
-        await serving
         await driver.reap(keep=set())
+    finally:
         async with stores.db.org(org) as conn:
             sessions = await (await conn.execute("SELECT id FROM sessions WHERE org_id = %s", [org])).fetchall()
             installs = await (await conn.execute("SELECT id FROM installs WHERE org_id = %s", [org])).fetchall()

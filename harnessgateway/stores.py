@@ -11,6 +11,8 @@ from harnessgateway.store.db import Database
 from harnessgateway.store.environments import Environments
 from harnessgateway.store.files import Files
 from harnessgateway.store.harnesses import Harnesses
+from harnessgateway.store.keys import Keys
+from harnessgateway.store.orgs import Orgs
 from harnessgateway.store.providers import Providers
 from harnessgateway.store.snapshots import Snapshots
 from harnessgateway.store.turns import Turns
@@ -21,6 +23,8 @@ class Stores:
     settings: Settings
     db: Database
     blobs: BlobStore
+    orgs: Orgs
+    keys: Keys
     snapshots: Snapshots
     providers: Providers
     environments: Environments
@@ -33,6 +37,8 @@ class Stores:
         sealer = Sealer(settings.secret_key)
         return cls(
             settings=settings, db=db, blobs=blobs,
+            orgs=Orgs(db),
+            keys=Keys(db, settings.secret_key),
             snapshots=Snapshots(db, blobs),
             providers=Providers(db, sealer),
             environments=Environments(db, sealer, settings.sandbox_image),

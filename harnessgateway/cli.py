@@ -8,9 +8,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import harnessgateway
-from harnessgateway import packaging
+from harnessgateway import logs, packaging, serve
 from harnessgateway.domain.archive import read_archive
 from harnessgateway.errors import Refused
+from harnessgateway.settings import Settings, SettingsError
 from harnessgateway.steps.command import KINDS, run_step
 
 
@@ -33,6 +34,39 @@ def _package_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _settings() -> Settings | None:
+    try:
+        return Settings.from_env(os.environ)
+    except SettingsError as e:
+        print(f"settings: {e}", file=sys.stderr)
+        return None
+
+
+def _serve(_: argparse.Namespace) -> int:
+    settings = _settings()
+    if settings is None:
+        return 2
+    logs.setup(settings.log_level)
+    try:
+        asyncio.run(serve.serve(settings))
+    except SettingsError as e:
+        print(f"settings: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _init(_: argparse.Namespace) -> int:
+    settings = _settings()
+    if settings is None:
+        return 2
+    key = asyncio.run(serve.init(settings))
+    if key is None:
+        print("Already set up: the organization, its default environment and a key exist. Nothing was changed.")
+    else:
+        print(f"The organization and its default environment are ready.\nAdmin key (shown once): {key}")
+    return 0
+
+
 def _step(args: argparse.Namespace) -> int:
     return asyncio.run(run_step(args.kind, args.target, limit_mb=args.limit_mb, env=os.environ))
 
@@ -41,6 +75,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harnessgateway", description=harnessgateway.__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version", help="print the version").set_defaults(run=_version)
+    commands.add_parser("serve", help="run the APIs, the turn runner and housekeeping").set_defaults(run=_serve)
+    commands.add_parser("init", help="first-time setup: the organization, the default environment, an admin key"
+                        ).set_defaults(run=_init)
 
     package = commands.add_parser("package", help="work on a harness package").add_subparsers(
         dest="package_command", required=True)

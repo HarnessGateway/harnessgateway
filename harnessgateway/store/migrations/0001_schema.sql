@@ -207,3 +207,16 @@ CREATE TABLE usage (
     snapshot_bytes   bigint NOT NULL DEFAULT 0
 );
 CREATE INDEX usage_org ON usage (org_id, at);
+
+-- API keys (spec §16). Only a keyed hash of a key is stored.
+CREATE TABLE keys (
+    id            text PRIMARY KEY,
+    org_id        text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    name          text NOT NULL,
+    role          text NOT NULL CHECK (role IN ('runner', 'developer', 'admin')),
+    hash          text NOT NULL UNIQUE,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    last_used_at  timestamptz,
+    revoked_at    timestamptz
+);
+CREATE INDEX keys_org ON keys (org_id, created_at);

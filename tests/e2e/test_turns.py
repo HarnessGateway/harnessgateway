@@ -30,7 +30,7 @@ async def test_the_sandbox_can_write_only_its_two_folders_and_tmp(platform: Plat
         timeout=180)
     lines = text_of(turn).splitlines()
     assert len(lines) == 4, lines
-    assert all("Read-only file system" in line for line in lines[:3])
+    assert all("cannot touch" in line for line in lines[:3])       # refused: read-only, or not the agent's
     assert lines[3] == "wrote"
 
 

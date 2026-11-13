@@ -1,5 +1,6 @@
 """Sessions, turns and their events: the queue, the stream, and the record of what happened (spec §5, §6, §17)."""
 
+import contextlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -362,6 +363,20 @@ class Turns:
                 "UPDATE turns SET deleted_at = now(), request = NULL, output = '[]', log_tail = '' WHERE id = %s",
                 [turn_id])
             await conn.execute("DELETE FROM events WHERE turn_id = %s", [turn_id])
+
+    async def forget(self, org_id: str, turn_id: str) -> None:
+        """Delete a turn that was asked not to be stored, once its response has been delivered. One that is
+        still running (its caller went away) is left for `unstored` to find later."""
+        with contextlib.suppress(Conflict, NotFound):
+            await self.delete(org_id, turn_id)
+
+    async def unstored(self, *, final_for_s: float) -> list[tuple[str, str]]:
+        """Turns asked not to be stored that ended this long ago and are still there, as (organization, turn)."""
+        async with self._db.system() as conn:
+            rows = await (await conn.execute(
+                "SELECT org_id, id FROM turns WHERE NOT store AND deleted_at IS NULL "
+                "AND completed_at < now() - make_interval(secs => %s)", [final_for_s])).fetchall()
+        return [(row["org_id"], row["id"]) for row in rows]
 
     # the session's volumes
 

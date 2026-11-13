@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from harnessgateway.domain.package import Manifest
 
@@ -14,6 +15,7 @@ class Harness:
     model: str | None = None                                     # the default model, if one was chosen
     settings_values: Mapping[str, str] = field(default_factory=dict)
     secrets_set: frozenset[str] = frozenset()                    # the names of the secrets that have a value
+    added_at: datetime | None = None                             # when the organization first added it
 
     @property
     def name(self) -> str:

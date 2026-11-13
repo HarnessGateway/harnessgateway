@@ -21,7 +21,7 @@ from harnessgateway.store.sealed import check_value, open_all, seal
 
 LOG_TAIL = 64 * 1024
 _CHANGEABLE = frozenset({"provider", "model", "settings", "secrets"})
-_COLUMNS = "h.digest, h.provider, h.model, h.settings, h.secrets_sealed, p.manifest"
+_COLUMNS = "h.digest, h.provider, h.model, h.settings, h.secrets_sealed, h.created_at, p.manifest"
 _INSTALL_COLUMNS = "id, digest, image_id, status, log_tail, updated_at"
 
 InstallStatus = Literal["pending", "ready", "failed"]
@@ -47,7 +47,8 @@ def package_key(org_id: str, digest: str) -> str:
 
 def _harness(row: Mapping[str, Any]) -> Harness:
     return Harness(manifest=Manifest.load(row["manifest"]), digest=row["digest"], provider=row["provider"],
-                   model=row["model"], settings_values=row["settings"], secrets_set=frozenset(row["secrets_sealed"]))
+                   model=row["model"], settings_values=row["settings"], secrets_set=frozenset(row["secrets_sealed"]),
+                   added_at=row["created_at"])
 
 
 def _declared(changes: object, declared: Mapping[str, object], what: str) -> dict[str, object]:

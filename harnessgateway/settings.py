@@ -4,7 +4,6 @@ import base64
 import binascii
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import harnessgateway
@@ -45,6 +44,12 @@ def _number(minimum: int) -> Callable[[str], int]:
     return check
 
 
+def _port(text: str) -> int:
+    if not text.isdigit() or not 1 <= int(text) <= 65535:
+        raise ValueError("is a port, 1 to 65535")
+    return int(text)
+
+
 def _listed(text: str) -> list[str]:
     return [item.strip() for item in text.split(",") if item.strip()]
 
@@ -74,12 +79,14 @@ class Settings:
     database_url: str
     secret_key: bytes
     proxy_key: str
-    data: Path
+    data: str
     driver: str
     runtime: str
     platform_image: str
     sandbox_image: str
     internal_url: str
+    port: int
+    internal_port: int
     max_turns: int
     volume_ttl_s: int
     private_hosts: tuple[HostEntry, ...]
@@ -94,12 +101,14 @@ class Settings:
             "database_url": ("HG_DATABASE_URL", None, str),
             "secret_key": ("HG_SECRET_KEY", None, _secret_key),
             "proxy_key": ("HG_PROXY_KEY", None, str),
-            "data": ("HG_DATA", "/data", Path),
+            "data": ("HG_DATA", "/data", str),
             "driver": ("HG_DRIVER", "docker", str),
             "runtime": ("HG_RUNTIME", "auto", _one_of(_RUNTIMES)),
             "platform_image": ("HG_PLATFORM_IMAGE", f"ghcr.io/harnessgateway/harnessgateway:{version}", str),
             "sandbox_image": ("HG_SANDBOX_IMAGE", f"ghcr.io/harnessgateway/sandbox:{version}", str),
             "internal_url": ("HG_INTERNAL_URL", "http://serve:8001", _url),
+            "port": ("HG_PORT", "8000", _port),
+            "internal_port": ("HG_INTERNAL_PORT", "8001", _port),
             "max_turns": ("HG_MAX_TURNS", "8", _number(1)),
             "volume_ttl_s": ("HG_VOLUME_TTL_S", "3600", _number(0)),
             "private_hosts": ("HG_PRIVATE_HOSTS", "", _hosts),

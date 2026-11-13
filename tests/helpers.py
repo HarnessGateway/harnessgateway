@@ -1,10 +1,15 @@
 """What several levels of test share: the shell package, a second harness made from it, and a running platform."""
 
 import asyncio
+import contextlib
 import json
 import shutil
+import socket
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+
+import uvicorn
 
 from harnessgateway import packaging
 from harnessgateway.intake import Intake
@@ -54,3 +59,25 @@ class Platform:
 
 def text_of(turn: Turn) -> str:
     return "".join(part["text"] for item in turn.output if item["type"] == "message" for part in item["content"])
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("", 0))
+        port: int = s.getsockname()[1]
+        return port
+
+
+@contextlib.asynccontextmanager
+async def serving(app: Any, *, host: str = "127.0.0.1", port: int | None = None) -> AsyncIterator[str]:
+    """Serve an app over real HTTP for as long as the block lasts. Yields its address."""
+    port = port or free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    task = asyncio.create_task(server.serve())
+    while not server.started:
+        await asyncio.sleep(0.02)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        await task

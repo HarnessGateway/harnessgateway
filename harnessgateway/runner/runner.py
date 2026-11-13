@@ -8,6 +8,7 @@ import secrets
 from harnessgateway.domain.plan import sandbox_name
 from harnessgateway.drivers.base import Driver
 from harnessgateway.errors import Conflict
+from harnessgateway.extensions import Extensions
 from harnessgateway.runner.installer import Installer
 from harnessgateway.runner.turn import RESTARTED, TurnRunner
 from harnessgateway.store.turns import CANCEL, CONTROL, Turn
@@ -17,10 +18,12 @@ log = logging.getLogger(__name__)
 
 
 class Runner:
-    def __init__(self, stores: Stores, driver: Driver, *, heartbeat_s: float = 5.0, silent_for_s: float = 30.0) -> None:
+    def __init__(self, stores: Stores, driver: Driver, *, extensions: Extensions | None = None,
+                 heartbeat_s: float = 5.0, silent_for_s: float = 30.0) -> None:
         self.id = f"runner-{secrets.token_hex(6)}"
         self._stores = stores
         self._driver = driver
+        self._extensions = extensions or Extensions()
         self._turns = TurnRunner(stores, driver, Installer(stores, driver))
         self._heartbeat_s = heartbeat_s
         self._silent_for_s = silent_for_s
@@ -61,7 +64,15 @@ class Runner:
             turn = await self._stores.turns.claim(self.id)
             if turn is None:
                 return
-            self._active[turn.id] = asyncio.create_task(self._turns.run(turn))
+            self._active[turn.id] = asyncio.create_task(self._run(turn))
+
+    async def _run(self, turn: Turn) -> Turn:
+        final = await self._turns.run(turn)
+        try:
+            await self._extensions.after_turn(final)
+        except Exception:
+            log.exception("an extension failed after turn %s", turn.id)
+        return final
 
     async def _beat(self) -> None:
         """Say this runner is alive, honour stops whose message was missed, and end what other runners left."""

@@ -1,7 +1,6 @@
 """Spec §18.4: settings come from the environment; a missing or invalid one stops the program and is named."""
 
 import base64
-from pathlib import Path
 
 import pytest
 
@@ -17,7 +16,8 @@ def test_with_only_the_required_settings_the_rest_take_their_defaults() -> None:
     assert s.database_url == "postgresql://u:p@db/hg"
     assert s.secret_key == bytes(range(32))
     assert s.proxy_key == "proxy-secret"
-    assert s.data == Path("/data")
+    assert s.data == "/data"
+    assert (s.port, s.internal_port) == (8000, 8001)
     assert (s.driver, s.runtime, s.max_turns, s.volume_ttl_s, s.log_level) == ("docker", "auto", 8, 3600, "info")
     assert s.platform_image == f"ghcr.io/harnessgateway/harnessgateway:{harnessgateway.__version__}"
     assert s.sandbox_image == f"ghcr.io/harnessgateway/sandbox:{harnessgateway.__version__}"
@@ -32,9 +32,11 @@ def test_every_setting_can_be_given() -> None:
         "HG_PLATFORM_IMAGE": "p:1", "HG_SANDBOX_IMAGE": "s:1", "HG_INTERNAL_URL": "http://10.0.0.5:8001/",
         "HG_MAX_TURNS": "32", "HG_VOLUME_TTL_S": "60", "HG_PRIVATE_HOSTS": "ollama.lan:11434, 192.168.1.20",
         "HG_EXTENSIONS": "acme.ext:Enterprise, acme.cloud:Cloud", "HG_LOG_LEVEL": "debug",
+        "HG_PORT": "9000", "HG_INTERNAL_PORT": "9001",
     })
+    assert (s.port, s.internal_port) == (9000, 9001)
     assert (s.data, s.driver, s.runtime, s.platform_image, s.sandbox_image) == (
-        Path("/var/hg"), "kubernetes", "runsc", "p:1", "s:1")
+        "/var/hg", "kubernetes", "runsc", "p:1", "s:1")
     assert s.internal_url == "http://10.0.0.5:8001"
     assert (s.max_turns, s.volume_ttl_s, s.log_level) == (32, 60, "debug")
     assert [(h.host, h.port) for h in s.private_hosts] == [("ollama.lan", 11434), ("192.168.1.20", None)]
@@ -59,6 +61,8 @@ def test_every_missing_required_setting_is_named_at_once() -> None:
     ("HG_EXTENSIONS", "no-colon"),
     ("HG_LOG_LEVEL", "loud"),
     ("HG_INTERNAL_URL", "serve:8001"),
+    ("HG_PORT", "0"),
+    ("HG_INTERNAL_PORT", "http"),
 ])
 def test_an_invalid_setting_is_named(name: str, value: str) -> None:
     with pytest.raises(SettingsError) as e:
