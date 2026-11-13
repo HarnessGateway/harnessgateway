@@ -30,7 +30,7 @@ def test_a_folder_packs_to_the_same_bytes_every_time(package: Path) -> None:
     assert packaging.pack(package) == first
     read = read_archive(first)
     assert read.manifest.name == "shell"
-    assert [f.path for f in read.files if "/" not in f.path] == ["harness.json", "install", "run"]
+    assert [f.path for f in read.files if "/" not in f.path] == ["README.md", "harness.json", "install", "run"]
 
 
 def test_what_is_not_part_of_a_package_is_left_out(package: Path) -> None:

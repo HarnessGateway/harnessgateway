@@ -9,7 +9,7 @@ from harnessgateway.domain.contract import is_reserved
 from harnessgateway.domain.definition import Definition
 from harnessgateway.domain.hosts import HostEntry
 from harnessgateway.domain.names import check_name
-from harnessgateway.domain.package import DECLARED_MAX, check_declared_names, entries
+from harnessgateway.domain.package import AS_WRITTEN, DECLARED_MAX, check_declared_names, entries
 
 _VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 VALUE_MAX = 16_384
@@ -17,15 +17,15 @@ VALUE_MAX = 16_384
 
 class Network(Definition):
     mode: Literal["none", "limited", "open"] = "limited"
-    allow: Annotated[tuple[HostEntry, ...], entries("network.allow")] = ()
-    deny: Annotated[tuple[HostEntry, ...], entries("network.deny")] = ()
+    allow: Annotated[tuple[HostEntry, ...], entries("network.allow"), AS_WRITTEN] = ()
+    deny: Annotated[tuple[HostEntry, ...], entries("network.deny"), AS_WRITTEN] = ()
     package_managers: bool = True
 
 
 class EnvironmentSecret(Definition):
     """Where a secret of the environment may go, and how. Its value is kept apart, sealed (spec §10)."""
 
-    hosts: Annotated[tuple[HostEntry, ...], entries("hosts"), Field(min_length=1)]
+    hosts: Annotated[tuple[HostEntry, ...], entries("hosts"), AS_WRITTEN, Field(min_length=1)]
     header: Annotated[str, Field(pattern=r"^[A-Za-z0-9-]{1,64}$")] | None = None
     prefix: Annotated[str, Field(max_length=64)] = ""
 

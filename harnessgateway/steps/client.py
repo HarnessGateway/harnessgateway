@@ -44,6 +44,9 @@ class StepClient(Protocol):
 
     async def put_chunk(self, digest: str, data: bytes) -> None: ...
 
+    async def unpack_plan(self, install_id: str) -> str:
+        """The key of the package archive an install is for."""
 
-async def read_manifest_text(client: StepClient, key: str) -> str:
-    return b"".join([piece async for piece in client.object(key)]).decode()
+
+async def read_object(client: StepClient, key: str) -> bytes:
+    return b"".join([piece async for piece in client.object(key)])

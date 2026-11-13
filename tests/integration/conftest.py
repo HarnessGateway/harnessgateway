@@ -15,8 +15,10 @@ import pytest
 from psycopg.conninfo import make_conninfo
 
 from harnessgateway.ids import new_id
+from harnessgateway.settings import Settings
 from harnessgateway.store.blobs import DirectoryBlobs
 from harnessgateway.store.db import Database
+from harnessgateway.stores import Stores
 
 SERVER = os.environ.get("HG_TEST_DATABASE_URL")
 
@@ -75,3 +77,20 @@ async def org(db: Database) -> str:
 @pytest.fixture
 def blobs(tmp_path: Path) -> DirectoryBlobs:
     return DirectoryBlobs(tmp_path / "blobs")
+
+
+@pytest.fixture
+def settings(database_url: str, tmp_path: Path) -> Settings:
+    return Settings.from_env({
+        "HG_DATABASE_URL": database_url, "HG_SECRET_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "HG_PROXY_KEY": "test-proxy-key", "HG_DATA": str(tmp_path / "blobs"), "HG_SANDBOX_IMAGE": "sandbox:test",
+        "HG_PLATFORM_IMAGE": "platform:test", "HG_INTERNAL_URL": "http://internal.test",
+    })
+
+
+@pytest.fixture
+async def stores(settings: Settings, db: Database, blobs: DirectoryBlobs, org: str) -> Stores:
+    """The stores, with the organization's default environment in place."""
+    stores = Stores.of(settings, db, blobs)
+    await stores.environments.ensure_default(org)
+    return stores

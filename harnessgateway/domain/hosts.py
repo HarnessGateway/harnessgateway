@@ -47,6 +47,9 @@ class HostEntry:
             raise Invalid(f"a host entry is host, *.suffix or host:port, with no scheme or path: {value!r}")
         return cls(host, port)
 
+    def __str__(self) -> str:
+        return self.host if self.port is None else f"{self.host}:{self.port}"
+
     def matches(self, host: str, port: int) -> bool:
         if port not in ((self.port,) if self.port is not None else DEFAULT_PORTS):
             return False

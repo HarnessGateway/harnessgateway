@@ -29,3 +29,7 @@ class Definition(BaseModel):
             return cls.model_validate({**defaults, **data})
         except ValidationError as e:
             raise Invalid(describe(e)) from None
+
+    def dump(self) -> dict[str, Any]:
+        """The definition as it is written: plain JSON that `load` reads back to the same thing."""
+        return self.model_dump(mode="json")

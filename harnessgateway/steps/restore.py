@@ -3,30 +3,14 @@
 import hashlib
 import json
 import os
-import shutil
 from collections.abc import Mapping
 from pathlib import Path
 
-from harnessgateway.domain.contract import SANDBOX_UID
 from harnessgateway.domain.snapshot import Entry, ManifestError, SnapshotManifest
 from harnessgateway.errors import Refused
-from harnessgateway.steps.client import InputFile, RestorePlan, StepClient, read_manifest_text
+from harnessgateway.steps.client import InputFile, RestorePlan, StepClient, read_object
 from harnessgateway.steps.errors import StepError
-
-
-def _give(path: Path) -> None:
-    """Hand a path to the sandbox's user. Only root can; a step in a container always is."""
-    if os.geteuid() == 0:
-        os.lchown(path, SANDBOX_UID, SANDBOX_UID)
-
-
-def _empty(folder: Path) -> None:
-    """Remove everything in a folder but not the folder, which is a mount point."""
-    for entry in os.scandir(folder):
-        if entry.is_dir(follow_symlinks=False):
-            shutil.rmtree(entry.path)
-        else:
-            os.unlink(entry.path)
+from harnessgateway.steps.folders import empty, give
 
 
 async def _write_file(client: StepClient, entry: Entry, location: Path) -> None:
@@ -46,8 +30,8 @@ async def _write_file(client: StepClient, entry: Entry, location: Path) -> None:
 
 async def _rebuild(client: StepClient, manifest: SnapshotManifest, roots: Mapping[str, Path]) -> None:
     for root in roots.values():
-        _empty(root)
-        _give(root)
+        empty(root)
+        give(root)
     directories = []
     for path in sorted(manifest.entries):                    # a directory sorts before what it holds
         entry = manifest.entries[path]
@@ -60,7 +44,7 @@ async def _rebuild(client: StepClient, manifest: SnapshotManifest, roots: Mappin
             os.symlink(entry.target, location)
         else:
             await _write_file(client, entry, location)
-        _give(location)
+        give(location)
     for location, mode in reversed(directories):             # last, so a read-only directory can be filled first
         os.chmod(location, mode)
 
@@ -70,16 +54,16 @@ async def _write_file_input(client: StepClient, file: InputFile, folder: Path) -
         raise StepError(f"{file.id}: {file.filename!r} is not a plain file name")
     target = folder / file.id
     target.mkdir()
-    _give(target)
+    give(target)
     with (target / file.filename).open("xb") as out:
         async for piece in client.object(file.key):
             out.write(piece)
-    _give(target / file.filename)
+    give(target / file.filename)
 
 
 async def _write_inputs(client: StepClient, plan: RestorePlan, turn: Path) -> None:
     turn.mkdir(exist_ok=True)
-    _empty(turn)
+    empty(turn)
     texts = {
         "request.json": json.dumps(plan.request),
         "history.json": json.dumps(plan.history),
@@ -89,7 +73,7 @@ async def _write_inputs(client: StepClient, plan: RestorePlan, turn: Path) -> No
         (turn / name).write_text(text)
     (turn / "files").mkdir()
     for path in (turn, *turn.iterdir()):
-        _give(path)
+        give(path)
     for file in plan.files:
         await _write_file_input(client, file, turn / "files")
 
@@ -98,7 +82,7 @@ async def restore(client: StepClient, turn_id: str, roots: Mapping[str, Path], t
     try:
         plan = await client.restore_plan(turn_id)
         if not plan.warm:
-            text = await read_manifest_text(client, plan.manifest_key) if plan.manifest_key else ""
+            text = (await read_object(client, plan.manifest_key)).decode() if plan.manifest_key else ""
             await _rebuild(client, SnapshotManifest.loads(text), roots)
         await _write_inputs(client, plan, turn)
     except (ManifestError, OSError) as e:

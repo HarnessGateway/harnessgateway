@@ -9,7 +9,7 @@ from pathlib import Path
 
 from harnessgateway.domain.snapshot import CHUNK, Entry, ManifestError, SnapshotManifest
 from harnessgateway.errors import Refused
-from harnessgateway.steps.client import StepClient, read_manifest_text
+from harnessgateway.steps.client import StepClient, read_object
 from harnessgateway.steps.errors import StepError
 from harnessgateway.steps.tree import Found, walk
 
@@ -70,7 +70,7 @@ class _Reader:
 async def save(client: StepClient, turn_id: str, roots: Mapping[str, Path]) -> Saved:
     try:
         key = await client.save_plan(turn_id)
-        parent = SnapshotManifest.loads(await read_manifest_text(client, key)) if key else SnapshotManifest([])
+        parent = SnapshotManifest.loads((await read_object(client, key)).decode()) if key else SnapshotManifest([])
         reader = _Reader(parent)
         manifest = SnapshotManifest(reader.entries(walk(roots)))
         uploaded = 0

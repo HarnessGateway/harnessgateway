@@ -121,6 +121,14 @@ class Snapshots:
             raise NotFound(f"no such snapshot: {snapshot_id}")
         return Snapshot(**row)
 
+    async def of_turn(self, org_id: str, turn_id: str) -> Snapshot | None:
+        """The snapshot a turn's save recorded, if it recorded one."""
+        async with self._db.org(org_id) as conn:
+            row = await (await conn.execute(
+                "SELECT id, session_id, turn_id, manifest_key, bytes, files FROM snapshots "
+                "WHERE org_id = %s AND turn_id = %s ORDER BY created_at DESC LIMIT 1", [org_id, turn_id])).fetchone()
+        return Snapshot(**row) if row else None
+
     async def manifest(self, org_id: str, snapshot_id: str) -> SnapshotManifest:
         snapshot = await self.get(org_id, snapshot_id)
         return SnapshotManifest.loads((await self._blobs.get(snapshot.manifest_key)).decode())

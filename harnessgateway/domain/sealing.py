@@ -42,6 +42,11 @@ class Sealer:
             raise SealError(f"the sealed {kind} value {name!r} does not open here") from None
 
 
+def new_token() -> str:
+    """A secret made for one turn or one install: what a step or a sandbox's proxy connection proves itself with."""
+    return secrets.token_urlsafe(32)
+
+
 def new_placeholder() -> str:
     """What a sandbox holds in place of a secret: a string that is worth nothing outside the egress proxy."""
     return f"hgs_{secrets.token_hex(16)}"

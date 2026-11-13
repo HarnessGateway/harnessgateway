@@ -3,7 +3,7 @@
 import re
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import AfterValidator, BeforeValidator, Field, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, PlainSerializer, model_validator
 
 from harnessgateway.domain.contract import STATE_DIR, ApiName, is_reserved
 from harnessgateway.domain.definition import Definition
@@ -19,6 +19,9 @@ Text = Annotated[str, Field(max_length=500)]
 
 def entries(what: str) -> BeforeValidator:
     return BeforeValidator(lambda values: parse_entries(values, what))
+
+
+AS_WRITTEN = PlainSerializer(lambda value: [str(entry) for entry in value], return_type=list[str])
 
 
 def check_declared_names(names: list[str], what: str) -> None:
@@ -42,12 +45,12 @@ def _mind(value: str) -> str:
 
 
 class Install(Definition):
-    egress: Annotated[tuple[HostEntry, ...], entries("install.egress")] = ()
+    egress: Annotated[tuple[HostEntry, ...], entries("install.egress"), AS_WRITTEN] = ()
     timeout_s: Annotated[int, Field(ge=1, le=3600)] = 900
 
 
 class Run(Definition):
-    egress: Annotated[tuple[HostEntry, ...], entries("run.egress")] = ()
+    egress: Annotated[tuple[HostEntry, ...], entries("run.egress"), AS_WRITTEN] = ()
     stop_grace_s: Annotated[int, Field(ge=1, le=300)] = 10
 
 
@@ -59,7 +62,7 @@ class Setting(Definition):
 
 class SecretDeclaration(Definition):
     description: Text = ""
-    hosts: Annotated[tuple[HostEntry, ...], entries("hosts"), Field(min_length=1)]
+    hosts: Annotated[tuple[HostEntry, ...], entries("hosts"), AS_WRITTEN, Field(min_length=1)]
     required: bool = False
 
 

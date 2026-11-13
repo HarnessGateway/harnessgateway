@@ -219,3 +219,23 @@ def test_the_provider_refuses_what_is_not_allowed_and_names_it(changes: dict[str
     with pytest.raises(Invalid) as e:
         Provider.load({**base, **changes})
     assert names in str(e.value)
+
+
+# ── stored and read back ────────────────────────────────────────────────────────────────────────────
+
+def test_every_definition_dumps_as_it_is_written_and_loads_back() -> None:
+    full_manifest = Manifest.load(manifest(
+        mind=".claude", install={"egress": ["registry.npmjs.org", "*.example.org:8443"]},
+        settings={"EFFORT": {"default": "medium"}}, secrets={"GITHUB_TOKEN": {"hosts": ["api.github.com"]}}))
+    environment = Environment.load({
+        "name": "secure", "network": {"mode": "limited", "allow": ["api.example.com:8443"], "deny": ["*.bad.example"]},
+        "variables": {"TZ": "UTC"}, "secrets": {"TOKEN": {"hosts": ["api.example.com"], "header": "Authorization"}},
+    }, default_image="image:1")
+    provider = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"}})
+
+    assert full_manifest.dump()["install"]["egress"] == ["registry.npmjs.org", "*.example.org:8443"]
+    assert environment.dump()["network"]["allow"] == ["api.example.com:8443"]
+    assert environment.dump()["secrets"]["TOKEN"]["hosts"] == ["api.example.com"]
+    assert Manifest.load(full_manifest.dump()) == full_manifest
+    assert Environment.load(environment.dump(), default_image="other") == environment
+    assert Provider.load(provider.dump()) == provider

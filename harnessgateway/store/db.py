@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, sql
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -15,8 +15,22 @@ _MIGRATION_LOCK = 0x6867_6D69_6772            # "hgmigr": one process changes th
 Connection = AsyncConnection[dict[str, Any]]
 
 
+class Listener:
+    """A connection that hears what is sent on the channels it listens to."""
+
+    def __init__(self, conn: AsyncConnection[Any]) -> None:
+        self._conn = conn
+
+    async def next(self, timeout_s: float) -> str | None:
+        """The next message's text; or None when none comes in time."""
+        async for message in self._conn.notifies(timeout=timeout_s, stop_after=1):
+            return message.payload
+        return None
+
+
 class Database:
     def __init__(self, url: str, *, max_size: int = 10) -> None:
+        self._url = url
         self._pool: AsyncConnectionPool[Connection] = AsyncConnectionPool(
             url, min_size=1, max_size=max_size, open=False, connection_class=AsyncConnection[dict[str, Any]],
             kwargs={"row_factory": dict_row},
@@ -40,6 +54,17 @@ class Database:
         async with self.system() as conn:
             await conn.execute("SELECT set_config('hg.org_id', %s, true)", [org_id])
             yield conn
+
+    @asynccontextmanager
+    async def listen(self, *channels: str) -> AsyncIterator[Listener]:
+        """Hear what is sent on these channels, on a connection of its own for as long as the block lasts."""
+        conn = await AsyncConnection.connect(self._url, autocommit=True)
+        try:
+            for channel in channels:
+                await conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
+            yield Listener(conn)
+        finally:
+            await conn.close()
 
     async def migrate(self, folders: Sequence[Path] = (MIGRATIONS,)) -> list[str]:
         """Apply every schema file not yet applied: folders in the order given, files by name. All or nothing."""
