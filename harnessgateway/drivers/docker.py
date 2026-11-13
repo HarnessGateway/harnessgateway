@@ -2,25 +2,18 @@
 
 import asyncio
 import json
-import re
 import shlex
 from asyncio.subprocess import PIPE, STDOUT
 
 from harnessgateway.domain.contract import SANDBOX_UID
 from harnessgateway.domain.events import LINE_MAX
+from harnessgateway.domain.masking import mask
 from harnessgateway.domain.plan import Mount, SandboxPlan, StepPlan
 from harnessgateway.drivers.base import DriverError, OnLine, SandboxExit, StepResult
 
 LABEL = "hg.org"                       # every container of this platform carries it
 OUTPUT_TAIL = 64 * 1024
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
-
-_MASKS = (
-    (re.compile(r"(://[^:/@\s]+):[^@\s]+@"), r"\1:***@"),
-    (re.compile(r"hgs_[0-9a-f]{32}"), "hgs_***"),
-    (re.compile(r"(HG_STEP_TOKEN=)\S+"), r"\1***"),
-)
-
 
 def _common(labels: dict[str, str], network: str | None) -> list[str]:
     argv = []
@@ -68,14 +61,6 @@ def render_step(step: StepPlan, *, platform_image: str) -> list[str]:
         *_mounts_and_env(step.mounts, step.env),
         platform_image, *step.command,
     ]
-
-
-def mask(argv: list[str]) -> str:
-    """A command as it may be logged and shown: no token, no placeholder."""
-    shown = shlex.join(argv)
-    for pattern, replacement in _MASKS:
-        shown = pattern.sub(replacement, shown)
-    return shown
 
 
 class LineSplitter:
@@ -162,7 +147,7 @@ class DockerDriver:
         return output
 
     async def describe(self, plan: SandboxPlan) -> str:
-        return mask(render_sandbox(plan, runtime=await self._resolve_runtime()))
+        return mask(shlex.join(render_sandbox(plan, runtime=await self._resolve_runtime())))
 
     async def ensure_network(self, name: str, *, internal: bool) -> None:
         code, _ = await self._docker("network", "inspect", name)

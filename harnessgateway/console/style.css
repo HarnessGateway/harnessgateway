@@ -71,3 +71,4 @@ tr.pick:hover td { background: var(--wash); }
 .turn .foot button { padding: 1px 8px; font-size: 12px; }
 .composer { border-top: 1px solid var(--line); padding-top: 12px; }
 .composer textarea { font-family: inherit; font-size: 14px; min-height: 64px; }
+a.button { display: inline-block; text-decoration: none; }

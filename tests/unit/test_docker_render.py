@@ -1,7 +1,10 @@
 """Spec §5.1: the Docker driver renders a plan as the exact `docker run` command of the specification."""
 
+import shlex
+
+from harnessgateway.domain.masking import mask
 from harnessgateway.domain.plan import Mount, SandboxPlan, StepPlan
-from harnessgateway.drivers.docker import LineSplitter, mask, render_sandbox, render_step
+from harnessgateway.drivers.docker import LineSplitter, render_sandbox, render_step
 
 SANDBOX = SandboxPlan(
     name="hg-sess_X",
@@ -89,7 +92,7 @@ def test_a_step_runs_from_the_platform_image_as_root_and_removes_itself() -> Non
 def test_a_logged_command_shows_no_token_and_no_placeholder() -> None:
     argv = ["docker", "run", "--env", "HTTPS_PROXY=http://resp_Y:s3cr3t-token@egress:8080",
             "--env", "HG_PROVIDER_KEY=hgs_" + "a" * 32, "--env", "HG_STEP_TOKEN=stok", "--env", "TZ=UTC", "img"]
-    shown = mask(argv)
+    shown = mask(shlex.join(argv))
     assert "s3cr3t-token" not in shown
     assert "a" * 32 not in shown
     assert "stok" not in shown

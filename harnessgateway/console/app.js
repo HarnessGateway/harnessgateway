@@ -1,7 +1,7 @@
 // The console (spec §20): plain JavaScript, no build step, no endpoints of its own.
 
 import { get, session } from "/api.js";
-import { pages as added } from "/extensions.js";
+import { pages as added, signIns, signOut } from "/extensions.js";
 import { clear, h, put } from "/ui.js";
 
 const ORDER = { runner: 0, developer: 1, admin: 2 };
@@ -41,7 +41,8 @@ function signIn(message) {
     h("p", { class: "muted" }, "Sign in with an API key. It is kept in this browser tab only."),
     message ? h("div", { class: "error" }, message) : null,
     h("label", { for: "key" }, "API key"), key, problem,
-    h("p", {}, h("button", { class: "primary", type: "submit" }, "Sign in"))));
+    h("p", {}, h("button", { class: "primary", type: "submit" }, "Sign in")),
+    signIns.map((way) => h("p", {}, h("a", { class: "button", href: way.href }, way.title)))));
 }
 
 function shell(current) {
@@ -56,20 +57,28 @@ function shell(current) {
         h("div", { class: about.isolation === "none" ? "warn" : "" },
           about.isolation === "none" ? "Isolation: none (sandboxes share the host kernel)" : `Isolation: ${about.isolation}`),
         h("div", {}, `Signed in as ${about.role}`),
-        h("div", {}, h("a", { href: "#", onclick: (event) => { event.preventDefault(); session.key = null; signIn(); } },
-          "Sign out")))),
+        h("div", {}, h("a", { href: "#", onclick: leave }, "Sign out")))),
     main);
   return main;
 }
 
+async function leave(event) {
+  event.preventDefault();
+  session.key = null;
+  about = null;
+  if (signOut) await signOut().catch(() => {});
+  signIn();
+}
+
 async function route() {
-  if (!session.key) return signIn();
   if (!about) {
     try {
-      about = await get("/v1/platform");
+      about = await get("/v1/platform");       // answers for a key, or for whoever an edition's sign-in says it is
     } catch (error) {
+      const hadKey = Boolean(session.key);
       session.key = null;
-      return signIn(error.status === 401 ? "That key is no longer valid." : error.message);
+      if (error.status !== 401) return signIn(error.message);
+      return signIn(hadKey ? "That key is no longer valid." : undefined);
     }
   }
   const [id, ...rest] = location.hash.replace(/^#\/?/, "").split("/");

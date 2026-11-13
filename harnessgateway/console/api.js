@@ -18,7 +18,8 @@ async function refusal(response) {
 }
 
 export async function call(method, path, body, options = {}) {
-  const headers = { Authorization: `Bearer ${options.key || session.key}` };
+  const key = options.key || session.key;
+  const headers = key ? { Authorization: `Bearer ${key}` } : {};       // without a key, an edition's sign-in speaks
   let payload = body;
   if (body !== undefined && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
