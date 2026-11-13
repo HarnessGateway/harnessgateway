@@ -104,6 +104,7 @@ HarnessGateway ${VERSION} is running.
   Isolation:       ${isolation}$( [ "$isolation" = none ] && echo "  (sandboxes share this host's kernel: for development and trusted code; --with-gvisor on Linux changes that)" )
 
 Next: open the console, sign in with the admin key above, add a provider and a harness, and chat.
+Lost the key: cd ${DIR} && docker compose exec serve harnessgateway init --new-admin-key
 To stop it:   cd ${DIR} && docker compose down
 To remove it: cd ${DIR} && docker compose down --volumes
               docker volume ls --quiet --filter name=hg- | xargs -r docker volume rm   (sessions' volumes)

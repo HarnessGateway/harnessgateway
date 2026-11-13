@@ -61,15 +61,20 @@ async def opened(settings: Settings, extensions: Extensions) -> AsyncIterator[St
         await db.close()
 
 
-async def init(settings: Settings) -> str | None:
+async def init(settings: Settings, *, new_admin_key: bool = False) -> str | None:
     """First-time setup: the organization, its default environment, and the first admin key. Returns the key
-    when it made one. Run again, it changes nothing that exists."""
+    when it made one. Run again, it changes nothing that exists.
+
+    With `new_admin_key` it makes another admin key even though keys exist: the way back in when every admin
+    key is lost. It is run on the host, by someone who could read the database anyway."""
     async with opened(settings, Extensions.load(settings.extensions)) as stores:
         await stores.orgs.ensure(DEFAULT_ORG, "Organization")
         await stores.environments.ensure_default(DEFAULT_ORG)
-        if await stores.keys.all(DEFAULT_ORG):
+        existing = await stores.keys.all(DEFAULT_ORG)
+        if existing and not new_admin_key:
             return None
-        _, key = await stores.keys.create(DEFAULT_ORG, name="first admin key", role="admin")
+        name = "admin key made on the host" if existing else "first admin key"
+        _, key = await stores.keys.create(DEFAULT_ORG, name=name, role="admin")
         return key
 
 

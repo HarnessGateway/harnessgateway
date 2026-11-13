@@ -7,7 +7,11 @@ FROM python:3.13-slim AS build
 WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
 COPY harnessgateway harnessgateway
-RUN pip install --no-cache-dir --prefix /install .
+# On a network that re-signs TLS, add `--secret id=ca,src=<its CA bundle>` to the build: pip then trusts it for
+# this step, and nothing of it stays in the image.
+RUN --mount=type=secret,id=ca,required=false \
+    if [ -s /run/secrets/ca ]; then export PIP_CERT=/run/secrets/ca; fi; \
+    pip install --no-cache-dir --prefix /install .
 
 FROM docker:28-cli AS docker
 

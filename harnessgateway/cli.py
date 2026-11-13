@@ -67,13 +67,14 @@ def _proxy(_: argparse.Namespace) -> int:
     return 0
 
 
-def _init(_: argparse.Namespace) -> int:
+def _init(args: argparse.Namespace) -> int:
     settings = _settings()
     if settings is None:
         return 2
-    key = asyncio.run(serve.init(settings))
+    key = asyncio.run(serve.init(settings, new_admin_key=args.new_admin_key))
     if key is None:
-        print("Already set up: the organization, its default environment and a key exist. Nothing was changed.")
+        print("Already set up: the organization, its default environment and a key exist. Nothing was changed.\n"
+              "If every admin key is lost, run this again with --new-admin-key.")
     else:
         print(f"The organization and its default environment are ready.\nAdmin key (shown once): {key}")
     return 0
@@ -89,8 +90,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("version", help="print the version").set_defaults(run=_version)
     commands.add_parser("serve", help="run the APIs, the turn runner and housekeeping").set_defaults(run=_serve)
     commands.add_parser("proxy", help="run the egress proxy").set_defaults(run=_proxy)
-    commands.add_parser("init", help="first-time setup: the organization, the default environment, an admin key"
-                        ).set_defaults(run=_init)
+    init = commands.add_parser("init", help="first-time setup: the organization, the default environment, an admin key")
+    init.add_argument("--new-admin-key", action="store_true",
+                      help="make another admin key even though keys exist: the way back in when they are lost")
+    init.set_defaults(run=_init)
 
     package = commands.add_parser("package", help="work on a harness package").add_subparsers(
         dest="package_command", required=True)

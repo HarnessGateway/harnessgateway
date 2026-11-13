@@ -4,6 +4,8 @@ import pytest
 
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Forbidden, Invalid, NotFound
+from harnessgateway.serve import init
+from harnessgateway.settings import Settings
 from harnessgateway.stores import Stores
 from tests.conftest import make_org
 
@@ -72,3 +74,20 @@ async def test_the_organization_is_made_once_and_its_retention_can_be_set(stores
         await stores.orgs.get("org_absent")
     async with stores.db.system() as conn:
         await conn.execute("DELETE FROM orgs WHERE id = 'org_made_here'")
+
+
+async def test_setup_makes_the_first_admin_key_once_and_a_lost_one_is_replaced_from_the_host(
+    stores: Stores, settings: Settings,
+) -> None:
+    first = await init(settings)
+    assert first is not None
+    assert await init(settings) is None                                 # run again, it changes nothing
+    another = await init(settings, new_admin_key=True)                  # whoever can run this owns the platform
+    assert another is not None
+    assert another != first
+    for text in (first, another):
+        principal = await stores.keys.authenticate(text)
+        assert principal is not None
+        assert (principal.org_id, principal.role) == ("org_default", "admin")
+    assert [key.name for key in await stores.keys.all("org_default")] == [
+        "first admin key", "admin key made on the host"]
