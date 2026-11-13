@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from harnessgateway.api import errors
 from harnessgateway.api.auth import Authenticator
+from harnessgateway.api.views import SANDBOX
 from harnessgateway.domain.names import check_id
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.request import validate
@@ -21,6 +22,20 @@ from harnessgateway.store.turns import Turn
 CONSOLE = Path(__file__).parents[1] / "console"
 BODY_MAX = 32 * 1024 * 1024
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+LIBRARIES = "https://cdn.jsdelivr.net"         # the chat's renderers: pinned, and checked by integrity hashes
+# The console's own pages run their own scripts and those libraries, and nothing an agent wrote (spec §20).
+PAGE_POLICY = (f"default-src 'self'; script-src 'self' {LIBRARIES}; style-src 'self' 'unsafe-inline' {LIBRARIES}; "
+               f"font-src {LIBRARIES}; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'self' blob:; "
+               "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'")
+
+
+def _page_headers(name: str) -> dict[str, str]:
+    """What may run in one of the console's pages. The viewer, which renders documents an agent made, is
+    sandboxed like the documents themselves (spec §13.11)."""
+    if not name.endswith(".html"):
+        return {}
+    return {"Content-Security-Policy": SANDBOX if name.endswith("viewer.html") else PAGE_POLICY,
+            "X-Content-Type-Options": "nosniff"}
 
 
 async def read_json(request: Request) -> Any:
@@ -142,7 +157,7 @@ def responses_router(platform: Platform, caller: Any) -> APIRouter:
 def public_app(platform: Platform) -> FastAPI:
     """Everything applications and administrators call: the Responses API and what goes with it (spec §13),
     the management API (§14), and whatever the extensions add (§19)."""
-    from harnessgateway.api import files, management  # they build on this module's helpers
+    from harnessgateway.api import drafts, files, management, views  # they build on this module's helpers
 
     app = FastAPI(title="HarnessGateway", docs_url=None, redoc_url=None, openapi_url=None)
     errors.install(app)
@@ -151,8 +166,9 @@ def public_app(platform: Platform) -> FastAPI:
     app.include_router(responses_router(platform, caller))
     app.include_router(files.files_router(platform, caller))
     app.include_router(files.containers_router(platform, caller))
+    app.include_router(views.views_router(platform, caller))
     for build in (management.providers_router, management.environments_router, management.harnesses_router,
-                  management.sessions_router, management.organization_router):
+                  drafts.drafts_router, management.sessions_router, management.organization_router):
         app.include_router(build(platform, caller.role))
     for router in platform.extensions.routers(platform):
         app.include_router(router)
@@ -179,7 +195,7 @@ def public_app(platform: Platform) -> FastAPI:
         for folder in (*platform.extensions.console(), CONSOLE):
             file = (folder / name).resolve()
             if file.is_file() and file.is_relative_to(folder.resolve()):
-                return FileResponse(file)
+                return FileResponse(file, headers=_page_headers(name))
         raise NotFound(f"there is nothing at /{path}")
 
     return app

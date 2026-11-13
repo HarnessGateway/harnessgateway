@@ -22,12 +22,12 @@ from harnessgateway.errors import Invalid
 from harnessgateway.kit import hgkit
 
 CASE_TIMEOUT_S = 120
-_LEFT_OUT = frozenset({".git", "__pycache__", ".DS_Store"})        # never part of a package
+LEFT_OUT = frozenset({".git", "__pycache__", ".DS_Store"})        # never part of a package
 
 
 def _members(folder: Path) -> Iterator[Path]:
     for path in sorted(folder.iterdir()):
-        if path.name in _LEFT_OUT:
+        if path.name in LEFT_OUT:
             continue
         if path.is_symlink():
             raise Invalid(f"{path.name} is a link; a package holds plain files and folders only")

@@ -82,6 +82,26 @@ CREATE TABLE harnesses (
     FOREIGN KEY (org_id, digest) REFERENCES packages (org_id, digest)
 );
 
+-- A harness package being written in the console, before it is installed (spec §14.3).
+CREATE TABLE drafts (
+    org_id      text NOT NULL REFERENCES orgs (id) ON DELETE CASCADE,
+    name        text NOT NULL,
+    based_on    text NOT NULL,                     -- where it started: the template, a harness, a session's folder
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, name)
+);
+
+CREATE TABLE draft_files (
+    org_id      text NOT NULL,
+    draft       text NOT NULL,
+    path        text NOT NULL,
+    executable  boolean NOT NULL,
+    content     bytea NOT NULL,
+    PRIMARY KEY (org_id, draft, path),
+    FOREIGN KEY (org_id, draft) REFERENCES drafts (org_id, name) ON DELETE CASCADE
+);
+
 -- A package installed for one environment image (spec §8.5). Its volume is named for its id.
 CREATE TABLE installs (
     id                text PRIMARY KEY,

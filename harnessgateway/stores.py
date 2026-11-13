@@ -9,6 +9,7 @@ from harnessgateway.settings import Settings
 from harnessgateway.store.audit import Audit
 from harnessgateway.store.blobs import BlobStore
 from harnessgateway.store.db import Database
+from harnessgateway.store.drafts import Drafts
 from harnessgateway.store.egress import Egress
 from harnessgateway.store.environments import Environments
 from harnessgateway.store.files import Files
@@ -32,6 +33,7 @@ class Stores:
     providers: Providers
     environments: Environments
     harnesses: Harnesses
+    drafts: Drafts
     files: Files
     turns: Turns
     egress: Egress
@@ -49,6 +51,7 @@ class Stores:
             providers=Providers(db, sealer),
             environments=Environments(db, sealer, settings.sandbox_image),
             harnesses=Harnesses(db, blobs, sealer),
+            drafts=Drafts(db),
             files=Files(db, blobs),
             turns=Turns(db),
             egress=Egress(db),

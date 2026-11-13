@@ -1,12 +1,13 @@
 """The management API: how an organization sets the platform up (spec §14). JSON, in shapes of our own."""
 
+import codecs
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from harnessgateway import __version__
 from harnessgateway.api.files import page_of
@@ -16,14 +17,16 @@ from harnessgateway.domain.archive import PACKED_MAX, PackageFile, write_archive
 from harnessgateway.domain.contract import CONTRACT_VERSION
 from harnessgateway.domain.environment import Environment
 from harnessgateway.domain.harness import Harness
-from harnessgateway.domain.names import DEFAULT_ENVIRONMENT, check_id
+from harnessgateway.domain.names import DEFAULT_ENVIRONMENT, check_id, container_id
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Invalid, NotFound, TooLarge
+from harnessgateway.packaging import LEFT_OUT
 from harnessgateway.platform import Platform
 from harnessgateway.store.harnesses import Install
 from harnessgateway.store.keys import Key
 from harnessgateway.store.providers import ProviderRecord
 from harnessgateway.store.turns import SessionSummary, Turn
+from harnessgateway.stores import Stores
 
 Role = Callable[[str], Any]
 
@@ -138,6 +141,51 @@ def _install(install: Install) -> dict[str, Any]:
             "updated_at": _time(install.updated_at)}
 
 
+async def harness_shown(stores: Stores, org_id: str, harness: Harness) -> dict[str, Any]:
+    """An installed harness as the API shows it."""
+    manifest = harness.manifest
+    return {
+        "name": harness.name, "version": manifest.version, "description": manifest.description,
+        "digest": harness.digest, "manifest": manifest.dump(), "provider": harness.provider,
+        "model": harness.model, "settings": harness.setting_values(), "secrets_set": sorted(harness.secrets_set),
+        "missing": harness.missing(), "added_at": _time(harness.added_at),
+        "installs": [_install(i) for i in await stores.harnesses.installs(org_id, harness.digest)],
+    }
+
+
+async def session_package(stores: Stores, org_id: str, session_id: object, path: object) -> list[PackageFile]:
+    """The files of a package taken from a folder of a session's work, as its head turn left it."""
+    if not isinstance(path, str) or not path.strip("/"):
+        raise Invalid("path is the package's folder in the session's work", param="path")
+    session = await stores.turns.session(org_id, check_id(session_id, "session"))
+    head = await stores.turns.get(org_id, session.head_turn_id) if session.head_turn_id else None
+    if head is None or head.snapshot_id is None:
+        raise Invalid(f"session {session.id} has no saved work to take a package from", param="session")
+    prefix = f"work/{path.strip('/')}/"
+    manifest = await stores.snapshots.manifest(org_id, head.snapshot_id)
+    entries = {p[len(prefix):]: e for p, e in manifest.entries.items()
+               if e.kind == "f" and p.startswith(prefix) and not LEFT_OUT & set(p.split("/"))}
+    if not entries:
+        raise Invalid(f"the session's work has no folder {path.strip('/')!r}", param="path")
+    if sum(entry.size for entry in entries.values()) > PACKED_MAX * 4:
+        raise TooLarge("the folder is too large to be a package")
+    files = []
+    for name, entry in entries.items():
+        content = b"".join([piece async for piece in stores.snapshots.content(org_id, entry)])
+        files.append(PackageFile(name, bool(entry.mode & 0o100), content))
+    return files
+
+
+def text_like(content: bytes) -> bool:
+    """Whether a file can be shown and edited as text."""
+    head = content[:4096]
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(head)        # a character cut at the end is still text
+    except UnicodeDecodeError:
+        return False
+    return b"\x00" not in head
+
+
 def harnesses_router(platform: Platform, role: Role) -> APIRouter:
     router = APIRouter()
     stores = platform.stores
@@ -146,35 +194,7 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
     Developer = Annotated[Principal, Depends(role("developer"))]
 
     async def shown(org_id: str, harness: Harness) -> dict[str, Any]:
-        manifest = harness.manifest
-        return {
-            "name": harness.name, "version": manifest.version, "description": manifest.description,
-            "digest": harness.digest, "manifest": manifest.dump(), "provider": harness.provider,
-            "model": harness.model, "settings": harness.setting_values(), "secrets_set": sorted(harness.secrets_set),
-            "missing": harness.missing(), "added_at": _time(harness.added_at),
-            "installs": [_install(i) for i in await harnesses.installs(org_id, harness.digest)],
-        }
-
-    async def from_session(org_id: str, session_id: object, path: object) -> bytes:
-        """A package taken from a folder of a session's work, as its head turn left it."""
-        if not isinstance(path, str) or not path.strip("/"):
-            raise Invalid("path is the package's folder in the session's work", param="path")
-        session = await stores.turns.session(org_id, check_id(session_id, "session"))
-        head = await stores.turns.get(org_id, session.head_turn_id) if session.head_turn_id else None
-        if head is None or head.snapshot_id is None:
-            raise Invalid(f"session {session.id} has no saved work to take a package from", param="session")
-        prefix = f"work/{path.strip('/')}/"
-        manifest = await stores.snapshots.manifest(org_id, head.snapshot_id)
-        entries = {p[len(prefix):]: e for p, e in manifest.entries.items() if e.kind == "f" and p.startswith(prefix)}
-        if not entries:
-            raise Invalid(f"the session's work has no folder {path.strip('/')!r}", param="path")
-        if sum(entry.size for entry in entries.values()) > PACKED_MAX * 4:
-            raise TooLarge("the folder is too large to be a package")
-        files = []
-        for name, entry in entries.items():
-            content = b"".join([piece async for piece in stores.snapshots.content(org_id, entry)])
-            files.append(PackageFile(name, bool(entry.mode & 0o100), content))
-        return write_archive(files)
+        return await harness_shown(stores, org_id, harness)
 
     @router.post("/v1/harnesses")
     async def add(request: Request, principal: Developer) -> Any:
@@ -189,7 +209,8 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
             if "catalog" in body:
                 archive, source = catalog.archive(str(body["catalog"])), f"catalog:{body['catalog']}"
             elif "session" in body:
-                archive = await from_session(principal.org_id, body["session"], body.get("path"))
+                archive = write_archive(await session_package(stores, principal.org_id, body["session"],
+                                                              body.get("path")))
                 source = f"session:{body['session']}"
             else:
                 raise Invalid('send a package archive, {"catalog": "<name>"}, or {"session": "sess_…", "path": '
@@ -243,6 +264,21 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
         return {"object": "list", "data": [{**_install(i), "log": i.log_tail} for i in found], "has_more": False,
                 "last_id": found[-1].id if found else None}
 
+    @router.get("/v1/harnesses/{name}/files")
+    async def package_files(name: str, principal: Developer) -> Any:
+        """The package as it was added: what the harness's installs were made from."""
+        package = await harnesses.package(principal.org_id, name)
+        return {"object": "list", "has_more": False, "last_id": None, "data": [
+            {"path": file.path, "bytes": len(file.content), "executable": file.executable} for file in package.files]}
+
+    @router.get("/v1/harnesses/{name}/files/{path:path}")
+    async def package_file(name: str, path: str, principal: Developer) -> Response:
+        package = await harnesses.package(principal.org_id, name)
+        for file in package.files:
+            if file.path == path:
+                return file_response(file.content)
+        raise NotFound(f"harness {name!r} has no file {path!r}")
+
     @router.get("/v1/catalog")
     async def offered(principal: Developer) -> Any:
         installed = {harness.name: harness for harness in await harnesses.all(principal.org_id)}
@@ -254,11 +290,19 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
     return router
 
 
+def file_response(content: bytes) -> Response:
+    """One file of a package or a draft: as text when it is text, so a page can show it."""
+    return Response(content, media_type="text/plain; charset=utf-8" if text_like(content)
+                    else "application/octet-stream")
+
+
 # ── sessions and turns ──────────────────────────────────────────────────────────────────────────────
 
 def _session(summary: SessionSummary) -> dict[str, Any]:
-    return {"id": summary.id, "head_response_id": summary.head_turn_id,
+    return {"id": summary.id, "container_id": container_id(summary.id), "head_response_id": summary.head_turn_id,
             "forked_from_response_id": summary.forked_from_turn_id, "turns": summary.turns, "bytes": summary.bytes,
+            "harness": summary.harness, "provider": summary.provider, "model": summary.model,
+            "environment": summary.environment, "status": summary.status,
             "created_at": _time(summary.created_at), "last_active_at": _time(summary.last_active_at)}
 
 

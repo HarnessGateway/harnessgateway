@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from psycopg.types.json import Jsonb
 
-from harnessgateway.domain.archive import read_archive
+from harnessgateway.domain.archive import Package, read_archive
 from harnessgateway.domain.harness import Harness
 from harnessgateway.domain.modelpath import MODEL_MAX
 from harnessgateway.domain.names import check_name
@@ -146,6 +146,11 @@ class Harnesses:
         if row is None:
             raise NotFound(f"there is no harness named {name!r}")
         return _harness(row)
+
+    async def package(self, org_id: str, name: str) -> Package:
+        """The package a harness was added from, as it was uploaded."""
+        harness = await self.get(org_id, name)
+        return read_archive(await self._blobs.get(package_key(org_id, harness.digest)))
 
     async def all(self, org_id: str) -> list[Harness]:
         async with self._db.org(org_id) as conn:

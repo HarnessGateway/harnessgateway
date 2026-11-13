@@ -111,6 +111,11 @@ class SessionSummary:
     last_active_at: datetime
     turns: int
     bytes: int                                 # the size of the head turn's snapshot
+    harness: str | None                        # what the head turn ran with, and how it stands
+    provider: str | None
+    model: str | None
+    environment: str | None
+    status: str | None
 
 
 @dataclass(frozen=True)
@@ -134,8 +139,9 @@ _SESSION_COLUMNS = ", ".join(field.name for field in fields(Session))
 _SUMMARY = (
     "SELECT s.id, s.head_turn_id, s.forked_from_turn_id, s.created_at, s.last_active_at, "
     "(SELECT count(*) FROM turns t WHERE t.session_id = s.id) AS turns, "
-    "COALESCE((SELECT n.bytes FROM turns h JOIN snapshots n ON n.id = h.snapshot_id WHERE h.id = s.head_turn_id), 0) "
-    "AS bytes FROM sessions s"
+    "COALESCE((SELECT n.bytes FROM snapshots n WHERE n.id = h.snapshot_id), 0) AS bytes, "
+    "h.harness, h.provider, h.model, h.environment, h.status "
+    "FROM sessions s LEFT JOIN turns h ON h.id = s.head_turn_id"
 )
 USAGE_GROUPS = ("harness", "provider", "model", "environment", "day")
 

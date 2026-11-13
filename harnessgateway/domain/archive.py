@@ -42,10 +42,13 @@ class Package:
         return sum(len(file.content) for file in self.files)
 
 
-def _path(name: str) -> str:
+def package_path(name: str) -> str:
+    """A file's path inside a package, as the package keeps it; or a refusal."""
     path = name.removeprefix("./").rstrip("/")
-    if name.startswith("/") or not path or any(part in ("", ".", "..") for part in path.split("/")):
+    if name.startswith("/") or not path or "\x00" in path or any(part in ("", ".", "..") for part in path.split("/")):
         raise Invalid(f"a path in a package stays inside it, with no '..' and no empty part: {name[:120]!r}")
+    if path.split("/")[0] == KIT_DIR:
+        raise Invalid(f"{path}: {KIT_DIR}/ is where the platform puts the kit; a package cannot hold it")
     return path
 
 
@@ -69,11 +72,9 @@ def _files(data: bytes) -> tuple[PackageFile, ...]:
                     continue
                 if not member.isreg():
                     raise Invalid(f"a package holds plain files and folders only, no links or devices: {member.name}")
-                path = _path(member.name)
+                path = package_path(member.name)
                 if path in files:
                     raise Invalid(f"{path} is in the package twice")
-                if path.split("/")[0] == KIT_DIR:
-                    raise Invalid(f"{path}: {KIT_DIR}/ is where the platform puts the kit; a package cannot hold it")
                 unpacked += member.size
                 if len(files) >= FILES_MAX:
                     raise TooLarge(f"a package holds at most {FILES_MAX} files")
