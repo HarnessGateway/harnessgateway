@@ -391,7 +391,7 @@ const environments = { title: "Environments", async render(el, params, me) {
       { h: "Limits", cell: e => `${num(e.cpus)} CPU · ${num(e.memory_mb)} MB · ${num(e.disk_mb)} MB disk · ${duration(e.turn_timeout_s)} a turn` },
       { h: "Network", cell: e => pill(...NETWORK[e.network.mode]) + (e.network.mode === "limited" ? ` <span class="muted small">${e.network.allow.length} allowed${e.network.package_managers ? " + package managers" : ""}` +
         `${e.network.deny.length ? ` · ${e.network.deny.length} denied` : ""}</span>` : "") },
-      { h: "Given", cell: e => `${Object.keys(e.variables).length} variable${Object.keys(e.variables).length === 1 ? "" : "s"} · ${Object.keys(e.secrets).length} secret${Object.keys(e.secrets).length === 1 ? "" : "s"}` },
+      { h: "Variables and secrets", cell: e => `${Object.keys(e.variables).length} variable${Object.keys(e.variables).length === 1 ? "" : "s"} · ${Object.keys(e.secrets).length} secret${Object.keys(e.secrets).length === 1 ? "" : "s"}` },
       ...(admin ? [{ h: "", cls: "acts", cell: e => `<button class="btn2" data-edit="${esc(e.name)}">Edit</button>${e.name === "default" ? "" : `<button class="btn2 danger" data-del="${esc(e.name)}">Delete</button>`}` }] : [])],
       rows)}</div>` +
     `<div class="grid two" style="margin-top:14px">` + card("Network entries", `<div class="kv"><div>${mono("host")}</div><div>that host, port 443</div><div>${mono("*.domain")}</div><div>any subdomain, never the domain itself</div><div>${mono("host:8443")}</div><div>another port</div></div>` +
@@ -401,22 +401,28 @@ const environments = { title: "Environments", async render(el, params, me) {
     `<input data-s="name" value="${esc(name)}" placeholder="GITHUB_TOKEN" style="flex:1.2" ${name ? "readonly" : ""}><input data-s="hosts" value="${esc(s.hosts.join(", "))}" placeholder="api.github.com" style="flex:1.6">` +
     `<input data-s="header" value="${esc(s.header || "")}" placeholder="header (optional)"><input data-s="prefix" value="${esc(s.prefix || "")}" placeholder="prefix" style="flex:.6">` +
     `<input data-s="value" type="password" autocomplete="off" placeholder="${name ? "keep" : "value"}"><button type="button" class="btn2 danger" data-unsecret>Remove</button></div>`;
+  const group = (title, about, body) => `<section class="group"><h3>${esc(title)}</h3><p class="help">${esc(about)}</p>${body}</section>`;
   const dialog = e => {
     const c = e || { name: "", image: "", cpus: 2, memory_mb: 4096, pids: 512, tmp_mb: 1024, disk_mb: 10240, turn_timeout_s: 1800,
                      network: { mode: "limited", allow: [], deny: [], package_managers: true }, variables: {}, secrets: {} };
     const shown = modal({ title: e ? `Environment ${e.name}` : "Add environment", submit: "Save", wide: true, body:
-      `<div class="grid two">` + field("Name", input("name", c.name, `${e ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="gpu"`), "requests name it in model: gpu:claude-code") +
-      field("Image", input("image", c.image, 'placeholder="the platform\'s sandbox image"'), "any Linux image; a harness is installed once for each image it runs in") + `</div>` +
-      `<div class="grid">` + field("CPUs", input("cpus", c.cpus, 'type="number" step="0.25" min="0.25" required')) + field("Memory (MB)", input("memory_mb", c.memory_mb, 'type="number" min="256" required')) +
-      field("Disk (MB)", input("disk_mb", c.disk_mb, 'type="number" min="64" required'), "the session's saved files") + field("A turn may take (s)", input("turn_timeout_s", c.turn_timeout_s, 'type="number" min="1" required')) + `</div>` +
-      `<div class="grid">` + field("Processes", input("pids", c.pids, 'type="number" min="64" required')) + field("/tmp (MB)", input("tmp_mb", c.tmp_mb, 'type="number" min="64" required'), "counts against memory") +
-      `<div style="grid-column:span 2">${field("Network", select("mode", [["closed", "Closed: the turn's provider only"], ["limited", "Limited: the provider, and what is allowed below"], ["open", "Open: any public host"]], c.network.mode), "nothing is reachable unless the mode allows it")}</div></div>` +
-      `<div id="limited"><div class="grid two">` + field("Allowed", `<textarea name="allow" style="min-height:70px" placeholder="api.github.com&#10;*.example.com">${esc(c.network.allow.join("\n"))}</textarea>`, "one entry a line") +
-      field("Denied", `<textarea name="deny" style="min-height:70px" placeholder="bad.example.com">${esc(c.network.deny.join("\n"))}</textarea>`, "one entry a line; wins over everything allowed") + `</div>` +
-      `<div class="field"><label class="check"><input type="checkbox" name="package_managers"${c.network.package_managers ? " checked" : ""}> Allow package managers</label><div class="help">npm, PyPI, GitHub, apt and the like</div></div></div>` +
-      field("Variables", `<textarea name="variables" style="min-height:70px" placeholder="NAME=value">${esc(Object.entries(c.variables).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`, "one NAME=value a line; visible inside the sandbox") +
-      `<div class="field"><label>Secrets</label><div id="secrets">${Object.entries(c.secrets).map(([k, s]) => secretRow(k, s)).join("")}</div>` +
-      `<div><button type="button" class="btn2" id="secret">Add secret</button></div><div class="help">name · hosts it may go to · header and prefix (optional) · value (write-only; leave empty to keep the stored one)</div></div>`,
+      group("General", "What it is called, and the image its sandboxes are built from.", `<div class="grid two">` +
+        field("Name", input("name", c.name, `${e ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="gpu"`), "requests name it in model: gpu:claude-code") +
+        field("Image", input("image", c.image, 'placeholder="the platform\'s sandbox image"'), "any Linux image; a harness is installed once for each image it runs in") + `</div>`) +
+      group("Resources", "What one sandbox may use.", `<div class="grid three">` +
+        field("CPUs", input("cpus", c.cpus, 'type="number" step="0.25" min="0.25" required')) + field("Memory (MB)", input("memory_mb", c.memory_mb, 'type="number" min="256" required')) +
+        field("Processes", input("pids", c.pids, 'type="number" min="64" required')) + `</div><div class="grid three">` +
+        field("Disk (MB)", input("disk_mb", c.disk_mb, 'type="number" min="64" required'), "the session's saved files") + field("/tmp (MB)", input("tmp_mb", c.tmp_mb, 'type="number" min="64" required'), "counts against memory") +
+        field("A turn may take (s)", input("turn_timeout_s", c.turn_timeout_s, 'type="number" min="1" required')) + `</div>`) +
+      group("Network access", "What a sandbox may reach. Nothing is reachable unless the mode allows it.",
+        field("Mode", select("mode", [["closed", "Closed: the turn's provider only"], ["limited", "Limited: the provider, and what is allowed below"], ["open", "Open: any public host"]], c.network.mode)) +
+        `<div id="limited" class="inset"><div class="grid two">` + field("Allowed", `<textarea name="allow" style="min-height:70px" placeholder="api.github.com&#10;*.example.com">${esc(c.network.allow.join("\n"))}</textarea>`, "one entry a line") +
+        field("Denied", `<textarea name="deny" style="min-height:70px" placeholder="bad.example.com">${esc(c.network.deny.join("\n"))}</textarea>`, "one entry a line; wins over everything allowed") + `</div>` +
+        `<div class="field"><label class="check"><input type="checkbox" name="package_managers"${c.network.package_managers ? " checked" : ""}> Allow package managers</label><div class="help">npm, PyPI, GitHub, apt and the like</div></div></div>`) +
+      group("Variables and secrets", "What the agent is given. A variable is visible inside the sandbox; a secret's value never enters it.",
+        field("Variables", `<textarea name="variables" style="min-height:70px" placeholder="NAME=value">${esc(Object.entries(c.variables).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`, "one NAME=value a line") +
+        `<div class="field"><label>Secrets</label><div id="secrets">${Object.entries(c.secrets).map(([k, s]) => secretRow(k, s)).join("")}</div>` +
+        `<div><button type="button" class="btn2" id="secret">Add secret</button></div><div class="help">name · hosts it may go to · header and prefix (optional) · value (write-only; leave empty to keep the stored one)</div></div>`),
       onSubmit: async (d, form) => {
         const variables = {};
         for (const line of d.variables.split("\n").map(x => x.trim()).filter(Boolean)) {

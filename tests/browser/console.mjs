@@ -229,6 +229,12 @@ try {
     const mode = () => dialog().locator("[name=mode]"), rules = () => dialog().locator("#limited");
     await go("environments", "Environments");
     await page.click("#add");
+    const groups = await dialog().locator(".group").evaluateAll((all) => all.map((group) =>
+      `${group.querySelector("h3").textContent}: ${[...group.querySelectorAll("[name]")].map((f) => f.name).join(" ")}`));
+    const wanted = ["General: name image", "Resources: cpus memory_mb pids disk_mb tmp_mb turn_timeout_s",
+                    "Network access: mode allow deny package_managers", "Variables and secrets: variables"];
+    if (groups.join(" | ") !== wanted.join(" | ")) throw new Error(`the environment form is grouped as: ${groups.join(" | ")}`);
+    if (!(await dialog().locator(".group:has-text('Variables and secrets') #secret").count())) throw new Error("secrets are not with the variables");
     const modes = await mode().locator("option").evaluateAll((options) => options.map((o) => o.value).join(", "));
     if (modes !== "closed, limited, open") throw new Error(`the network modes offered are: ${modes}`);
     if ((await mode().inputValue()) !== "limited" || !(await rules().isVisible())) throw new Error("a new environment does not start limited, with its rules shown");
@@ -249,6 +255,7 @@ try {
     await dialog().locator(".secret-edit [data-s=value]").fill("the-secret-token");
     await submit();
     await page.waitForSelector(`#content tr:has-text("${name}"):has-text("2 allowed + package managers"):has-text("1 denied"):has-text("1 secret")`);
+    if (!(await page.locator("#content th:has-text('Variables and secrets')").count())) throw new Error("the table does not name its variables and secrets column");
     await page.click(`#content tr:has-text("${name}") [data-edit]`);                  // it opens again with what was saved
     if ((await dialog().locator("[name=allow]").inputValue()) !== "api.github.com\n*.example.com") throw new Error("the allowed hosts were not kept");
     if (await dialog().locator(".secret-edit [data-s=value]").inputValue()) throw new Error("a secret's value came back");

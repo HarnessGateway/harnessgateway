@@ -93,7 +93,11 @@ details.sec summary { cursor:pointer; font-weight:600; }
 .backdrop { position:fixed; inset:0; background:rgba(31,30,26,.35); display:flex; align-items:flex-start; justify-content:center; padding:48px 0; overflow:auto; z-index:20; }
 .modal { background:#fff; border-radius:14px; width:min(560px, 92vw); padding:20px 22px; box-shadow:0 20px 60px rgba(0,0,0,.2); margin:auto 0; }
 .modal.wide { width:min(900px, 94vw); }
-.modal h2 { margin-bottom:14px; } .modal .mf { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+.modal h2 { margin-bottom:14px; }
+.group { border-top:1px solid var(--line); padding-top:14px; } .group:first-of-type { border-top:0; padding-top:0; }
+.group h3 { font-size:14px; font-weight:700; margin:0 0 2px; } .group > .help { font-size:12px; color:var(--muted); margin:0 0 12px; }
+.group .grid { margin-bottom:0; }
+.inset { background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:12px 14px 0; margin-bottom:12px; } .modal .mf { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
 .toasts { position:fixed; bottom:18px; right:18px; display:flex; flex-direction:column; gap:8px; z-index:30; }
 .toast { background:var(--text); color:#fff; padding:10px 14px; border-radius:10px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.2); max-width:420px; }
 .toast.bad { background:var(--bad); color:#fff; } .toast.ok { background:var(--ok); color:#fff; }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.1
+
+- Console: an environment's form is in four groups: General (name, image), Resources (CPUs, memory,
+  processes, disk, /tmp, a turn's time), Network access (the mode, and Limited's rules set apart beneath it),
+  and Variables and secrets. The environments table names its last column the same.
+
 ## 4.1.0
 
 - Environments: a network is `closed`, `limited` or `open`, and nothing is reachable unless its mode allows
