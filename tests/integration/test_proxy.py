@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import socket
 import ssl
 import time
 from collections.abc import AsyncIterator
@@ -195,6 +196,26 @@ async def test_a_name_that_resolves_to_a_private_address_is_refused_unless_the_o
             assert "private or local network" in refused.text
         listed = await client.get(f"http://localhost:{world.http}/echo")          # the operator listed this one
     assert listed.status_code == 200
+
+
+async def test_a_host_is_reached_at_the_first_of_its_addresses_that_answers(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name often has several addresses, and the first is not always one this host can reach: an IPv6
+    address where there is no IPv6, say. Nothing listens at the first one here."""
+    loop = asyncio.get_running_loop()
+    real = loop.getaddrinfo
+
+    async def two_addresses(host: Any, port: Any, **more: Any) -> Any:
+        if host != "localhost":
+            return await real(host, port, **more)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port)) for address in ("127.0.0.9", "127.0.0.1")]
+
+    monkeypatch.setattr(loop, "getaddrinfo", two_addresses)
+    async with world.client() as client:
+        answer = await client.get(f"http://localhost:{world.http}/echo")
+        secure = await client.get(f"https://localhost:{world.https}/echo")
+    assert (answer.status_code, secure.status_code) == (200, 200)
 
 
 async def test_a_request_the_proxy_cannot_make_sense_of_is_answered_400(world: World) -> None:

@@ -303,8 +303,8 @@ class EgressProxy:
             return await writer.drain()
 
         started, counts = time.time(), [0, 0]
-        address, refused = await self._address(policy, host, port)
-        if address is None:
+        addresses, refused = await self._addresses(policy, host, port)
+        if not addresses:
             self._platform.record(policy, host=host, port=port, allowed=False, reason=refused, bytes_up=0,
                                   bytes_down=0, started_at=started)
             writer.write(_refusal("403 Forbidden", refused))
@@ -312,18 +312,19 @@ class EgressProxy:
         try:
             secrets = policy.secrets_for(host, port)
             if head.method == "CONNECT":
-                await self._tunnel((reader, writer), host, port, address, secrets, counts)
+                await self._tunnel((reader, writer), host, port, addresses, secrets, counts)
             else:
-                await self._plain((reader, writer), head, port, address, secrets, counts)
+                await self._plain((reader, writer), head, port, addresses, secrets, counts)
         finally:
             self._platform.record(policy, host=host, port=port, allowed=True, reason="", bytes_up=counts[0],
                                   bytes_down=counts[1], started_at=started)
 
-    async def _address(self, policy: Policy, host: str, port: int) -> tuple[str | None, str]:
-        """The address to connect to; or None and why the connection is refused (spec §11.3, §11.4)."""
+    async def _addresses(self, policy: Policy, host: str, port: int) -> tuple[list[str], str]:
+        """The addresses the host may be connected to at; or none, and why the connection is refused
+        (spec §11.3, §11.4)."""
         decision = policy.egress.decide(host, port)
         if not decision.allowed:
-            return None, f"{decision.reason} (environment {policy.environment!r})"
+            return [], f"{decision.reason} (environment {policy.environment!r})"
         try:
             ipaddress.ip_address(host)
             addresses = [host]
@@ -331,34 +332,40 @@ class EgressProxy:
             try:
                 found = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
             except OSError:
-                return None, f"{host} could not be resolved"
-            addresses = [str(info[4][0]) for info in found]
+                return [], f"{host} could not be resolved"
+            addresses = list(dict.fromkeys(str(info[4][0]) for info in found))
         if not any(entry.matches(host, port) for entry in self._private_hosts):
             for address in addresses:
                 if is_forbidden_address(address):
-                    return None, (f"{host} resolves to {address}, an address on a private or local network, "
-                                  f"which a sandbox may not reach")
-        return (addresses[0], "") if addresses else (None, f"{host} could not be resolved")
+                    return [], (f"{host} resolves to {address}, an address on a private or local network, "
+                                f"which a sandbox may not reach")
+        return addresses, "" if addresses else f"{host} could not be resolved"
 
-    async def _connect(self, client: Writes, address: str, port: int, *, tls_for: str | None = None,
+    async def _connect(self, client: Writes, addresses: Sequence[str], port: int, *, tls_for: str | None = None,
                        ) -> Upstream | None:
-        try:
-            async with asyncio.timeout(CONNECT_TIMEOUT_S):
-                if tls_for is None:
-                    return await asyncio.open_connection(address, port)
-                return await asyncio.open_connection(address, port, ssl=self._upstream_tls, server_hostname=tls_for)
-        except _GONE as e:
-            with contextlib.suppress(*_GONE):
-                client.write(_refusal("502 Bad Gateway", f"the host could not be reached: {e}"))
-                await client.drain()
-            return None
+        """A connection to the host, at the first of its addresses that answers: a name may have one this
+        host cannot reach (an IPv6 address where there is no IPv6). They share the time allowed."""
+        failure: BaseException | None = None
+        for address in addresses:
+            try:
+                async with asyncio.timeout(CONNECT_TIMEOUT_S / len(addresses)):
+                    if tls_for is None:
+                        return await asyncio.open_connection(address, port)
+                    return await asyncio.open_connection(address, port, ssl=self._upstream_tls,
+                                                         server_hostname=tls_for)
+            except _GONE as e:
+                failure = e
+        with contextlib.suppress(*_GONE):
+            client.write(_refusal("502 Bad Gateway", f"the host could not be reached: {failure}"))
+            await client.drain()
+        return None
 
     async def _tunnel(self, client: tuple[asyncio.StreamReader, asyncio.StreamWriter], host: str, port: int,
-                      address: str, secrets: Sequence[BoundSecret], counts: list[int]) -> None:
+                      addresses: Sequence[str], secrets: Sequence[BoundSecret], counts: list[int]) -> None:
         reader, writer = client
         established = b"HTTP/1.1 200 Connection established\r\n\r\n"
         if not secrets:                                         # nothing to add: pass the bytes, unread
-            upstream = await self._connect(writer, address, port)
+            upstream = await self._connect(writer, addresses, port)
             if upstream is None:
                 return
             try:
@@ -378,20 +385,20 @@ class EgressProxy:
             if head is None:
                 return
             apply_secrets(head, secrets)
-            upstream = await self._connect(inner, address, port, tls_for=host if inner.tls else None)
+            upstream = await self._connect(inner, addresses, port, tls_for=host if inner.tls else None)
             if upstream is None:
                 return
             await self._send((inner.reader, inner), upstream, head, counts)
         finally:
             inner.close()
 
-    async def _plain(self, client: Client, head: Head, port: int, address: str, secrets: Sequence[BoundSecret],
-                     counts: list[int]) -> None:
+    async def _plain(self, client: Client, head: Head, port: int, addresses: Sequence[str],
+                     secrets: Sequence[BoundSecret], counts: list[int]) -> None:
         url = urlsplit(head.target)
         head.target = (url.path or "/") + (f"?{url.query}" if url.query else "")
         head.drop(*_HOP)
         apply_secrets(head, secrets)
-        upstream = await self._connect(client[1], address, port)
+        upstream = await self._connect(client[1], addresses, port)
         if upstream is None:
             return
         await self._send(client, upstream, head, counts)
