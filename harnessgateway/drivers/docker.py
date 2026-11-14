@@ -34,11 +34,14 @@ def _mounts_and_env(mounts: list[Mount], env: dict[str, str]) -> list[str]:
 
 
 def render_sandbox(plan: SandboxPlan, *, runtime: str | None) -> list[str]:
-    """The command that runs an untrusted container: every hardening flag, none of them optional."""
+    """The command that runs an untrusted container: every hardening flag, none of them optional.
+
+    `--quiet`: what the command prints is the container's output and nothing else, even when Docker has to
+    pull the image first."""
     in_memory, on_disk = f"/tmp:rw,exec,size={plan.tmp_mb}m", "/tmp"      # noqa: S108 - paths inside the sandbox
     tmp = ["--tmpfs", in_memory] if plan.tmp_mb is not None else ["--volume", on_disk]
     return [
-        "docker", "run", "--name", plan.name, "--init",
+        "docker", "run", "--quiet", "--name", plan.name, "--init",
         *_common(plan.labels, plan.network),
         *(["--runtime", runtime] if runtime else []),
         "--cpus", f"{plan.cpus:g}", "--memory", f"{plan.memory_mb}m", "--memory-swap", f"{plan.memory_mb}m",
@@ -55,7 +58,7 @@ def render_sandbox(plan: SandboxPlan, *, runtime: str | None) -> list[str]:
 def render_step(step: StepPlan, *, platform_image: str) -> list[str]:
     """The command that runs a trusted step: the platform's own image, as root, gone when it ends."""
     return [
-        "docker", "run", "--rm", "--name", step.name,
+        "docker", "run", "--quiet", "--rm", "--name", step.name,
         *_common(step.labels, step.network),
         "--user", "0:0",
         *_mounts_and_env(step.mounts, step.env),

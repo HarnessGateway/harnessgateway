@@ -25,7 +25,7 @@ SANDBOX = SandboxPlan(
 
 def test_a_sandbox_is_rendered_as_the_command_of_the_specification() -> None:
     assert render_sandbox(SANDBOX, runtime=None) == [
-        "docker", "run", "--name", "hg-sess_X", "--init",
+        "docker", "run", "--quiet", "--name", "hg-sess_X", "--init",
         "--label", "hg.org=org_default", "--label", "hg.session=sess_X", "--label", "hg.turn=resp_Y",
         "--network", "hg-sandbox",
         "--cpus", "1.5", "--memory", "2048m", "--memory-swap", "2048m", "--pids-limit", "256",
@@ -79,7 +79,7 @@ def test_a_step_runs_from_the_platform_image_as_root_and_removes_itself() -> Non
         network="hg-control",
     )
     assert render_step(step, platform_image="platform:4") == [
-        "docker", "run", "--rm", "--name", "hg-save-resp_Y",
+        "docker", "run", "--quiet", "--rm", "--name", "hg-save-resp_Y",
         "--label", "hg.org=org_default", "--label", "hg.turn=resp_Y",
         "--network", "hg-control",
         "--user", "0:0",
