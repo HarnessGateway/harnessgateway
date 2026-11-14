@@ -16,10 +16,20 @@ VALUE_MAX = 16_384
 
 
 class Network(Definition):
-    mode: Literal["none", "limited", "open"] = "limited"
+    """What a turn's sandbox may reach (spec §9.3). Nothing is reachable unless the mode allows it: `closed` is
+    the turn's provider only, `open` is any public host, and `limited` is what its three rules add to the provider."""
+
+    mode: Literal["closed", "limited", "open"] = "limited"
     allow: Annotated[tuple[HostEntry, ...], entries("network.allow"), AS_WRITTEN] = ()
     deny: Annotated[tuple[HostEntry, ...], entries("network.deny"), AS_WRITTEN] = ()
     package_managers: bool = True
+
+    @model_validator(mode="after")
+    def _lists_belong_to_limited(self) -> Self:
+        for name in ("allow", "deny"):
+            if self.mode != "limited" and getattr(self, name):
+                raise ValueError(f"network.{name} is a rule of mode limited; mode {self.mode} takes no list")
+        return self
 
 
 class EnvironmentSecret(Definition):

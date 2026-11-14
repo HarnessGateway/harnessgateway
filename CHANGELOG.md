@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.1.0
+
+- Environments: a network is `closed`, `limited` or `open`, and nothing is reachable unless its mode allows
+  it. `closed` reaches the turn's provider and nothing else, so every harness runs in it; it takes the place
+  of `none`, which had no network at all and refused a harness that calls a model. `limited` reaches the
+  provider, its allow list, what the package declares, the hosts of the secrets in use and, when allowed, the
+  package managers; its deny list wins over all of them. `open` reaches any public host. `allow` and `deny`
+  are rules of `limited`, and are refused with the other two.
+- The package-manager set is wider: registries for more languages, GitLab and Bitbucket, container
+  registries, and common tool downloads. It holds no cloud platform. Installing a harness reaches it whatever
+  its environment's mode.
+- Console: an environment's network is Closed, Limited or Open. The allow list, the deny list and Allow
+  package managers show for Limited only.
+
 ## 4.0.3
 
 - Console: a provider's API shape is one API: `anthropic (Messages)`, `openai (Responses)` or

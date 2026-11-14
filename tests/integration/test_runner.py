@@ -179,7 +179,7 @@ async def test_a_switched_to_harness_gets_the_handover_the_history_and_the_same_
 async def test_another_environment_is_another_install_and_another_sandbox(platform: Platform) -> None:
     await platform.stores.environments.create(platform.org, {
         "name": "small", "image": "other:image", "cpus": 0.5, "memory_mb": 512, "tmp_mb": 64,
-        "network": {"mode": "none"}, "variables": {"GREETING": "hi"}})
+        "network": {"mode": "closed"}, "variables": {"GREETING": "hi"}})
     one = await platform.run("echo made > f.txt")
     two = await platform.run('cat f.txt; echo "$GREETING $HG_ENVIRONMENT"', model="small:shell",
                              previous_response_id=one.id)

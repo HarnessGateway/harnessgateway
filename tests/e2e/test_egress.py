@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
-from tests.helpers import Platform, text_of
+from tests.helpers import Platform, text_of, variant
 
 pytestmark = pytest.mark.usefixtures("database_url")
 
@@ -52,8 +53,29 @@ async def test_a_secret_reaches_its_host_and_the_sandbox_only_ever_holds_a_place
     assert "hgs_***" in (turn.command or "")
 
 
-async def test_an_environment_with_no_network_has_none(platform: Platform, egress: str) -> None:
-    await platform.stores.environments.update(platform.org, "default", {"network": {"mode": "none"}})
+async def test_in_a_closed_environment_a_turn_reaches_its_provider_with_its_key_and_nothing_else(
+    platform: Platform, egress: str, tmp_path: Path
+) -> None:
+    await platform.stores.environments.update(platform.org, "default", {"network": {"mode": "closed"}})
+    await platform.stores.providers.create(platform.org, {
+        "name": "outside", "apis": {"openai-chat": f"http://{egress}/v1"}, "api_key": "the-provider-key"})
+    await platform.stores.harnesses.add(platform.org, variant(tmp_path, "caller", apis=["openai-chat"]))
+    turn = await platform.run(
+        'curl -sS -H "Authorization: Bearer $HG_PROVIDER_KEY" "$HG_PROVIDER_URL/models"; echo; '
+        "curl -sS http://example.com/; curl -sS -o /dev/null -w '%{http_code}\\n' https://registry.npmjs.org/",
+        model="caller/outside/a-model", timeout=180)
+    lines = text_of(turn).splitlines()
+    seen = json.loads(lines[0])
+    assert (seen["path"], seen["headers"]["Authorization"]) == ("/v1/models", "Bearer the-provider-key"), turn.log_tail
+    assert lines[1] == ("example.com:80 is not allowed: a closed environment reaches the turn's provider only "
+                        "(environment 'default')")
+    assert "403" in lines[2]                                # a package manager is no nearer than anything else
+
+
+async def test_in_a_closed_environment_a_turn_that_calls_no_model_has_no_network(
+    platform: Platform, egress: str
+) -> None:
+    await platform.stores.environments.update(platform.org, "default", {"network": {"mode": "closed"}})
     turn = await platform.run(f'echo "[$HTTPS_PROXY]"; curl -sS --max-time 5 http://{egress}/x 2>&1 | head -c 200',
                               timeout=180)
     lines = text_of(turn).splitlines()

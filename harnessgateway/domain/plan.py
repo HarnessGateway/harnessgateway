@@ -110,7 +110,7 @@ def _network_variables(user: str, token: str) -> dict[str, str]:
 def sandbox_plan(facts: TurnFacts) -> SandboxPlan:
     resolved = facts.resolved
     environment, harness, provider = resolved.environment, resolved.harness, resolved.provider
-    networked = environment.network.mode != "none"
+    networked = environment.network.mode != "closed" or provider is not None      # closed, with no provider to reach
     env = {
         "HOME": contract.MIND,
         "HG_CONTRACT": str(contract.CONTRACT_VERSION),
@@ -187,22 +187,25 @@ def install_plan(
 
 
 def turn_policy(resolved: Resolved) -> EgressPolicy:
-    """What a turn's sandbox may reach: what its environment, package, provider and secrets entitle it to."""
-    environment, harness = resolved.environment, resolved.harness
-    allow = [*environment.network.allow, *harness.manifest.run.egress]
-    if resolved.provider and resolved.api:
-        allow.append(resolved.provider.host(resolved.api))
-    for secret in environment.secrets.values():
-        allow.extend(secret.hosts)
-    for name, declared in harness.manifest.secrets.items():
-        if name in harness.secrets_set:
-            allow.extend(declared.hosts)
-    if environment.network.package_managers:
-        allow.extend(PACKAGE_MANAGER_HOSTS)
-    return EgressPolicy(mode=environment.network.mode, allow=tuple(allow), deny=environment.network.deny)
+    """What a turn's sandbox may reach (spec §9.3). Its provider, in every mode. A limited environment adds what
+    it allows, what the package declares, the hosts of the secrets in use and, if it says so, the package managers."""
+    environment, harness, network = resolved.environment, resolved.harness, resolved.environment.network
+    allow = [resolved.provider.host(resolved.api)] if resolved.provider and resolved.api else []
+    if network.mode == "limited":
+        allow += [*network.allow, *harness.manifest.run.egress]
+        for secret in environment.secrets.values():
+            allow.extend(secret.hosts)
+        for name, declared in harness.manifest.secrets.items():
+            if name in harness.secrets_set:
+                allow.extend(declared.hosts)
+        if network.package_managers:
+            allow.extend(PACKAGE_MANAGER_HOSTS)
+    return EgressPolicy(mode=network.mode, allow=tuple(allow), deny=network.deny)
 
 
 def install_policy(environment: Environment, manifest: Manifest) -> EgressPolicy:
+    """What a package's install may reach, whatever its environment's mode: the package managers and what the
+    package declares. A host the environment denies stays denied."""
     return EgressPolicy(
         mode="limited",
         allow=(*PACKAGE_MANAGER_HOSTS, *manifest.install.egress),

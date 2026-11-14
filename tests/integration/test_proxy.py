@@ -198,6 +198,22 @@ async def test_a_name_that_resolves_to_a_private_address_is_refused_unless_the_o
     assert listed.status_code == 200
 
 
+async def test_in_a_closed_environment_the_provider_is_reached_with_its_key_and_nothing_else_is(world: World) -> None:
+    await world.stores.environments.update(world.org, "default", {"network": {"mode": "closed"}})
+    world.platform._policies.clear()
+    placeholder = world.placeholders["provider"]
+    async with world.client() as client:
+        provider = await client.post(f"http://localhost:{world.http}/echo", content=b"{}",
+                                     headers={"Authorization": f"Bearer {placeholder}"})
+        allowed_before = await client.get(f"http://127.0.0.1:{world.http}/echo")
+        with pytest.raises(httpx.ProxyError, match="403"):                     # a host a secret is bound to
+            await client.get(f"https://localhost:{world.https}/echo")
+    assert provider.json()["headers"]["authorization"] == "Bearer the-provider-key"
+    assert allowed_before.status_code == 403
+    assert allowed_before.text.strip() == (f"127.0.0.1:{world.http} is not allowed: a closed environment reaches "
+                                           "the turn's provider only (environment 'default')")
+
+
 async def test_a_host_is_reached_at_the_first_of_its_addresses_that_answers(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -358,7 +374,7 @@ async def test_an_install_reaches_package_managers_and_what_its_manifest_names_a
     assert policy.secrets == ()
     assert policy.egress.decide("registry.npmjs.org", 443).allowed
     assert policy.egress.decide("pypi.org", 443).allowed
-    assert not policy.egress.decide("api.github.com", 443).allowed
+    assert not policy.egress.decide("api.example.com", 443).allowed
     assert not policy.egress.decide("denied.example.com", 443).allowed
     async with world.client(user=install.id, token=token) as client:
         assert (await client.get(f"http://127.0.0.1:{world.http}/echo")).status_code == 200

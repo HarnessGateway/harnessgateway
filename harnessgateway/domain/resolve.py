@@ -75,8 +75,6 @@ def resolve(
             raise _refuse(f"harness {harness.name!r} uses no provider: the model is just {harness.name!r}")
         return Resolved(environment, harness, None, None, None)
 
-    if environment.network.mode == "none":
-        raise _refuse(f"environment {environment.name!r} has no network, and harness {harness.name!r} needs a provider")
     provider = _provider(path, harness, providers)
     api = next((api for api in harness.manifest.apis if api in provider.apis), None)
     if api is None:

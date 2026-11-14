@@ -104,11 +104,16 @@ def test_the_sandbox_s_variables_are_the_contract_then_the_environment_then_sett
     assert list(sandbox_plan(facts()).env)[:2] == ["HOME", "HG_CONTRACT"]
 
 
-def test_a_harness_without_a_provider_in_an_environment_without_a_network() -> None:
+CLOSED = Environment.load({
+    "name": "closed", "network": {"mode": "closed"},
+    "secrets": {"EXAMPLE_TOKEN": {"hosts": ["api.example.com"]}},
+}, default_image="sandbox:4")
+
+
+def test_a_harness_without_a_provider_in_a_closed_environment_has_no_network_at_all() -> None:
     manifest = Manifest.load({"contract": 1, "name": "shell", "version": "1", "apis": []})
     shell = Harness(manifest=manifest, digest="e" * 64)
-    offline = Environment.load({"name": "offline", "network": {"mode": "none"}}, default_image="sandbox:4")
-    resolved = resolve(ModelPath.parse("offline:shell"), environments={"offline": offline},
+    resolved = resolve(ModelPath.parse("closed:shell"), environments={"closed": CLOSED},
                        harnesses={"shell": shell}, providers=[])
     plan = sandbox_plan(facts(resolved=resolved, provider_key_placeholder=None, secret_placeholders={}, handover=""))
     assert plan.network is None
@@ -116,6 +121,29 @@ def test_a_harness_without_a_provider_in_an_environment_without_a_network() -> N
     assert (plan.env["HG_PROVIDER"], plan.env["HG_PROVIDER_API"], plan.env["HG_PROVIDER_URL"],
             plan.env["HG_PROVIDER_KEY"], plan.env["HG_MODEL"], plan.env["HG_HANDOVER"]) == ("", "", "", "", "", "")
     assert plan.env["HG_STATE"] == "/mind/.harnessgateway/shell"
+    assert not turn_policy(resolved).decide("registry.npmjs.org", 443).allowed
+
+
+def test_in_a_closed_environment_a_turn_reaches_its_provider_and_nothing_else() -> None:
+    resolved = resolve(ModelPath.parse("closed:claude-code"), environments={"closed": CLOSED},
+                       harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
+    plan = sandbox_plan(facts(resolved=resolved))
+    assert plan.network == "hg-sandbox"                        # the proxy is its one way to the provider
+    assert plan.env["HTTPS_PROXY"] == f"http://{TURN}:ptok@egress:8080"
+    policy = turn_policy(resolved)
+    assert policy.mode == "closed"
+    assert policy.decide("api.deepseek.com", 443).allowed
+    for host in ("telemetry.example.net", "api.github.com", "api.example.com", "registry.npmjs.org", "example.com"):
+        assert not policy.decide(host, 443).allowed, host      # what the package declares, secrets, registries
+
+
+def test_in_an_open_environment_a_turn_reaches_any_public_host() -> None:
+    wide = Environment.load({"name": "wide", "network": {"mode": "open"}}, default_image="sandbox:4")
+    resolved = resolve(ModelPath.parse("wide:claude-code"), environments={"wide": wide},
+                       harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
+    policy = turn_policy(resolved)
+    assert policy.decide("anything.example.net", 8443).allowed
+    assert policy.decide("api.deepseek.com", 443).allowed
 
 
 def test_the_turn_s_policy_is_everything_it_is_entitled_to_and_nothing_else() -> None:
@@ -130,19 +158,25 @@ def test_the_turn_s_policy_is_everything_it_is_entitled_to_and_nothing_else() ->
 
 def test_a_harness_secret_with_no_value_opens_no_host() -> None:
     harness = Harness(manifest=MANIFEST, digest="d" * 64)                     # GITHUB_TOKEN not set
-    resolved = resolve(ModelPath.parse("secure:claude-code"), environments={"secure": ENVIRONMENT},
-                       harnesses={"claude-code": harness}, providers=[PROVIDER])
-    assert not turn_policy(resolved).decide("api.github.com", 443).allowed
+    bare = Environment.load({"name": "c", "network": {"package_managers": False}}, default_image="sandbox:4")
+    without, with_it = (resolve(ModelPath.parse("c:claude-code"), environments={"c": bare},
+                                harnesses={"claude-code": h}, providers=[PROVIDER]) for h in (harness, HARNESS))
+    assert not turn_policy(without).decide("api.github.com", 443).allowed
+    assert turn_policy(with_it).decide("api.github.com", 443).allowed
 
 
 def test_without_the_package_manager_set_the_registries_are_closed() -> None:
-    closed = Environment.load({"name": "c", "network": {"package_managers": False}}, default_image="sandbox:4")
-    resolved = resolve(ModelPath.parse("c:claude-code"), environments={"c": closed},
+    bare = Environment.load({"name": "c", "network": {"package_managers": False}}, default_image="sandbox:4")
+    resolved = resolve(ModelPath.parse("c:claude-code"), environments={"c": bare},
                        harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
     assert not turn_policy(resolved).decide("registry.npmjs.org", 443).allowed
 
 
-def test_an_install_reaches_the_registries_and_what_the_package_names_but_no_provider() -> None:
+def test_an_install_reaches_the_registries_and_what_the_package_names_whatever_the_environment_s_mode() -> None:
+    for environment in (CLOSED, Environment.load({"name": "c", "network": {"package_managers": False}},
+                                                 default_image="sandbox:4")):
+        assert install_policy(environment, MANIFEST).decide("registry.npmjs.org", 443).allowed
+        assert install_policy(environment, MANIFEST).decide("downloads.example.net", 443).allowed
     policy = install_policy(ENVIRONMENT, MANIFEST)
     assert policy.decide("registry.npmjs.org", 443).allowed
     assert policy.decide("downloads.example.net", 443).allowed

@@ -13,7 +13,7 @@
 # again takes the place of what was kept.
 set -euo pipefail
 
-VERSION=4.0.3
+VERSION=4.1.0
 DIR="$HOME/.harnessgateway"
 PORT=""
 BIND=""

@@ -132,7 +132,7 @@ def test_a_full_environment_is_read() -> None:
     e = Environment.load({
         "name": "secure", "image": "ghcr.io/acme/agents:1", "cpus": 0.5, "memory_mb": 512, "pids": 64,
         "tmp_mb": 64, "disk_mb": 100, "turn_timeout_s": 60,
-        "network": {"mode": "open", "allow": ["a.com"], "deny": ["*.bad.com"], "package_managers": False},
+        "network": {"mode": "limited", "allow": ["a.com"], "deny": ["*.bad.com"], "package_managers": False},
         "variables": {"TZ": "UTC", "npm_config_loglevel": "error"},
         "secrets": {"EXAMPLE_TOKEN": {"hosts": ["api.example.com"], "header": "Authorization", "prefix": "Bearer "}},
     }, default_image="sandbox:4")
@@ -157,6 +157,8 @@ def test_a_full_environment_is_read() -> None:
         ({"turn_timeout_s": 0}, "turn_timeout_s"),
         ({"turn_timeout_s": 86401}, "turn_timeout_s"),
         ({"network": {"mode": "wide"}}, "network"),
+        ({"network": {"mode": "open", "allow": ["a.com"]}}, "network.allow"),
+        ({"network": {"mode": "closed", "deny": ["a.com"]}}, "network.deny"),
         ({"network": {"allow": ["*"]}}, "network.allow"),
         ({"variables": {"HG_X": "1"}}, "HG_X"),
         ({"variables": {"1BAD": "1"}}, "variables"),
@@ -172,6 +174,12 @@ def test_the_environment_refuses_what_is_not_allowed_and_names_it(changes: dict[
     with pytest.raises(Invalid) as e:
         Environment.load({"name": "x", **changes}, default_image="sandbox:4")
     assert names in str(e.value)
+
+
+@pytest.mark.parametrize("mode", ["closed", "limited", "open"])
+def test_a_network_is_closed_limited_or_open(mode: str) -> None:
+    e = Environment.load({"name": "x", "network": {"mode": mode}}, default_image="sandbox:4")
+    assert (e.network.mode, e.network.allow, e.network.deny) == (mode, (), ())
 
 
 def test_tmp_must_fit_in_memory() -> None:

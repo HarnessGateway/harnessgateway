@@ -85,17 +85,32 @@ def test_a_denied_host_is_refused_whatever_allows_it() -> None:
     assert not policy.decide("bad.example.com", 443).allowed
 
 
-def test_open_mode_allows_any_host_and_port_except_the_denied() -> None:
-    policy = EgressPolicy(mode="open", allow=(), deny=parse_entries(["bad.example.com"], "deny"))
+def test_open_mode_allows_any_host_and_port() -> None:
+    policy = EgressPolicy(mode="open", allow=(), deny=())
     assert policy.decide("anything.example.net", 8443).allowed
-    assert not policy.decide("bad.example.com", 443).allowed
 
 
-def test_none_mode_allows_nothing() -> None:
-    policy = EgressPolicy(mode="none", allow=parse_entries(["api.example.com"], "allow"), deny=())
-    assert not policy.decide("api.example.com", 443).allowed
+def test_closed_mode_reaches_the_provider_it_was_given_and_says_so_of_everything_else() -> None:
+    policy = EgressPolicy(mode="closed", allow=parse_entries(["api.deepseek.com"], "allow"), deny=())
+    assert policy.decide("api.deepseek.com", 443).allowed
+    refused = policy.decide("registry.npmjs.org", 443)
+    assert not refused.allowed
+    assert refused.reason == ("registry.npmjs.org:443 is not allowed: "
+                              "a closed environment reaches the turn's provider only")
+    assert not EgressPolicy(mode="closed", allow=(), deny=()).decide("api.deepseek.com", 443).allowed
 
 
-def test_the_package_manager_set_holds_the_registries() -> None:
-    names = {entry.host for entry in PACKAGE_MANAGER_HOSTS}
-    assert {"registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "github.com"} <= names
+def test_the_package_manager_set_is_registries_source_hosts_and_tools_and_no_cloud_platform() -> None:
+    def reached(host: str) -> bool:
+        return any(entry.matches(host, 443) for entry in PACKAGE_MANAGER_HOSTS)
+
+    for host in ("registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "crates.io", "proxy.golang.org",
+                 "rubygems.org", "repo.maven.apache.org", "api.nuget.org", "github.com", "codeload.github.com",
+                 "gitlab.com", "bitbucket.org", "ghcr.io", "registry-1.docker.io", "deb.debian.org",
+                 "security.debian.org", "archive.ubuntu.com", "ports.ubuntu.com", "dl-cdn.alpinelinux.org",
+                 "nodejs.org", "astral.sh", "releases.hashicorp.com"):
+        assert reached(host), host
+    for host in ("s3.amazonaws.com", "storage.googleapis.com", "portal.azure.com", "api.datadoghq.com",
+                 "api.anthropic.com", "api.openai.com", "example.com"):
+        assert not reached(host), host
+    assert len({str(entry) for entry in PACKAGE_MANAGER_HOSTS}) == len(PACKAGE_MANAGER_HOSTS)      # each once

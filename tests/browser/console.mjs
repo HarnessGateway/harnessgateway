@@ -4,7 +4,7 @@
 //
 // tests/browser/test_console.py runs it against a platform it starts itself. It needs Playwright with its
 // Chromium, and a platform whose catalog holds the shell package. Against a platform that stays up it leaves
-// behind sessions, harnesses, an environment, a provider and a key, all named "browser-…" or "b…".
+// behind sessions, harnesses, two environments, a provider and a key, all named "browser-…" or "b…".
 
 import { createRequire } from "node:module";
 
@@ -224,24 +224,45 @@ try {
     await dialog().locator("[data-cancel]").click();
   });
 
-  await step("an environment is added with a network policy and a secret", async () => {
+  await step("an environment's network is closed, limited or open, and only limited has rules", async () => {
     const name = `browser-${stamp}`;
+    const mode = () => dialog().locator("[name=mode]"), rules = () => dialog().locator("#limited");
     await go("environments", "Environments");
     await page.click("#add");
+    const modes = await mode().locator("option").evaluateAll((options) => options.map((o) => o.value).join(", "));
+    if (modes !== "closed, limited, open") throw new Error(`the network modes offered are: ${modes}`);
+    if ((await mode().inputValue()) !== "limited" || !(await rules().isVisible())) throw new Error("a new environment does not start limited, with its rules shown");
+    if (!(await dialog().locator("[name=package_managers]").isChecked())) throw new Error("a new environment does not allow package managers");
+    for (const other of ["closed", "open"]) {
+      await mode().selectOption(other);
+      if (await rules().isVisible()) throw new Error(`a ${other} network is offered an allow list`);
+    }
+    await mode().selectOption("limited");
     await dialog().locator("[name=name]").fill(name);
     await dialog().locator("[name=memory_mb]").fill("1024");
     await dialog().locator("[name=allow]").fill("api.github.com\n*.example.com");
+    await dialog().locator("[name=deny]").fill("bad.example.com");
     await dialog().locator("[name=variables]").fill("STAGE=test");
     await dialog().locator("#secret").click();
     await dialog().locator(".secret-edit [data-s=name]").fill("GITHUB_TOKEN");
     await dialog().locator(".secret-edit [data-s=hosts]").fill("api.github.com");
     await dialog().locator(".secret-edit [data-s=value]").fill("the-secret-token");
     await submit();
-    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("2 allowed"):has-text("1 secret")`);
+    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("2 allowed + package managers"):has-text("1 denied"):has-text("1 secret")`);
     await page.click(`#content tr:has-text("${name}") [data-edit]`);                  // it opens again with what was saved
     if ((await dialog().locator("[name=allow]").inputValue()) !== "api.github.com\n*.example.com") throw new Error("the allowed hosts were not kept");
     if (await dialog().locator(".secret-edit [data-s=value]").inputValue()) throw new Error("a secret's value came back");
     await dialog().locator("[data-cancel]").click();
+
+    await page.click("#add");                                                         // and one that reaches its provider only
+    await dialog().locator("[name=name]").fill(`closed-${stamp}`);
+    await mode().selectOption("closed");
+    await submit();
+    await page.waitForSelector(`#content tr:has-text("closed-${stamp}") .pill:has-text("closed")`);
+    const stored = await (await fetch(`${url}/v1/environments/closed-${stamp}`, { headers: { Authorization: `Bearer ${key}` } })).json();
+    if (stored.network.mode !== "closed" || stored.network.allow.length || stored.network.deny.length) {
+      throw new Error(`the closed environment was stored as ${JSON.stringify(stored.network)}`);
+    }
   });
 
   await step("the chat names the environment, the harness, the provider and the model of each message", async () => {

@@ -89,7 +89,8 @@ curl -s $HG/v1/harnesses -H "Authorization: Bearer $KEY" -H 'Content-Type: appli
 - **The Responses API as it is.** `POST /v1/responses`, streaming, background, `previous_response_id`,
   cancel, and the Files and Containers APIs to send files in and read an agent's work out. No added fields.
 - **Sandboxes you define.** An environment is an image, CPU, memory, disk and time limits, variables,
-  secrets, and a network policy. Any Linux image works.
+  secrets, and a network. Any Linux image works. Nothing is reachable unless the network allows it: closed
+  reaches the model provider only, limited adds the hosts you allow, open reaches any public host.
 - **Secrets that never enter the sandbox.** The sandbox holds placeholders. The egress proxy, the only way
   out, puts the real value into requests to the hosts a secret is bound to.
 - **Any provider.** A provider is a name, base URLs per API (Anthropic Messages, OpenAI Responses, OpenAI

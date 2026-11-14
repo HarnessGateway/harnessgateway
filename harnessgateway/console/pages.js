@@ -382,20 +382,20 @@ const providers = { title: "Providers", async render(el, params, me) {
 
 // ── Environments ──────────────────────────────────────────────────────────────────────────────────────────────────
 // Where turns run: the image, the limits, what the sandbox may reach, and the variables and secrets it is given.
-const NETWORK = { limited: ["limited", "b"], open: ["open", "warn"], none: ["no network", "q"] };
+const NETWORK = { closed: ["closed", "q"], limited: ["limited", "b"], open: ["open", "warn"] };
 const environments = { title: "Environments", async render(el, params, me) {
   const rows = await list("/v1/environments?limit=100"), admin = me.role === "admin";
   el.innerHTML = top("Environments", "Where turns run. An environment is an image, limits, a network policy, and variables and secrets. Every turn gets a new sandbox built from one; a request picks it by name in model (environment:harness), and default is used when it names none." + (admin ? "" : " An admin changes them."),
     admin ? `<button class="btn" id="add">Add environment</button>` : "") +
     `<div class="card">${table([{ h: "Name", cell: e => `<b>${esc(e.name)}</b>` }, { h: "Image", cell: e => mono(e.image) },
       { h: "Limits", cell: e => `${num(e.cpus)} CPU · ${num(e.memory_mb)} MB · ${num(e.disk_mb)} MB disk · ${duration(e.turn_timeout_s)} a turn` },
-      { h: "Network", cell: e => pill(...NETWORK[e.network.mode]) + (e.network.mode === "limited" ? ` <span class="muted small">${e.network.allow.length} allowed${e.network.package_managers ? " + package managers" : ""}</span>` : "") +
-        (e.network.deny.length ? ` <span class="muted small">${e.network.deny.length} denied</span>` : "") },
+      { h: "Network", cell: e => pill(...NETWORK[e.network.mode]) + (e.network.mode === "limited" ? ` <span class="muted small">${e.network.allow.length} allowed${e.network.package_managers ? " + package managers" : ""}` +
+        `${e.network.deny.length ? ` · ${e.network.deny.length} denied` : ""}</span>` : "") },
       { h: "Given", cell: e => `${Object.keys(e.variables).length} variable${Object.keys(e.variables).length === 1 ? "" : "s"} · ${Object.keys(e.secrets).length} secret${Object.keys(e.secrets).length === 1 ? "" : "s"}` },
       ...(admin ? [{ h: "", cls: "acts", cell: e => `<button class="btn2" data-edit="${esc(e.name)}">Edit</button>${e.name === "default" ? "" : `<button class="btn2 danger" data-del="${esc(e.name)}">Delete</button>`}` }] : [])],
       rows)}</div>` +
     `<div class="grid two" style="margin-top:14px">` + card("Network entries", `<div class="kv"><div>${mono("host")}</div><div>that host, port 443</div><div>${mono("*.domain")}</div><div>any subdomain, never the domain itself</div><div>${mono("host:8443")}</div><div>another port</div></div>` +
-      `<p class="muted small" style="margin-top:10px">A limited network reaches the turn's provider, what its harness package declares, the hosts its secrets are bound to, the entries allowed here and, when turned on, the package managers. A denied entry wins over everything. Whatever the policy, a sandbox reaches the internet only through the egress proxy.</p>`) +
+      `<p class="muted small" style="margin-top:10px">Nothing is reachable unless the network's mode allows it. <b>Closed</b>: the turn's provider only. <b>Limited</b>: the provider, what the harness package declares, the hosts its secrets are bound to, the entries allowed here and, when ticked, the package managers; a denied entry wins over all of them. <b>Open</b>: any public host. Whatever the mode, a sandbox reaches the internet only through the egress proxy, and installing a harness always reaches the package managers.</p>`) +
     card("Secrets", `<p class="muted small">A secret is a variable whose value never enters the sandbox: the sandbox holds a placeholder, and the egress proxy puts the real value into requests to the hosts the secret is bound to. With a header name, the proxy sets that header (with the prefix) instead of looking for the placeholder.</p>`) + `</div>`;
   const secretRow = (name = "", s = { hosts: [], header: "", prefix: "" }) => `<div class="row secret-edit" style="margin-bottom:6px">` +
     `<input data-s="name" value="${esc(name)}" placeholder="GITHUB_TOKEN" style="flex:1.2" ${name ? "readonly" : ""}><input data-s="hosts" value="${esc(s.hosts.join(", "))}" placeholder="api.github.com" style="flex:1.6">` +
@@ -410,10 +410,10 @@ const environments = { title: "Environments", async render(el, params, me) {
       `<div class="grid">` + field("CPUs", input("cpus", c.cpus, 'type="number" step="0.25" min="0.25" required')) + field("Memory (MB)", input("memory_mb", c.memory_mb, 'type="number" min="256" required')) +
       field("Disk (MB)", input("disk_mb", c.disk_mb, 'type="number" min="64" required'), "the session's saved files") + field("A turn may take (s)", input("turn_timeout_s", c.turn_timeout_s, 'type="number" min="1" required')) + `</div>` +
       `<div class="grid">` + field("Processes", input("pids", c.pids, 'type="number" min="64" required')) + field("/tmp (MB)", input("tmp_mb", c.tmp_mb, 'type="number" min="64" required'), "counts against memory") +
-      field("Network", select("mode", [["limited", "limited: only what is allowed"], ["open", "open: any public host"], ["none", "none: no network at all"]], c.network.mode)) +
-      field("Package managers", select("package_managers", [["1", "reachable"], ["", "not reachable"]], c.network.package_managers ? "1" : ""), "npm, PyPI, apt and the like") + `</div>` +
-      `<div class="grid two">` + field("Allowed", `<textarea name="allow" style="min-height:70px" placeholder="api.github.com&#10;*.example.com">${esc(c.network.allow.join("\n"))}</textarea>`, "one entry a line") +
-      field("Denied", `<textarea name="deny" style="min-height:70px" placeholder="evil.example.com">${esc(c.network.deny.join("\n"))}</textarea>`, "wins over everything allowed") + `</div>` +
+      `<div style="grid-column:span 2">${field("Network", select("mode", [["closed", "Closed: the turn's provider only"], ["limited", "Limited: the provider, and what is allowed below"], ["open", "Open: any public host"]], c.network.mode), "nothing is reachable unless the mode allows it")}</div></div>` +
+      `<div id="limited"><div class="grid two">` + field("Allowed", `<textarea name="allow" style="min-height:70px" placeholder="api.github.com&#10;*.example.com">${esc(c.network.allow.join("\n"))}</textarea>`, "one entry a line") +
+      field("Denied", `<textarea name="deny" style="min-height:70px" placeholder="bad.example.com">${esc(c.network.deny.join("\n"))}</textarea>`, "one entry a line; wins over everything allowed") + `</div>` +
+      `<div class="field"><label class="check"><input type="checkbox" name="package_managers"${c.network.package_managers ? " checked" : ""}> Allow package managers</label><div class="help">npm, PyPI, GitHub, apt and the like</div></div></div>` +
       field("Variables", `<textarea name="variables" style="min-height:70px" placeholder="NAME=value">${esc(Object.entries(c.variables).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`, "one NAME=value a line; visible inside the sandbox") +
       `<div class="field"><label>Secrets</label><div id="secrets">${Object.entries(c.secrets).map(([k, s]) => secretRow(k, s)).join("")}</div>` +
       `<div><button type="button" class="btn2" id="secret">Add secret</button></div><div class="help">name · hosts it may go to · header and prefix (optional) · value (write-only; leave empty to keep the stored one)</div></div>`,
@@ -432,12 +432,15 @@ const environments = { title: "Environments", async render(el, params, me) {
                                  ...($("[data-s=value]", row).value ? { value: $("[data-s=value]", row).value } : {}) };
         }
         const doc = { cpus: +d.cpus, memory_mb: +d.memory_mb, pids: +d.pids, tmp_mb: +d.tmp_mb, disk_mb: +d.disk_mb, turn_timeout_s: +d.turn_timeout_s,
-                      network: { mode: d.mode, allow: lines(d.allow), deny: lines(d.deny), package_managers: !!d.package_managers }, variables, secrets,
+                      network: d.mode === "limited" ? { mode: d.mode, allow: lines(d.allow), deny: lines(d.deny), package_managers: !!d.package_managers } : { mode: d.mode },
+                      variables, secrets,
                       ...(d.image.trim() ? { image: d.image.trim() } : {}) };
         if (e) await api("PATCH", `/v1/environments/${path(e.name)}`, doc); else await api("POST", "/v1/environments", { name: d.name.trim(), ...doc });
         toast("Saved", "ok"); rerender();
       } });
-    const form = $(".backdrop form");
+    const form = $(".backdrop form"), mode = $("[name=mode]", form);
+    const rules = () => { $("#limited", form).hidden = mode.value !== "limited"; };      // the rules are limited's
+    mode.addEventListener("change", rules); rules();
     form.addEventListener("click", ev => {
       if (ev.target.id === "secret") $("#secrets", form).insertAdjacentHTML("beforeend", secretRow());
       else if (ev.target.closest("[data-unsecret]")) ev.target.closest(".secret-edit").remove();

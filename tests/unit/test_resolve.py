@@ -25,7 +25,7 @@ def provider(name: str, **apis: str) -> Provider:
 
 ENVIRONMENTS = {
     "default": Environment.load({"name": "default"}, default_image="sandbox:4"),
-    "offline": Environment.load({"name": "offline", "network": {"mode": "none"}}, default_image="sandbox:4"),
+    "closed": Environment.load({"name": "closed", "network": {"mode": "closed"}}, default_image="sandbox:4"),
 }
 DEEPSEEK = Provider.load({
     "name": "deepseek",
@@ -94,8 +94,10 @@ def test_a_harness_that_needs_no_provider_resolves_without_one() -> None:
     assert str(r.path) == "default:shell"
 
 
-def test_a_harness_that_needs_no_provider_runs_without_a_network() -> None:
-    assert run("offline:shell").environment.name == "offline"
+def test_any_harness_runs_in_a_closed_environment() -> None:
+    assert run("closed:shell").environment.name == "closed"
+    with_provider = run("closed:codex/deepseek")                  # it reaches its provider, and nothing else
+    assert (with_provider.environment.name, with_provider.provider.name) == ("closed", "deepseek")
 
 
 @pytest.mark.parametrize(
@@ -107,7 +109,6 @@ def test_a_harness_that_needs_no_provider_runs_without_a_network() -> None:
         ("claude-code/openai", "speaks"),                       # no API in common
         ("codex/openai", "model"),                              # no model anywhere
         ("shell/deepseek", "uses no provider"),
-        ("offline:codex/deepseek", "no network"),
     ],
 )
 def test_what_does_not_resolve_is_refused_and_says_why(text: str, says: str) -> None:
