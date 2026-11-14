@@ -100,6 +100,7 @@ try {
     await go("chat");
     await chat().locator("#harness option[value=shell]").waitFor({ state: "attached" });
     await chat().locator("#harness").selectOption("shell");
+    if (!(await chat().locator("#environment").isVisible())) throw new Error("the chat does not show the environment");
     await say("printf '<h1>made in a sandbox</h1>' > page.html; echo wrote the page");
     await chat().locator(".msg.assistant .reply:has-text('wrote the page')").waitFor();
     await chat().locator(".msg.assistant .tile:has-text('page.html')").waitFor();
@@ -175,17 +176,36 @@ try {
     await chat().locator(`#harness option[value=${name}]`).waitFor({ state: "attached" });   // it is a model name now
   });
 
-  await step("a provider is added, and its key is never shown", async () => {
+  await step("a provider is a name, an API shape, a base URL and a key, and the key is never shown", async () => {
     const name = `browser-${stamp}`;
+    const baseUrl = () => dialog().locator("[name=base_url]").inputValue();
     await go("providers", "Providers");
     await page.click("#add");
+    const asked = await dialog().locator("input, select").evaluateAll((fields) => fields.map((f) => f.name).join(", "));
+    if (asked !== "name, shape, base_url, api_key") throw new Error(`the provider form asks for: ${asked}`);
+    if ((await baseUrl()) !== "https://api.anthropic.com") throw new Error(`anthropic's base URL is not filled in: ${await baseUrl()}`);
+    await dialog().locator("[name=shape]").selectOption("openai");
+    if ((await baseUrl()) !== "https://api.openai.com/v1") throw new Error(`the base URL did not follow the shape: ${await baseUrl()}`);
     await dialog().locator("[name=name]").fill(name);
-    await dialog().locator("[name='api:anthropic']").fill("https://api.example.com/anthropic");
-    await dialog().locator("[name=default_model]").fill("a-model");
+    await dialog().locator("[name=base_url]").fill("https://api.example.com/v1");
+    await dialog().locator("[name=shape]").selectOption("anthropic");              // a URL that was typed stays
+    await dialog().locator("[name=shape]").selectOption("openai");
+    if ((await baseUrl()) !== "https://api.example.com/v1") throw new Error("a typed base URL was replaced");
     await dialog().locator("[name=api_key]").fill("the-secret-key");
     await submit();
-    await page.waitForSelector(`#content tr:has-text("${name}") .pill.ok:has-text("set")`);
+    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("openai"):has-text("https://api.example.com/v1") .pill.ok:has-text("set")`);
     if ((await page.content()).includes("the-secret-key")) throw new Error("the provider's key is on the page");
+
+    const stored = await (await fetch(`${url}/v1/providers/${name}`, { headers: { Authorization: `Bearer ${key}` } })).json();
+    const apis = Object.entries(stored.apis).sort().map(([api, at]) => `${api}=${at}`).join(" ");   // one shape, both OpenAI APIs
+    if (apis !== "openai-chat=https://api.example.com/v1 openai-responses=https://api.example.com/v1" || stored.default_model !== null) {
+      throw new Error(`the provider was stored as ${JSON.stringify(stored)}`);
+    }
+    await page.click(`#content tr:has-text("${name}") [data-edit]`);                // it opens again as it was saved
+    if ((await dialog().locator("[name=shape]").inputValue()) !== "openai" || (await baseUrl()) !== "https://api.example.com/v1") {
+      throw new Error("the provider did not open as it was saved");
+    }
+    await dialog().locator("[data-cancel]").click();
   });
 
   await step("an environment is added with a network policy and a secret", async () => {
@@ -206,6 +226,36 @@ try {
     if ((await dialog().locator("[name=allow]").inputValue()) !== "api.github.com\n*.example.com") throw new Error("the allowed hosts were not kept");
     if (await dialog().locator(".secret-edit [data-s=value]").inputValue()) throw new Error("a secret's value came back");
     await dialog().locator("[data-cancel]").click();
+  });
+
+  await step("the chat names the environment, the harness, the provider and the model of each message", async () => {
+    const harness = `p${stamp}`, named = `browser-${stamp}`;                         // the environment and the provider made above
+    await go("harnesses", "Harnesses");
+    await page.click("#new");                                                        // the template, as a harness that calls a model
+    await dialog().locator("[name=name]").fill(harness);
+    await submit();
+    await page.waitForSelector(`#tree .f.on:has-text("harness.json")`);
+    await page.waitForFunction((n) => document.querySelector("#ed").value.includes(n), harness);
+    await page.fill("#ed", JSON.stringify({ ...JSON.parse(await page.inputValue("#ed")), apis: ["openai-chat"] }, null, 2));
+    await page.click("#save");
+    await page.waitForSelector(".toast.ok:has-text('Saved')");
+    await page.click("#install");
+    await page.waitForSelector("#content .tabs a:has-text('Installs')");
+
+    await go("chat");
+    await chat().locator("#new").click();
+    await chat().locator(`#harness option[value=${harness}]`).waitFor({ state: "attached" });
+    await chat().locator("#harness").selectOption(harness);
+    await chat().locator("#environment").selectOption(named);
+    await chat().locator("#provider").selectOption(named);
+    const ran = 'echo "ran in $HG_ENVIRONMENT on $HG_PROVIDER over $HG_PROVIDER_API with $HG_MODEL"';
+    await chat().locator("#model").fill("model-a");
+    await say(ran);
+    await chat().locator(`.msg.assistant .reply:has-text("ran in ${named} on ${named} over openai-chat with model-a")`).waitFor();
+    await chat().locator("#model").fill("model-b");                                  // the next message, another model
+    await chat().locator("#environment").selectOption("default");
+    await say(ran);
+    await chat().locator(`.msg.assistant .reply:has-text("ran in default on ${named} over openai-chat with model-b")`).waitFor();
   });
 
   await step("a key is made, shown once, and listed", async () => {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.0.2
+
+- Console: a provider is added as a name, an API shape, a base URL and a key, as in version 3. `anthropic` is
+  the Anthropic Messages API; `openai` is the OpenAI Responses and Chat Completions APIs at one base URL. The
+  base URL is filled in for the shape chosen. The form sets no default model: a request names its model
+  (`harness/provider/model`), or the harness has a default.
+- Console: the chat and the playground always show the environment beside the harness, the provider and the
+  model. Each message can change any of the four.
+
 ## 4.0.1
 
 - Console: Setup lists Providers, Environments, Harnesses, the order a platform is set up in. A developer or

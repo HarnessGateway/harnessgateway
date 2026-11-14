@@ -96,8 +96,6 @@ const playground = { title: "Playground", async render(el) {
     $("#pg-models", el).innerHTML = model ? `<option value="${esc(model)}">` : "";
     sync();
   };
-  const oneEnvironment = catalog.environments.length < 2;
-  esel.hidden = oneEnvironment; $(".esep", route).hidden = oneEnvironment;
   req.value = JSON.stringify(body, null, 2);
   if (!catalog.harnesses.length) { route.innerHTML = `<span class="muted">No harness installed yet: add one under Setup → Harnesses.</span>`; return; }
   hsel.addEventListener("change", fillProviders); psel.addEventListener("change", sync); esel.addEventListener("change", sync); minput.addEventListener("input", sync);
@@ -260,7 +258,7 @@ const harness = { title: "Harness", async render(el, params, me) {
     });
   } else if (tab === "defaults") {
     body.innerHTML = m.apis.length ? card("Defaults", `<form id="defaults">${field("Provider", select("provider", [["", "— the first provider that speaks this harness's API —"], ...fits.map(p => [p.name, `${p.name} (${p.apis.join(", ")})`])], h.provider || ""), fits.length ? "" : "no provider speaks this harness's API yet: add one under Setup → Providers")}` +
-      `${field("Model", input("model", h.model || ""), "the model the CLI is given when a request names none; empty: the provider's default model")}<button class="btn">Save defaults</button></form>`) : `<div class="note">This harness calls no model, so it has no provider or model defaults.</div>`;
+      `${field("Model", input("model", h.model || ""), "the model the CLI is given when a request names none; empty: every request names one (harness/provider/model)")}<button class="btn">Save defaults</button></form>`) : `<div class="note">This harness calls no model, so it has no provider or model defaults.</div>`;
     $("#defaults", el)?.addEventListener("submit", async e => {
       e.preventDefault();
       const d = Object.fromEntries(new FormData(e.target));
@@ -340,29 +338,40 @@ const drafts = { title: "Draft", async render(el, params) {
 } };
 
 // ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────────
-const APIS = [["anthropic", "Anthropic Messages", "https://api.anthropic.com", "base URL without /v1"],
-              ["openai-responses", "OpenAI Responses", "https://api.openai.com/v1", "base URL ending /v1"],
-              ["openai-chat", "OpenAI Chat Completions", "https://api.openai.com/v1", "base URL ending /v1"]];
+// A provider is set up as one API shape at one base URL. The platform keeps a URL for each API a provider speaks
+// (§10.1); a shape is the APIs one kind of endpoint speaks, all at the same URL.
+const SHAPES = [{ id: "anthropic", label: "anthropic (Messages)", url: "https://api.anthropic.com", apis: ["anthropic"] },
+                { id: "openai", label: "openai (Responses / Chat Completions)", url: "https://api.openai.com/v1", apis: ["openai-responses", "openai-chat"] }];
+/** The shape a provider was set up as; none when it was given its APIs another way, over the API. */
+const shapeOf = p => { const urls = new Set(Object.values(p.apis)); return urls.size === 1 ? SHAPES.find(s => Object.keys(p.apis).every(a => s.apis.includes(a))) : undefined; };
 const providers = { title: "Providers", async render(el, params, me) {
   const rows = await list("/v1/providers?limit=100"), admin = me.role === "admin";
-  el.innerHTML = top("Providers", "The organization's model endpoints and their keys. One provider can speak several APIs, so different harnesses use the same key and models. A key is sealed here and put into requests by the egress proxy, toward the provider's host only; a sandbox never holds it." + (admin ? "" : " An admin adds them."),
+  el.innerHTML = top("Providers", "The organization's model endpoints and their keys. A provider is an API shape, a base URL and a key; a request names it, and the model, in model (harness/provider/model). A key is sealed here and put into requests by the egress proxy, toward the provider's host only; a sandbox never holds it." + (admin ? "" : " An admin adds them."),
     admin ? `<button class="btn" id="add">Add provider</button>` : "") +
-    `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` }, { h: "APIs", cell: p => Object.keys(p.apis).map(a => pill(a, "b")).join(" ") },
-      { h: "Base URLs", cell: p => Object.values(p.apis).map(mono).join("<br>") }, { h: "Default model", cell: p => p.default_model ? mono(p.default_model) : "—" },
+    `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` },
+      { h: "API shape", cell: p => shapeOf(p) ? pill(shapeOf(p).id, "b") : Object.keys(p.apis).map(a => pill(a, "b")).join(" ") },
+      { h: "Base URL", cell: p => [...new Set(Object.values(p.apis))].map(mono).join("<br>") },
       { h: "Key", cell: p => p.has_key ? pill("set", "ok") : pill("no key", "warn") },
       ...(admin ? [{ h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${esc(p.name)}">Edit</button><button class="btn2 danger" data-del="${esc(p.name)}">Delete</button>` }] : [])],
       rows, "No provider yet. Harnesses that call a model need one.")}</div>`;
-  const dialog = p => modal({ title: p ? `Provider ${p.name}` : "Add provider", submit: "Save", body:
-    field("Name", input("name", p ? p.name : "", `${p ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="anthropic"`)) +
-    APIS.map(([a, label, example, help]) => field(label, input(`api:${a}`, p ? p.apis[a] || "" : "", `placeholder="${esc(example)}"`), `${help}; empty: this provider does not speak it`)).join("") +
-    field("Default model", input("default_model", p ? p.default_model || "" : "", 'placeholder="none"'), "what a harness is given when neither the request nor the harness names a model") +
-    field("API key", input("api_key", "", `type="password" autocomplete="off"${p && p.has_key ? ' placeholder="leave empty to keep the stored key"' : ""}`), "write-only; never shown again"),
-    onSubmit: async d => {
-      const apis = Object.fromEntries(APIS.map(([a]) => [a, d[`api:${a}`].trim()]).filter(([, url]) => url));
-      const doc = { apis, default_model: d.default_model.trim() || null, ...(d.api_key ? { api_key: d.api_key } : {}) };
-      if (p) await api("PATCH", `/v1/providers/${path(p.name)}`, doc); else await api("POST", "/v1/providers", { name: d.name.trim(), ...doc });
-      toast("Saved", "ok"); rerender();
-    } });
+  const dialog = p => {
+    const was = p && shapeOf(p), first = was || (p && SHAPES.find(s => s.apis.includes(Object.keys(p.apis)[0]))) || SHAPES[0];
+    modal({ title: p ? `Provider ${p.name}` : "Add provider", submit: "Save", body:
+      (p && !was ? `<div class="note warn">This provider was given its APIs over the API. Saving here replaces them with the one shape chosen.</div>` : "") +
+      field("Name", input("name", p ? p.name : "", `${p ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="anthropic"`)) +
+      field("API shape", select("shape", SHAPES.map(s => [s.id, s.label]), first.id)) +
+      field("Base URL", input("base_url", p ? Object.values(p.apis)[0] : first.url, "required")) +
+      field("API key", input("api_key", "", `type="password" autocomplete="off"${p && p.has_key ? ' placeholder="leave empty to keep the stored key"' : ""}`), "write-only; never shown again"),
+      onSubmit: async d => {
+        const doc = { apis: Object.fromEntries(SHAPES.find(s => s.id === d.shape).apis.map(a => [a, d.base_url.trim()])), ...(d.api_key ? { api_key: d.api_key } : {}) };
+        if (p) await api("PATCH", `/v1/providers/${path(p.name)}`, doc); else await api("POST", "/v1/providers", { name: d.name.trim(), ...doc });
+        toast("Saved", "ok"); rerender();
+      } });
+    const form = $(".backdrop form"), url = $("[name=base_url]", form);
+    $("[name=shape]", form).addEventListener("change", e => {          // the shape's own address, unless one was typed
+      if (!url.value.trim() || SHAPES.some(s => s.url === url.value.trim())) url.value = SHAPES.find(s => s.id === e.target.value).url;
+    });
+  };
   $("#add", el)?.addEventListener("click", () => dialog(null));
   el.addEventListener("click", async e => {
     const ed = e.target.closest("[data-edit]"); if (ed) { dialog(rows.find(p => p.name === ed.dataset.edit)); return; }

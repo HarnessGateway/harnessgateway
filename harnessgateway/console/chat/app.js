@@ -334,7 +334,6 @@ function options(sel, names, value) {
 function fillEnvironments(want) {
   const names = catalog.environments.length ? catalog.environments : ["default"];
   options($("environment"), names, want || "default");
-  $("route").classList.toggle("oneenv", names.length < 2 && $("environment").value === "default");
 }
 function fillProviders(want, keep) {        // keep: a chat's own provider stays even if the catalog lacks it
   const h = harnessOf($("harness").value);
@@ -436,7 +435,6 @@ function wire() {
   });
   $("harness").addEventListener("change", () => { fillProviders(""); $("model").value = ""; });   // the harness's own defaults
   $("provider").addEventListener("change", fillModels);
-  $("environment").addEventListener("change", () => fillEnvironments($("environment").value));
 }
 
 async function openFromHash() {                      // #open=sess_…: a session of the platform (the console's, or an SDK's)

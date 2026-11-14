@@ -290,6 +290,5 @@ table.grid th.ln { z-index:2; }
 body.panelonly aside, body.panelonly main, body.panelonly #pclose, body.panelonly #pwide { display:none; }
 body.panelonly #panel, body.panelonly #panel.wide { width:100%; max-width:none; min-width:0; border-left:0; }
 
-/* the environment, before the harness: shown when there is more than one to pick */
+/* the environment, before the harness */
 .route .esep { color:var(--muted); padding:0 1px; flex:none; }
-.route.oneenv .environment, .route.oneenv .esep { display:none; }
