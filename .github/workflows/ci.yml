@@ -54,7 +54,7 @@ jobs:
           docker run --rm harnessgateway:ci harnessgateway package check /packages/shell
       - name: The sandbox image has what the shipped harnesses need, as user 10000, and nothing that raises privileges
         run: |
-          docker run --rm --user 10000:10000 --read-only --tmpfs /tmp --entrypoint /bin/sh sandbox:ci -c '
+          docker run --rm --user 10000:10000 --read-only --tmpfs /tmp:rw,exec --entrypoint /bin/sh sandbox:ci -c '
             set -e
             test "$(id -u)" = 10000
             node --version && npm --version
