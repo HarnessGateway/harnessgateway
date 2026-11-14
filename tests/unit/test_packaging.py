@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from harnessgateway import packaging
+from harnessgateway import __version__, packaging
 from harnessgateway.cli import main
 from harnessgateway.domain.archive import read_archive
 from harnessgateway.errors import Invalid
@@ -154,5 +154,5 @@ def test_the_command_line_checks_a_package(package: Path, capsys: pytest.Capture
 
 def test_the_command_line_tells_its_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["version"]) == 0
-    assert capsys.readouterr().out.strip() == "4.0.0"
+    assert capsys.readouterr().out.strip() == __version__
     assert sys.argv                                                        # main never reads the real arguments

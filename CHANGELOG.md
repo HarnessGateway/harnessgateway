@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.0.1
+
+- Console: Setup lists Providers, Environments, Harnesses, the order a platform is set up in. A developer or
+  an admin lands on Providers after signing in.
+- Installer: run again, it updates the installation to the installer's version. It kept the images of the
+  first install before, and waited on the default port whatever port the installation used. The port and the
+  address are kept too; `--port` or `--bind` given again replaces them.
+- Installer: piped from the web, it no longer ends after printing the admin key; it says where the platform
+  is.
+- Every change that reaches `main` is a version with an entry here. The release refuses a `main` that moved
+  without one.
+
 ## 4.0.0
 
 A new platform, written from an empty tree. Nothing carries over from earlier versions: not the code, the

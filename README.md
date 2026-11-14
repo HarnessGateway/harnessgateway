@@ -49,7 +49,8 @@ One machine with Docker (Linux, or a laptop with Docker Desktop or OrbStack):
 curl -fsSL https://raw.githubusercontent.com/HarnessGateway/harnessgateway/main/deploy/install.sh | bash
 ```
 
-It prints the address of the console and API, and the first admin key. On a Linux host, add
+It prints the address of the console and API, and the first admin key. Run again, it updates the
+installation to the current version and keeps its data and settings. On a Linux host, add
 `--with-gvisor` (`... | bash -s -- --with-gvisor`) so sandboxes do not share the host's kernel. Without it,
 isolation is an ordinary container: fine for development and code you trust.
 

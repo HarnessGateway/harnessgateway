@@ -39,7 +39,8 @@ A turn is: restore step, then the sandbox, then save step, with a watch step bes
 - The Responses API is not extended. No added request fields, no added endpoints under its paths.
 - No secret in any file, log, test fixture, commit or error message.
 - No backward compatibility and no dead code: change the thing, and everything that used the old thing.
-- The schema is one file, `store/migrations/0001_schema.sql`, edited in place until the first release.
+- The schema is the numbered files in `store/migrations/`, applied in order, once. A released file is never
+  edited: installations are updated in place, so a schema change is a new file.
 - Comments say what a thing is and why, in plain sentences.
 
 ## Checks
@@ -59,5 +60,8 @@ passed; say which levels ran when you report.
 
 ## Releases
 
-The version is in `pyproject.toml` and `deploy/install.sh`. A push to `main` with a new version publishes
-the images and a release. Nothing is pushed to `main` without its owner saying so.
+Every change that reaches `main` is a version. Give it the next number in `pyproject.toml`,
+`harnessgateway/__init__.py` and `deploy/install.sh` (and `uv lock`), and say what changed for a user under
+that number at the top of `CHANGELOG.md`. A push to `main` publishes that version's images and a release, and
+fails if `main` moved without a new version. An installation is updated by running the installer again.
+Nothing is pushed to `main` without its owner saying so.

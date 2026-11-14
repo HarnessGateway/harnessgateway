@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from harnessgateway import packaging
+from harnessgateway import __version__, packaging
 from harnessgateway.stores import Stores
 from tests.helpers import SHELL, variant
 from tests.integration.api import Running, running
@@ -343,7 +343,7 @@ async def test_every_change_is_in_the_audit_record_without_any_secret(api: Runni
 
 async def test_the_platform_says_what_it_is_and_the_organization_keeps_its_retention(api: Running) -> None:
     about = (await api.runner.get("/v1/platform")).json()
-    assert about == {"version": "4.0.0", "contract": 1, "driver": "local", "isolation": "none", "role": "runner"}
+    assert about == {"version": __version__, "contract": 1, "driver": "local", "isolation": "none", "role": "runner"}
     assert (await api.admin.get("/v1/platform")).json()["role"] == "admin"
     assert (await api.admin.get("/v1/organization")).json() == {"id": api.org, "name": "Test", "retention_days": 0}
     changed = await api.admin.patch("/v1/organization", json={"retention_days": 7})
