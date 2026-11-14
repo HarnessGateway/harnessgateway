@@ -51,6 +51,7 @@ main { flex:1; display:flex; flex-direction:column; min-width:0; position:relati
 header { display:flex; align-items:center; gap:8px; padding:8px 12px; height:56px; min-width:0; overflow:hidden; }
 /* harness / provider / model share the row and shrink (with an ellipsis) when the file panel narrows the chat */
 .route { display:flex; align-items:center; flex:0 1 auto; min-width:0; }
+.route[hidden] { display:none; }
 .route .sep { color:var(--muted); padding:0 1px; flex:none; }
 .pick { position:relative; display:flex; align-items:center; border-radius:10px; flex:0 1 auto; min-width:48px; }
 .pick:hover, .pick:focus-within { background:var(--hover); }
@@ -75,6 +76,7 @@ main.blank header { position:absolute; top:0; left:0; right:0; }
 .hello { text-align:center; padding:0 24px 24px; }
 .hello h1 { font-size:28px; font-weight:600; letter-spacing:-.02em; margin:0 0 6px; }
 .hello p { color:var(--muted); margin:0; font-size:15px; }
+.hello a { color:var(--link); }
 .msg { margin:0 0 28px; animation:rise .25s ease-out; }
 @keyframes rise { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
 .user { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }

@@ -58,6 +58,20 @@ try {
     if (setup.join(", ") !== "Providers, Environments, Harnesses") throw new Error(`Setup lists ${setup.join(", ")}`);
   });
 
+  const installed = await (await fetch(`${url}/v1/harnesses`, { headers: { Authorization: `Bearer ${key}` } })).json();
+  if (installed.data.length) console.log("skip  with no harness installed, the chat says where to add one (this platform has harnesses)");
+  else await step("with no harness installed, the chat says where to add one", async () => {
+    await go("chat");
+    await chat().locator(".hello:has-text('No harness is installed yet')").waitFor();
+    if (await chat().locator("#route").isVisible()) throw new Error("the chat offers a picker with nothing to pick");
+    await chat().locator("#input").fill("hi");
+    await chat().locator("#input").press("Enter");
+    await page.waitForTimeout(500);
+    if (await chat().locator(".msg").count()) throw new Error("a message was sent with no harness to run it");
+    await chat().locator(".hello a").click();
+    await page.waitForSelector("#content h1:has-text('Harnesses')");
+  });
+
   await step("a harness is added from the catalog and installs", async () => {
     await go("harnesses", "Harnesses");
     if (!(await page.locator(`a.hcard[href="#/harnesses/shell"]`).count())) await page.click(".hcard.catalog [data-add=shell]");
@@ -183,26 +197,28 @@ try {
     await page.click("#add");
     const asked = await dialog().locator("input, select").evaluateAll((fields) => fields.map((f) => f.name).join(", "));
     if (asked !== "name, shape, base_url, api_key") throw new Error(`the provider form asks for: ${asked}`);
+    const shapes = await dialog().locator("[name=shape] option").evaluateAll((options) => options.map((o) => o.value).join(", "));
+    if (shapes !== "anthropic, openai-responses, openai-chat") throw new Error(`the API shapes offered are: ${shapes}`);
     if ((await baseUrl()) !== "https://api.anthropic.com") throw new Error(`anthropic's base URL is not filled in: ${await baseUrl()}`);
-    await dialog().locator("[name=shape]").selectOption("openai");
+    await dialog().locator("[name=shape]").selectOption("openai-chat");
     if ((await baseUrl()) !== "https://api.openai.com/v1") throw new Error(`the base URL did not follow the shape: ${await baseUrl()}`);
     await dialog().locator("[name=name]").fill(name);
     await dialog().locator("[name=base_url]").fill("https://api.example.com/v1");
     await dialog().locator("[name=shape]").selectOption("anthropic");              // a URL that was typed stays
-    await dialog().locator("[name=shape]").selectOption("openai");
+    await dialog().locator("[name=shape]").selectOption("openai-chat");
     if ((await baseUrl()) !== "https://api.example.com/v1") throw new Error("a typed base URL was replaced");
     await dialog().locator("[name=api_key]").fill("the-secret-key");
     await submit();
-    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("openai"):has-text("https://api.example.com/v1") .pill.ok:has-text("set")`);
+    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("openai-chat"):has-text("https://api.example.com/v1") .pill.ok:has-text("set")`);
     if ((await page.content()).includes("the-secret-key")) throw new Error("the provider's key is on the page");
 
     const stored = await (await fetch(`${url}/v1/providers/${name}`, { headers: { Authorization: `Bearer ${key}` } })).json();
-    const apis = Object.entries(stored.apis).sort().map(([api, at]) => `${api}=${at}`).join(" ");   // one shape, both OpenAI APIs
-    if (apis !== "openai-chat=https://api.example.com/v1 openai-responses=https://api.example.com/v1" || stored.default_model !== null) {
+    const apis = Object.entries(stored.apis).map(([api, at]) => `${api}=${at}`).join(" ");          // one shape is one API
+    if (apis !== "openai-chat=https://api.example.com/v1" || stored.default_model !== null) {
       throw new Error(`the provider was stored as ${JSON.stringify(stored)}`);
     }
     await page.click(`#content tr:has-text("${name}") [data-edit]`);                // it opens again as it was saved
-    if ((await dialog().locator("[name=shape]").inputValue()) !== "openai" || (await baseUrl()) !== "https://api.example.com/v1") {
+    if ((await dialog().locator("[name=shape]").inputValue()) !== "openai-chat" || (await baseUrl()) !== "https://api.example.com/v1") {
       throw new Error("the provider did not open as it was saved");
     }
     await dialog().locator("[data-cancel]").click();

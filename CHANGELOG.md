@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.0.3
+
+- Console: a provider's API shape is one API: `anthropic (Messages)`, `openai (Responses)` or
+  `openai (Chat Completions)`. In 4.0.2 one `openai` shape stood for both OpenAI APIs, so a harness could be
+  sent to an API its provider does not have. A provider added with that shape speaks both until it is saved
+  again; an endpoint that speaks two APIs is added once for each.
+- Console: with no harness installed, the chat says so and links to Setup → Harnesses. Before, it showed an
+  empty picker and sent a request that was refused.
+
 ## 4.0.2
 
 - Console: a provider is added as a name, an API shape, a base URL and a key, as in version 3. `anthropic` is

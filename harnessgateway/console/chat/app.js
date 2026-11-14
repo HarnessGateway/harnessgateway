@@ -11,7 +11,7 @@ import { initPanel, openPanel, openFile, renderPanel, resetPanel, togglePanel, i
 
 const STORE = "hg-chatgui", MODELS = "hg-chatgui-models", SIDE = "hg-chatgui-side";
 let chats = [], current = null, pending = [], files = [], sideOpen = true;
-let catalog = { harnesses: [], providers: [], environments: [] }, shownChat;
+let catalog = { harnesses: [], providers: [], environments: [] }, loaded = false, shownChat;   // loaded: the catalog is the platform's, not the empty start
 let pinned = null;                                   // ?panel=sess_…: only the file panel, for this session
 
 // ── storage ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -114,7 +114,11 @@ function render() {
   const hv = $("harness").value, all = catalog.harnesses.map(h => h.name);   // harness, provider and model may all change
   if ($("harness").options.length !== all.length) options($("harness"), all, hv);
   $("harness").parentElement.title = blank ? "Harness" : "Harness: another one takes this chat over, with the same files";
-  if (blank) col.innerHTML = `<div class="hello"><h1>What should we build?</h1><p>The agent works in a sandbox of its own. What it makes opens on the right.</p></div>`;
+  const none = loaded && !catalog.harnesses.length;            // nothing to run a message on: say so, and offer no picker
+  $("route").hidden = none && blank;
+  if (blank) col.innerHTML = none
+    ? `<div class="hello"><h1>No harness is installed yet</h1><p>A chat runs on a harness. Add one under <a href="/#/harnesses" target="_top">Setup → Harnesses</a>, then start a chat.</p></div>`
+    : `<div class="hello"><h1>What should we build?</h1><p>The agent works in a sandbox of its own. What it makes opens on the right.</p></div>`;
   else {
     const busy = !!liveTurn(c);
     col.innerHTML = c.turns.map((t, i) => t.role === "user"
@@ -234,7 +238,7 @@ function reattach(c, turn) {
 }
 async function send() {
   const text = $("input").value.trim();
-  if (!text || pending.some(p => p.uploading)) return;
+  if (!text || pending.some(p => p.uploading) || !$("harness").value) return;
   let c = chat();
   const model = pickedModel(), picked = { provider: $("provider").value, model: $("model").value.trim() };
   if (!c) {
@@ -495,7 +499,7 @@ function start() {
   refreshFiles().then(renderPanel);
   openFromHash();
   loadCatalog().then(found => {
-    catalog = found;
+    catalog = found; loaded = true;
     const c = chat();
     setPick(c ? c.model : (catalog.harnesses[0] || {}).name || "");
     render();

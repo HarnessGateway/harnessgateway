@@ -338,32 +338,30 @@ const drafts = { title: "Draft", async render(el, params) {
 } };
 
 // ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────────
-// A provider is set up as one API shape at one base URL. The platform keeps a URL for each API a provider speaks
-// (§10.1); a shape is the APIs one kind of endpoint speaks, all at the same URL.
-const SHAPES = [{ id: "anthropic", label: "anthropic (Messages)", url: "https://api.anthropic.com", apis: ["anthropic"] },
-                { id: "openai", label: "openai (Responses / Chat Completions)", url: "https://api.openai.com/v1", apis: ["openai-responses", "openai-chat"] }];
-/** The shape a provider was set up as; none when it was given its APIs another way, over the API. */
-const shapeOf = p => { const urls = new Set(Object.values(p.apis)); return urls.size === 1 ? SHAPES.find(s => Object.keys(p.apis).every(a => s.apis.includes(a))) : undefined; };
+// A provider is set up as one API shape at one base URL: the API its endpoint speaks (§10.1).
+const SHAPES = [{ id: "anthropic", label: "anthropic (Messages)", url: "https://api.anthropic.com" },
+                { id: "openai-responses", label: "openai (Responses)", url: "https://api.openai.com/v1" },
+                { id: "openai-chat", label: "openai (Chat Completions)", url: "https://api.openai.com/v1" }];
 const providers = { title: "Providers", async render(el, params, me) {
   const rows = await list("/v1/providers?limit=100"), admin = me.role === "admin";
   el.innerHTML = top("Providers", "The organization's model endpoints and their keys. A provider is an API shape, a base URL and a key; a request names it, and the model, in model (harness/provider/model). A key is sealed here and put into requests by the egress proxy, toward the provider's host only; a sandbox never holds it." + (admin ? "" : " An admin adds them."),
     admin ? `<button class="btn" id="add">Add provider</button>` : "") +
     `<div class="card">${table([{ h: "Name", cell: p => `<b>${esc(p.name)}</b>` },
-      { h: "API shape", cell: p => shapeOf(p) ? pill(shapeOf(p).id, "b") : Object.keys(p.apis).map(a => pill(a, "b")).join(" ") },
+      { h: "API shape", cell: p => Object.keys(p.apis).map(a => pill(a, "b")).join(" ") },
       { h: "Base URL", cell: p => [...new Set(Object.values(p.apis))].map(mono).join("<br>") },
       { h: "Key", cell: p => p.has_key ? pill("set", "ok") : pill("no key", "warn") },
       ...(admin ? [{ h: "", cls: "acts", cell: p => `<button class="btn2" data-edit="${esc(p.name)}">Edit</button><button class="btn2 danger" data-del="${esc(p.name)}">Delete</button>` }] : [])],
       rows, "No provider yet. Harnesses that call a model need one.")}</div>`;
   const dialog = p => {
-    const was = p && shapeOf(p), first = was || (p && SHAPES.find(s => s.apis.includes(Object.keys(p.apis)[0]))) || SHAPES[0];
+    const several = p && Object.keys(p.apis).length > 1, first = SHAPES.find(s => p && s.id === Object.keys(p.apis)[0]) || SHAPES[0];
     modal({ title: p ? `Provider ${p.name}` : "Add provider", submit: "Save", body:
-      (p && !was ? `<div class="note warn">This provider was given its APIs over the API. Saving here replaces them with the one shape chosen.</div>` : "") +
+      (several ? `<div class="note warn">This provider speaks several APIs. Saving here leaves it the one shape chosen.</div>` : "") +
       field("Name", input("name", p ? p.name : "", `${p ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="anthropic"`)) +
       field("API shape", select("shape", SHAPES.map(s => [s.id, s.label]), first.id)) +
       field("Base URL", input("base_url", p ? Object.values(p.apis)[0] : first.url, "required")) +
       field("API key", input("api_key", "", `type="password" autocomplete="off"${p && p.has_key ? ' placeholder="leave empty to keep the stored key"' : ""}`), "write-only; never shown again"),
       onSubmit: async d => {
-        const doc = { apis: Object.fromEntries(SHAPES.find(s => s.id === d.shape).apis.map(a => [a, d.base_url.trim()])), ...(d.api_key ? { api_key: d.api_key } : {}) };
+        const doc = { apis: { [d.shape]: d.base_url.trim() }, ...(d.api_key ? { api_key: d.api_key } : {}) };
         if (p) await api("PATCH", `/v1/providers/${path(p.name)}`, doc); else await api("POST", "/v1/providers", { name: d.name.trim(), ...doc });
         toast("Saved", "ok"); rerender();
       } });
