@@ -17,7 +17,7 @@ async def test_a_first_turn_runs_in_a_sandbox_and_completes(platform: Platform) 
     assert turn.image_id is not None
     assert turn.image_id.startswith("sha256:")
     assert turn.command is not None
-    assert "docker run --name hg-sess_" in turn.command
+    assert "docker run --quiet --name hg-sess_" in turn.command
     assert "--read-only" in turn.command
     assert "***" in turn.command                          # the proxy token is never shown
     manifest = await platform.stores.snapshots.manifest(platform.org, turn.snapshot_id)
