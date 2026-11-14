@@ -387,7 +387,7 @@ const environments = { title: "Environments", async render(el, params, me) {
   const rows = await list("/v1/environments?limit=100"), admin = me.role === "admin";
   el.innerHTML = top("Environments", "Where turns run. An environment is an image, limits, a network policy, and variables and secrets. Every turn gets a new sandbox built from one; a request picks it by name in model (environment:harness), and default is used when it names none." + (admin ? "" : " An admin changes them."),
     admin ? `<button class="btn" id="add">Add environment</button>` : "") +
-    `<div class="card">${table([{ h: "Name", cell: e => `<b>${esc(e.name)}</b>` }, { h: "Image", cell: e => mono(e.image) },
+    `<div class="card">${table([{ h: "Name", cell: e => `<b>${esc(e.name)}</b>` }, { h: "Image", cell: e => e.image ? mono(e.image) : `<span class="muted">the platform's sandbox image</span>` },
       { h: "Limits", cell: e => `${num(e.cpus)} CPU · ${num(e.memory_mb)} MB · ${num(e.disk_mb)} MB disk · ${duration(e.turn_timeout_s)} a turn` },
       { h: "Network", cell: e => pill(...NETWORK[e.network.mode]) + (e.network.mode === "limited" ? ` <span class="muted small">${e.network.allow.length} allowed${e.network.package_managers ? " + package managers" : ""}` +
         `${e.network.deny.length ? ` · ${e.network.deny.length} denied` : ""}</span>` : "") },
@@ -408,7 +408,7 @@ const environments = { title: "Environments", async render(el, params, me) {
     const shown = modal({ title: e ? `Environment ${e.name}` : "Add environment", submit: "Save", wide: true, body:
       group("General", "What it is called, and the image its sandboxes are built from.", `<div class="grid two">` +
         field("Name", input("name", c.name, `${e ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="gpu"`), "requests name it in model: gpu:claude-code") +
-        field("Image", input("image", c.image, 'placeholder="the platform\'s sandbox image"'), "any Linux image; a harness is installed once for each image it runs in") + `</div>`) +
+        field("Image", input("image", c.image || "", 'placeholder="the platform\'s sandbox image"'), "any Linux image; empty: the platform's sandbox image, which moves with each version") + `</div>`) +
       group("Resources", "What one sandbox may use.", `<div class="grid three">` +
         field("CPUs", input("cpus", c.cpus, 'type="number" step="0.25" min="0.25" required')) + field("Memory (MB)", input("memory_mb", c.memory_mb, 'type="number" min="256" required')) +
         field("Processes", input("pids", c.pids, 'type="number" min="64" required')) + `</div><div class="grid three">` +
@@ -440,7 +440,7 @@ const environments = { title: "Environments", async render(el, params, me) {
         const doc = { cpus: +d.cpus, memory_mb: +d.memory_mb, pids: +d.pids, tmp_mb: +d.tmp_mb, disk_mb: +d.disk_mb, turn_timeout_s: +d.turn_timeout_s,
                       network: d.mode === "limited" ? { mode: d.mode, allow: lines(d.allow), deny: lines(d.deny), package_managers: !!d.package_managers } : { mode: d.mode },
                       variables, secrets,
-                      ...(d.image.trim() ? { image: d.image.trim() } : {}) };
+                      image: d.image.trim() || null };
         if (e) await api("PATCH", `/v1/environments/${path(e.name)}`, doc); else await api("POST", "/v1/environments", { name: d.name.trim(), ...doc });
         toast("Saved", "ok"); rerender();
       } });

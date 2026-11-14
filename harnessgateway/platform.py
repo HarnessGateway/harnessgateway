@@ -53,7 +53,7 @@ class Platform:
             try:
                 harness = await self.stores.harnesses.get(org_id, harness_name)
                 environment = await self.stores.environments.get(org_id, environment_name)
-                image_id = await self.driver.image_id(environment.image)
+                image_id = await self.driver.image_id(self.stores.image(environment))
                 await self.installer.ensure(org_id, harness, environment, image_id)
             except InstallFailed:
                 pass                                            # the install's own record says why

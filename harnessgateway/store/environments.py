@@ -34,10 +34,9 @@ def _split(body: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, object]]:
 
 
 class Environments:
-    def __init__(self, db: Database, sealer: Sealer, default_image: str) -> None:
+    def __init__(self, db: Database, sealer: Sealer) -> None:
         self._db = db
         self._sealer = sealer
-        self._default_image = default_image
 
     def _sealed(self, org_id: str, environment: Environment, values: Mapping[str, object],
                 kept: Mapping[str, str]) -> dict[str, str]:
@@ -55,7 +54,7 @@ class Environments:
 
     async def create(self, org_id: str, body: Mapping[str, Any]) -> Environment:
         fields, values = _split(body)
-        environment = Environment.load(fields, default_image=self._default_image)
+        environment = Environment.load(fields)
         sealed = self._sealed(org_id, environment, values, {})
         async with self._db.org(org_id) as conn:
             cursor = await conn.execute(
@@ -81,7 +80,7 @@ class Environments:
                 [org_id, name])).fetchone()
             if row is None:
                 raise NotFound(f"there is no environment named {name!r}")
-            environment = Environment.load({**row["spec"], **fields}, default_image=self._default_image)
+            environment = Environment.load({**row["spec"], **fields})
             sealed = self._sealed(org_id, environment, values, row["secrets_sealed"])
             await conn.execute(
                 "UPDATE environments SET spec = %s, secrets_sealed = %s, updated_at = now() "
@@ -102,13 +101,13 @@ class Environments:
                 "SELECT spec FROM environments WHERE org_id = %s AND name = %s", [org_id, name])).fetchone()
         if row is None:
             raise NotFound(f"there is no environment named {name!r}")
-        return Environment.load(row["spec"], default_image=self._default_image)
+        return Environment.load(row["spec"])
 
     async def all(self, org_id: str) -> list[Environment]:
         async with self._db.org(org_id) as conn:
             rows = await (await conn.execute(
                 "SELECT spec FROM environments WHERE org_id = %s ORDER BY name", [org_id])).fetchall()
-        return [Environment.load(row["spec"], default_image=self._default_image) for row in rows]
+        return [Environment.load(row["spec"]) for row in rows]
 
     async def secret_values(self, org_id: str, name: str) -> dict[str, str]:
         """The environment's secret values, opened. Only the egress proxy's policy ever asks."""

@@ -17,7 +17,7 @@ from harnessgateway.store.db import Database
 from harnessgateway.store.turns import CANCEL, CONTROL, QUEUED, Turn, Turns
 from tests.conftest import make_org
 
-ENVIRONMENT = Environment.load({"name": "default"}, default_image="sandbox:test")
+ENVIRONMENT = Environment.load({"name": "default"})
 MESSAGE = {"type": "message", "id": "msg_1", "role": "assistant", "status": "completed", "content": []}
 DEEPSEEK = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"}})
 

@@ -48,7 +48,8 @@ def _image(value: str) -> str:
 
 class Environment(Definition):
     name: Annotated[str, AfterValidator(lambda v: check_name(v, "name"))]
-    image: Annotated[str, AfterValidator(_image)]
+    image: Annotated[str, AfterValidator(_image)] | None = None      # None: the platform's sandbox image, whatever
+                                                                     # its version (spec §7.6)
     cpus: Annotated[float, Field(ge=0.25, le=64)] = 2
     memory_mb: Annotated[int, Field(ge=256, le=262_144)] = 4096
     pids: Annotated[int, Field(ge=64, le=65_536)] = 512
@@ -58,11 +59,6 @@ class Environment(Definition):
     network: Network = Network()
     variables: dict[str, Annotated[str, Field(max_length=VALUE_MAX)]] = Field(default_factory=dict)
     secrets: dict[str, EnvironmentSecret] = Field(default_factory=dict)
-
-    @classmethod
-    def load(cls, data: object, *, default_image: str) -> Self:      # type: ignore[override]
-        return super().load(data, image=default_image) if isinstance(data, dict) and "image" not in data \
-            else super().load(data)
 
     @model_validator(mode="after")
     def _rules(self) -> Self:

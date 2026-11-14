@@ -1,6 +1,7 @@
 """Spec §9, §10.1, §14.1, §14.3: providers and environments as they are stored, changed and read."""
 
 import base64
+import dataclasses
 
 import pytest
 
@@ -9,6 +10,7 @@ from harnessgateway.errors import Conflict, Invalid, NotFound
 from harnessgateway.store.db import Database
 from harnessgateway.store.environments import Environments
 from harnessgateway.store.providers import Providers
+from harnessgateway.stores import Stores
 from tests.conftest import make_org
 
 DEEPSEEK = {"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic",
@@ -28,7 +30,7 @@ def providers(db: Database, sealer: Sealer) -> Providers:
 
 @pytest.fixture
 def environments(db: Database, sealer: Sealer) -> Environments:
-    return Environments(db, sealer, default_image="sandbox:test")
+    return Environments(db, sealer)
 
 
 # ── providers ───────────────────────────────────────────────────────────────────────────────────────
@@ -124,14 +126,28 @@ SECURE = {
 }
 
 
-async def test_the_default_environment_is_made_once_with_the_platform_s_image(
-    environments: Environments, org: str
-) -> None:
+async def test_the_default_environment_is_made_once_and_names_no_image(environments: Environments, org: str) -> None:
     await environments.ensure_default(org)
     await environments.ensure_default(org)
     [default] = await environments.all(org)
-    assert (default.name, default.image, default.cpus, default.network.mode) == (
-        "default", "sandbox:test", 2, "limited")
+    assert (default.name, default.image, default.cpus, default.network.mode) == ("default", None, 2, "limited")
+
+
+async def test_an_environment_that_names_no_image_follows_the_platform_s_sandbox_image(
+    stores: Stores, org: str
+) -> None:
+    await stores.environments.create(org, {"name": "follows"})
+    pinned = await stores.environments.create(org, {"name": "pinned", "image": "acme/agents:1"})
+    follows = await stores.environments.get(org, "follows")
+    assert stores.image(follows) == stores.settings.sandbox_image
+    assert stores.image(pinned) == "acme/agents:1"
+
+    upgraded = Stores.of(dataclasses.replace(stores.settings, sandbox_image="sandbox:next"), stores.db, stores.blobs)
+    assert upgraded.image(await upgraded.environments.get(org, "follows")) == "sandbox:next"    # a new version
+    assert upgraded.image(await upgraded.environments.get(org, "pinned")) == "acme/agents:1"
+
+    released = await stores.environments.update(org, "pinned", {"image": None})            # back to following
+    assert (released.image, stores.image(released)) == (None, stores.settings.sandbox_image)
 
 
 async def test_an_environment_is_created_and_its_secret_value_is_never_in_what_is_read(

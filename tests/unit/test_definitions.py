@@ -120,9 +120,9 @@ def test_other_names_are_free(name: str) -> None:
 # ── the environment ─────────────────────────────────────────────────────────────────────────────────
 
 def test_an_environment_with_only_a_name_gets_the_defaults() -> None:
-    e = Environment.load({"name": "default"}, default_image="sandbox:4")
+    e = Environment.load({"name": "default"})
     assert (e.image, e.cpus, e.memory_mb, e.pids, e.tmp_mb, e.disk_mb, e.turn_timeout_s) == (
-        "sandbox:4", 2, 4096, 512, 1024, 10240, 1800)
+        None, 2, 4096, 512, 1024, 10240, 1800)                  # no image: the platform's sandbox image
     assert (e.network.mode, e.network.allow, e.network.deny, e.network.package_managers) == ("limited", (), (), True)
     assert e.variables == {}
     assert e.secrets == {}
@@ -135,7 +135,7 @@ def test_a_full_environment_is_read() -> None:
         "network": {"mode": "limited", "allow": ["a.com"], "deny": ["*.bad.com"], "package_managers": False},
         "variables": {"TZ": "UTC", "npm_config_loglevel": "error"},
         "secrets": {"EXAMPLE_TOKEN": {"hosts": ["api.example.com"], "header": "Authorization", "prefix": "Bearer "}},
-    }, default_image="sandbox:4")
+    })
     assert e.image == "ghcr.io/acme/agents:1"
     assert e.network.deny[0].host == "*.bad.com"
     assert e.secrets["EXAMPLE_TOKEN"].header == "Authorization"
@@ -172,19 +172,19 @@ def test_a_full_environment_is_read() -> None:
 )
 def test_the_environment_refuses_what_is_not_allowed_and_names_it(changes: dict[str, Any], names: str) -> None:
     with pytest.raises(Invalid) as e:
-        Environment.load({"name": "x", **changes}, default_image="sandbox:4")
+        Environment.load({"name": "x", **changes})
     assert names in str(e.value)
 
 
 @pytest.mark.parametrize("mode", ["closed", "limited", "open"])
 def test_a_network_is_closed_limited_or_open(mode: str) -> None:
-    e = Environment.load({"name": "x", "network": {"mode": mode}}, default_image="sandbox:4")
+    e = Environment.load({"name": "x", "network": {"mode": mode}})
     assert (e.network.mode, e.network.allow, e.network.deny) == (mode, (), ())
 
 
 def test_tmp_must_fit_in_memory() -> None:
     with pytest.raises(Invalid) as e:
-        Environment.load({"name": "x", "memory_mb": 512, "tmp_mb": 1024}, default_image="sandbox:4")
+        Environment.load({"name": "x", "memory_mb": 512, "tmp_mb": 1024})
     assert "tmp_mb" in str(e.value)
 
 
@@ -238,12 +238,12 @@ def test_every_definition_dumps_as_it_is_written_and_loads_back() -> None:
     environment = Environment.load({
         "name": "secure", "network": {"mode": "limited", "allow": ["api.example.com:8443"], "deny": ["*.bad.example"]},
         "variables": {"TZ": "UTC"}, "secrets": {"TOKEN": {"hosts": ["api.example.com"], "header": "Authorization"}},
-    }, default_image="image:1")
+    })
     provider = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"}})
 
     assert full_manifest.dump()["install"]["egress"] == ["registry.npmjs.org", "*.example.org:8443"]
     assert environment.dump()["network"]["allow"] == ["api.example.com:8443"]
     assert environment.dump()["secrets"]["TOKEN"]["hosts"] == ["api.example.com"]
     assert Manifest.load(full_manifest.dump()) == full_manifest
-    assert Environment.load(environment.dump(), default_image="other") == environment
+    assert Environment.load(environment.dump()) == environment
     assert Provider.load(provider.dump()) == provider

@@ -24,8 +24,8 @@ def provider(name: str, **apis: str) -> Provider:
 
 
 ENVIRONMENTS = {
-    "default": Environment.load({"name": "default"}, default_image="sandbox:4"),
-    "closed": Environment.load({"name": "closed", "network": {"mode": "closed"}}, default_image="sandbox:4"),
+    "default": Environment.load({"name": "default"}),
+    "closed": Environment.load({"name": "closed", "network": {"mode": "closed"}}),
 }
 DEEPSEEK = Provider.load({
     "name": "deepseek",

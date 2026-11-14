@@ -261,6 +261,7 @@ try {
     if (await dialog().locator(".secret-edit [data-s=value]").inputValue()) throw new Error("a secret's value came back");
     await dialog().locator("[data-cancel]").click();
 
+    await page.waitForSelector(`#content tr:has-text("default"):has-text("the platform's sandbox image")`);
     await page.click("#add");                                                         // and one that reaches its provider only
     await dialog().locator("[name=name]").fill(`closed-${stamp}`);
     await mode().selectOption("closed");

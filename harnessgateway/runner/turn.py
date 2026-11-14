@@ -132,7 +132,7 @@ class TurnRunner:
         stores, driver = self._stores, self._driver
         try:
             resolved = await stores.resolve(turn.org_id, turn.path)
-            image_id = await driver.image_id(resolved.environment.image)
+            image_id = await driver.image_id(stores.image(resolved.environment))
         except (Refused, DriverError) as e:
             raise _Failed(Observed(sandbox_failed=True), f"the turn could not be prepared: {e}") from None
 

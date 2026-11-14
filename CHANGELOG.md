@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.1.3
+
+- An environment that names no image uses the platform's sandbox image of the version that is running, and
+  moves to each new version's image when the platform is updated. The `default` environment names none, so it
+  follows the platform. Before, an environment was given the image of the version it was made under, and kept
+  it. An environment that names an image keeps it; setting `image` to `null` makes it follow again.
+- Console: an environment that names no image shows "the platform's sandbox image", and clearing the Image
+  field makes it follow again.
+
 ## 4.1.2
 
 - The default sandbox image is built on Chainguard's Wolfi base, pinned by digest: Node.js 26 with npm,

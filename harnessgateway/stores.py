@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from harnessgateway.domain.environment import Environment
 from harnessgateway.domain.modelpath import ModelPath
 from harnessgateway.domain.resolve import Resolved, resolve
 from harnessgateway.domain.sealing import Sealer, keyed_hash
@@ -40,6 +41,11 @@ class Stores:
     audit: Audit
     platform: PlatformStore
 
+    def image(self, environment: Environment) -> str:
+        """The image an environment's sandboxes are built from: its own, or else the platform's sandbox image of
+        this version, so an environment that names none moves to each new version's image (spec §7.6)."""
+        return environment.image or self.settings.sandbox_image
+
     @classmethod
     def of(cls, settings: Settings, db: Database, blobs: BlobStore) -> "Stores":
         sealer = Sealer(settings.secret_key)
@@ -49,7 +55,7 @@ class Stores:
             keys=Keys(db, settings.secret_key),
             snapshots=Snapshots(db, blobs),
             providers=Providers(db, sealer),
-            environments=Environments(db, sealer, settings.sandbox_image),
+            environments=Environments(db, sealer),
             harnesses=Harnesses(db, blobs, sealer),
             drafts=Drafts(db),
             files=Files(db, blobs),
