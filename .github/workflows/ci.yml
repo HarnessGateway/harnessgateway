@@ -1,8 +1,12 @@
 name: ci
-# Every level of the test plan (SPEC §24) that a hosted runner can run, and both images built.
+# Every level of the test plan (SPEC §24) that a hosted runner can run, and both images built and scanned. It also
+# runs every week: a vulnerability can be published against an image that has not changed.
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -48,5 +52,29 @@ jobs:
         run: |
           docker run --rm harnessgateway:ci harnessgateway version
           docker run --rm harnessgateway:ci harnessgateway package check /packages/shell
-      - name: The sandbox image has what the shipped harnesses need, as user 10000
-        run: docker run --rm sandbox:ci sh -c 'test "$(id -u)" = 10000 && node --version && python3 -c "import sys; assert sys.version_info >= (3, 12)" && git --version'
+      - name: The sandbox image has what the shipped harnesses need, as user 10000, and nothing that raises privileges
+        run: |
+          docker run --rm --user 10000:10000 --read-only --tmpfs /tmp --entrypoint /bin/sh sandbox:ci -c '
+            set -e
+            test "$(id -u)" = 10000
+            node --version && npm --version
+            python3 -c "import sys; assert sys.version_info >= (3, 12), sys.version"
+            python3 -m venv /tmp/venv && /tmp/venv/bin/pip --version
+            git --version && curl --version >/dev/null && rg --version >/dev/null && jq --version
+            if command -v apk || command -v busybox; then echo "a package manager or BusyBox is left"; exit 1; fi
+            test -z "$(find / -xdev -type f -perm /6000 2>/dev/null)"'
+      # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
+      - name: Scan the platform image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0
+        with:
+          image-ref: harnessgateway:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the sandbox image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0
+        with:
+          image-ref: sandbox:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"

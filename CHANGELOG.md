@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.1.2
+
+- The default sandbox image is built on Chainguard's Wolfi base, pinned by digest: Node.js 26 with npm,
+  Python 3.14 with pip and venv, and git, curl, jq, ripgrep and the common shell tools. No package manager or
+  BusyBox is left in it, no file raises privileges, and one user, 10000, may log in. It was Debian 13.
+- CI scans the platform image and the sandbox image with Trivy on every change and every week. A CRITICAL or
+  HIGH finding with a fix available fails the run.
+
 ## 4.1.1
 
 - Console: an environment's form is in four groups: General (name, image), Resources (CPUs, memory,
