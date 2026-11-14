@@ -48,10 +48,15 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -f images/platform/Dockerfile -t harnessgateway:ci .
       - run: docker build -f images/sandbox/Dockerfile -t sandbox:ci images/sandbox
-      - name: The platform image runs, and its catalog holds the template package
+      - name: The platform image runs, its catalog holds the template package, and nothing in it raises privileges
         run: |
           docker run --rm harnessgateway:ci harnessgateway version
           docker run --rm harnessgateway:ci harnessgateway package check /packages/shell
+          docker run --rm --entrypoint /bin/sh harnessgateway:ci -c '
+            set -e
+            docker --version
+            if command -v apk || command -v busybox; then echo "a package manager or BusyBox is left"; exit 1; fi
+            test -z "$(find / -xdev -type f -perm /6000 2>/dev/null)"'
       - name: The sandbox image has what the shipped harnesses need, as user 10000, and nothing that raises privileges
         run: |
           docker run --rm --user 10000:10000 --read-only --tmpfs /tmp:rw,exec --entrypoint /bin/sh sandbox:ci -c '

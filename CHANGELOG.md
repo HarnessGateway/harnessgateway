@@ -5,6 +5,9 @@
 - The default sandbox image is built on Chainguard's Wolfi base, pinned by digest: Node.js 26 with npm,
   Python 3.14 with pip and venv, and git, curl, jq, ripgrep and the common shell tools. No package manager or
   BusyBox is left in it, no file raises privileges, and one user, 10000, may log in. It was Debian 13.
+- The platform image is built on the same base: Python 3.13 with exactly the dependencies uv.lock pins, the
+  Docker client, bash and coreutils. No package manager or BusyBox is left in it, and no file raises
+  privileges. It was Debian 13.
 - CI scans the platform image and the sandbox image with Trivy on every change and every week. A CRITICAL or
   HIGH finding with a fix available fails the run.
 
