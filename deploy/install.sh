@@ -94,7 +94,8 @@ echo
 [ "${ready:-}" = 1 ] || { docker compose logs --tail 40 serve >&2; fail "it did not become ready; its last log lines are above."; }
 
 echo
-docker compose exec -T serve harnessgateway init
+# Piped from the web, this script is bash's standard input: a command that reads it would take the rest.
+docker compose exec -T serve harnessgateway init </dev/null
 isolation=$(docker info --format '{{json .Runtimes}}' | grep -q runsc && echo gvisor || echo none)
 cat <<DONE
 
