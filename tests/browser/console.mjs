@@ -52,7 +52,10 @@ try {
     await page.fill("#key", key);
     await page.click("#go");
     await page.waitForSelector("#who:has-text('admin')");
-    await page.waitForSelector("#nav .item.on:has-text('Harnesses')");
+    await page.waitForSelector("#nav .item.on:has-text('Providers')");     // Setup's first page is where one lands
+    const sidebar = (await page.locator("#nav .mod, #nav .item").allTextContents()).map((text) => text.trim());
+    const setup = sidebar.slice(sidebar.indexOf("Setup") + 1, sidebar.indexOf("Workbench"));
+    if (setup.join(", ") !== "Providers, Environments, Harnesses") throw new Error(`Setup lists ${setup.join(", ")}`);
   });
 
   await step("a harness is added from the catalog and installs", async () => {

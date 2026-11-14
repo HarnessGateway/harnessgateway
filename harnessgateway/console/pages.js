@@ -9,8 +9,9 @@ import { session } from "/session.js";
 export function nav(me) {
   const developer = me.role !== "runner", admin = me.role === "admin";
   const mods = [
-    ...(developer ? [{ mod: "Setup", items: [{ id: "harnesses", label: "Harnesses", icon: "box" }, { id: "environments", label: "Environments", icon: "shield" },
-                                             { id: "providers", label: "Providers", icon: "globe" }] }] : []),
+    // Setup is in the order a new platform is set up: a harness needs a provider to speak to and an environment to run in.
+    ...(developer ? [{ mod: "Setup", items: [{ id: "providers", label: "Providers", icon: "globe" }, { id: "environments", label: "Environments", icon: "shield" },
+                                             { id: "harnesses", label: "Harnesses", icon: "box" }] }] : []),
     { mod: "Workbench", items: [{ id: "chat", label: "Chat", icon: "chat" }, { id: "playground", label: "Playground", icon: "code" }] },
     ...(admin ? [{ mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" }] }] : []),
     ...(developer ? [{ mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" },
