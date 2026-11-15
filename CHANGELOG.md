@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.1.4
+
+- A sandbox killed with exit 137 that the platform did not stop (not for a cancel, the time limit or the disk
+  limit) fails with `out_of_memory`. Docker can report a container's exit before the kernel's out-of-memory
+  event reaches it, so its out-of-memory flag can still be false: such a turn failed with `harness_error`.
+- The catalog's Claude Code and Harness Package Builder packages install on npm 12, which the default sandbox
+  image has and which runs no package's install script unless told to.
+
 ## 4.1.3
 
 - An environment that names no image uses the platform's sandbox image of the version that is running, and

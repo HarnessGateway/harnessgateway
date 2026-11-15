@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Literal
 
+KILLED = 128 + 9                                       # the exit code of a process sent SIGKILL
+
 
 @dataclass(frozen=True)
 class Terminal:
@@ -60,6 +62,11 @@ def decide(seen: Observed) -> Outcome:
         return _failed("out_of_disk", "the session's files passed the environment's disk limit; the turn was stopped")
     if seen.out_of_memory:
         return _failed("out_of_memory", "the turn passed its environment's memory limit and was stopped")
+    if seen.exit_code == KILLED:
+        # Only the platform, whose stops are known above, and the kernel's out-of-memory killer send SIGKILL in a
+        # sandbox. Docker can report the exit before the kernel's event reaches it, so its flag may still be false.
+        return _failed("out_of_memory", "the harness was killed (exit 137), most likely by its environment's "
+                                        "memory limit")
     if seen.invalid_output is not None:
         return _failed("invalid_output", f"the harness printed a line that is not a valid event: {seen.invalid_output}")
     if seen.save_failed:

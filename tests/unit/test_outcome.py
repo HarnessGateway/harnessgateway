@@ -22,6 +22,7 @@ def test_a_package_that_reports_done_and_exits_cleanly_completes() -> None:
         (Observed(timed_out=True, exit_code=137), "failed", "timed_out"),
         (Observed(out_of_disk=True, exit_code=137), "failed", "out_of_disk"),
         (Observed(out_of_memory=True, exit_code=137), "failed", "out_of_memory"),
+        (Observed(exit_code=137, terminal=DONE), "failed", "out_of_memory"),
         (Observed(invalid_output="line 3 is not JSON", exit_code=143), "failed", "invalid_output"),
         (Observed(save_failed=True, exit_code=0, terminal=DONE), "failed", "save_failed"),
         (Observed(exit_code=0, terminal=Terminal(kind="failed", code="provider_error", message="401")),
@@ -62,3 +63,16 @@ def test_a_message_says_what_happened_in_plain_words() -> None:
     assert "time limit" in (decide(Observed(timed_out=True)).message or "")
     assert "memory" in (decide(Observed(out_of_memory=True)).message or "")
     assert "exited with code 3" in (decide(Observed(exit_code=3)).message or "")
+
+
+def test_a_kill_the_platform_did_not_make_is_the_memory_limit_even_before_docker_says_so() -> None:
+    # Docker can report a container's exit before the kernel's out-of-memory event reaches it, so its flag reads
+    # false for a container the limit killed. Nothing else in a sandbox sends SIGKILL (exit 137) but the platform,
+    # whose own stops are known and win, and the kernel's out-of-memory killer.
+    killed = decide(Observed(exit_code=137))
+    assert (killed.status, killed.reason) == ("failed", "out_of_memory")
+    assert "137" in (killed.message or "")
+    assert "memory limit" in (killed.message or "")
+    assert decide(Observed(timed_out=True, exit_code=137)).reason == "timed_out"
+    assert decide(Observed(out_of_disk=True, exit_code=137)).reason == "out_of_disk"
+    assert decide(Observed(invalid_output="half a line", exit_code=137)).reason == "out_of_memory"

@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from harnessgateway.domain.outcome import KILLED, Observed, decide
 from harnessgateway.domain.plan import Mount, SandboxPlan, StepPlan
 from harnessgateway.drivers.base import SandboxExit
 from harnessgateway.drivers.docker import DockerDriver
@@ -62,11 +63,12 @@ async def test_a_sandbox_with_no_network_reaches_nothing(driver: DockerDriver, u
 
 
 async def test_the_memory_limit_kills_and_is_told_apart(driver: DockerDriver, unique: str) -> None:
+    # Docker's out-of-memory flag can lag the exit it reports, so the kill (SIGKILL, exit 137) is what tells it apart.
     hog = "node -e \"const a=[]; for(;;) a.push(Buffer.alloc(8<<20, 1))\""
     result, _, _ = await run(driver, sandbox(unique, hog, memory_mb=64, tmp_mb=16))
     assert result.started
-    assert result.out_of_memory
-    assert result.exit_code != 0
+    assert result.exit_code == KILLED
+    assert decide(Observed(exit_code=result.exit_code, out_of_memory=result.out_of_memory)).reason == "out_of_memory"
 
 
 async def test_a_running_sandbox_can_be_stopped(driver: DockerDriver, unique: str) -> None:
