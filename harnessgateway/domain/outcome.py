@@ -21,6 +21,7 @@ class Terminal:
 class Observed:
     """Everything known about a turn once its steps are over."""
 
+    setup_failed: bool = False
     install_failed: bool = False
     restore_failed: bool = False
     sandbox_failed: bool = False
@@ -48,6 +49,8 @@ def _failed(reason: str, message: str) -> Outcome:
 
 
 def decide(seen: Observed) -> Outcome:
+    if seen.setup_failed:
+        return _failed("setup_failed", "the environment's setup script failed")
     if seen.install_failed:
         return _failed("install_failed", "the harness could not be installed for this environment")
     if seen.restore_failed:

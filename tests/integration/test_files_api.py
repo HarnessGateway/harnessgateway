@@ -12,6 +12,7 @@ import openai
 import pytest
 
 from harnessgateway.stores import Stores
+from tests.helpers import SHELL_MODEL
 from tests.integration.api import Running, running
 
 
@@ -19,6 +20,7 @@ from tests.integration.api import Running, running
 async def api(stores: Stores, org: str, tmp_path: Path) -> AsyncIterator[Running]:
     async with running(stores, org, tmp_path) as api:
         await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
+        await api.admin.patch("/v1/environments/default", json={"harnesses": ["shell"]})
         yield api
 
 
@@ -53,13 +55,13 @@ async def test_an_upload_that_is_not_acceptable_is_refused(api: Running) -> None
 
 async def test_a_file_named_in_a_request_is_there_for_the_turn(api: Running) -> None:
     file = await api.openai.files.create(file=("notes.txt", b"remember the milk"), purpose="user_data")
-    response = await api.openai.responses.create(model="shell", input=[{"role": "user", "content": [
+    response = await api.openai.responses.create(model=SHELL_MODEL, input=[{"role": "user", "content": [
         {"type": "input_text", "text": f"cat $HG_TURN/files/{file.id}/notes.txt"},
         {"type": "input_file", "file_id": file.id},
     ]}])
     assert response.output_text == "remember the milk\n"
     with pytest.raises(openai.BadRequestError, match="a file that does not exist"):
-        await api.openai.responses.create(model="shell", input=[{"role": "user", "content": [
+        await api.openai.responses.create(model=SHELL_MODEL, input=[{"role": "user", "content": [
             {"type": "input_text", "text": "ls"}, {"type": "input_file", "file_id": "file_absent"}]}])
 
 
@@ -70,19 +72,20 @@ async def test_a_file_sent_inside_a_request_is_in_the_work_folder_and_stays_with
             {"type": "input_file", "filename": "customers.json",
              "file_data": "data:application/json;base64," + base64.b64encode(content).decode()}]}]
 
-    first = await api.openai.responses.create(model="shell", input=sent(b"monday"))
+    first = await api.openai.responses.create(model=SHELL_MODEL, input=sent(b"monday"))
     assert first.output_text == "monday\n"
     assert first.metadata is not None
     container = "cntr_" + first.metadata["hg_session"].removeprefix("sess_")
     assert [file.path for file in (await api.openai.containers.files.list(container)).data] == [
         "/work/inputs/customers.json"]
-    later = await api.openai.responses.create(model="shell", input=sent(b"tuesday"), previous_response_id=first.id)
+    later = await api.openai.responses.create(model=SHELL_MODEL, input=sent(b"tuesday"), previous_response_id=first.id)
     assert later.output_text == "tuesday\n"                     # sent again, it takes the earlier one's place
 
 
 async def test_what_an_agent_made_is_listed_and_downloaded_with_the_containers_api(api: Running) -> None:
     response = await api.openai.responses.create(
-        model="shell", input="mkdir out && echo '# Report' > out/report.md && echo raw > data.txt && echo x > ~/.mind")
+        model=SHELL_MODEL,
+        input="mkdir out && echo '# Report' > out/report.md && echo raw > data.txt && echo x > ~/.mind")
     assert response.metadata is not None
     container = "cntr_" + response.metadata["hg_session"].removeprefix("sess_")
 
@@ -99,7 +102,7 @@ async def test_what_an_agent_made_is_listed_and_downloaded_with_the_containers_a
     content = await api.openai.containers.files.content.retrieve(report.id, container_id=container)
     assert content.content == b"# Report\n"
 
-    later = await api.openai.responses.create(model="shell", input="echo more >> data.txt; rm out/report.md",
+    later = await api.openai.responses.create(model=SHELL_MODEL, input="echo more >> data.txt; rm out/report.md",
                                               previous_response_id=response.id)
     assert later.status == "completed"
     now = await api.openai.containers.files.list(container)
@@ -117,7 +120,8 @@ async def test_a_container_that_is_not_there_is_not_found(api: Running) -> None:
 
 
 async def test_a_long_listing_is_paged(api: Running) -> None:
-    response = await api.openai.responses.create(model="shell", input="for n in 1 2 3 4 5; do echo $n > f$n.txt; done")
+    response = await api.openai.responses.create(model=SHELL_MODEL,
+                                                 input="for n in 1 2 3 4 5; do echo $n > f$n.txt; done")
     assert response.metadata is not None
     container = "cntr_" + response.metadata["hg_session"].removeprefix("sess_")
     first = await api.openai.containers.files.list(container, limit=2)

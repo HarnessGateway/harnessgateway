@@ -37,7 +37,7 @@ def turns(db: Database) -> Turns:
 async def queue(turns: Turns, org: str, text: str = "echo hi", *, parent: Turn | None = None,
                 harness: str = "shell", **request: Any) -> Turn:
     return await turns.create(org, resolved=resolved(harness), parent=parent, key_id="key_1",
-                              request={"model": harness, "input": text, **request})
+                              request={"model": f"default/{harness}/none/none", "input": text, **request})
 
 
 async def finish(turns: Turns, turn: Turn, **changes: Any) -> Turn:
@@ -71,18 +71,18 @@ async def test_a_request_with_no_parent_starts_a_session(turns: Turns, org: str)
 
     response = turn.response()
     Response.model_validate(response)
-    assert (response["status"], response["model"]) == ("queued", "default:shell")
+    assert (response["status"], response["model"]) == ("queued", "default/shell/none/none")
     assert response["metadata"] == {"ticket": "42", "hg_session": turn.session_id}
 
 
 async def test_what_a_turn_runs_with_is_recorded_on_it(turns: Turns, org: str) -> None:
     turn = await turns.create(org, resolved=resolved("claude-code", mind=".claude", provider=DEEPSEEK), parent=None,
-                              key_id=None, request={"model": "claude-code", "input": "hi", "background": True,
-                                                    "store": False})
+                              key_id=None, request={"model": "default/claude-code/deepseek/deepseek-flash",
+                                                    "input": "hi", "background": True, "store": False})
     assert (turn.harness, turn.mind_dir, turn.provider, turn.api, turn.model, turn.digest) == (
         "claude-code", ".claude", "deepseek", "anthropic", "deepseek-flash", "d" * 64)
     assert (turn.background, turn.store) == (True, False)
-    assert str(turn.path) == "default:claude-code/deepseek/deepseek-flash"
+    assert str(turn.path) == "default/claude-code/deepseek/deepseek-flash"
 
 
 async def test_naming_the_head_continues_the_session(turns: Turns, org: str) -> None:

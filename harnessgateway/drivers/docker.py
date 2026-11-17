@@ -8,8 +8,8 @@ from asyncio.subprocess import PIPE, STDOUT
 from harnessgateway.domain.contract import SANDBOX_UID
 from harnessgateway.domain.events import LINE_MAX
 from harnessgateway.domain.masking import mask
-from harnessgateway.domain.plan import Mount, SandboxPlan, StepPlan
-from harnessgateway.drivers.base import DriverError, OnLine, SandboxExit, StepResult
+from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
+from harnessgateway.drivers.base import BuildResult, DriverError, OnLine, SandboxExit, StepResult
 
 LABEL = "hg.org"                       # every container of this platform carries it
 OUTPUT_TAIL = 64 * 1024
@@ -52,6 +52,24 @@ def render_sandbox(plan: SandboxPlan, *, runtime: str | None) -> list[str]:
         "--workdir", plan.workdir,
         *_mounts_and_env(plan.mounts, plan.env),
         "--entrypoint", plan.command[0], plan.image, *plan.command[1:],      # whatever ENTRYPOINT the image names
+    ]
+
+
+def render_build(plan: BuildPlan) -> list[str]:
+    """The command that runs an environment's setup script: as root on its base image, since installing system
+    packages needs it, and under runc, whose changes to the filesystem `docker commit` can keep. The script is
+    the environment's administrator's, as trusted as the image they named; it reaches the network only through
+    the egress proxy."""
+    return [
+        "docker", "run", "--interactive", "--name", plan.name,
+        *_common(plan.labels, plan.network),
+        "--runtime", "runc",
+        "--cpus", f"{plan.cpus:g}", "--memory", f"{plan.memory_mb}m", "--memory-swap", f"{plan.memory_mb}m",
+        "--pids-limit", str(plan.pids),
+        "--security-opt", "no-new-privileges",
+        "--user", "0:0",
+        *_mounts_and_env(plan.mounts, {}),
+        "--entrypoint", "/bin/sh", plan.image, "-s",
     ]
 
 
@@ -151,6 +169,37 @@ class DockerDriver:
 
     async def describe(self, plan: SandboxPlan) -> str:
         return mask(shlex.join(render_sandbox(plan, runtime=await self._resolve_runtime())))
+
+    async def build(self, plan: BuildPlan, on_line: OnLine) -> BuildResult:
+        argv = render_build(plan)
+        process = await asyncio.create_subprocess_exec(*argv, stdin=PIPE, stdout=PIPE, stderr=STDOUT)
+        assert process.stdin is not None
+        assert process.stdout is not None
+        try:
+            process.stdin.write(plan.stdin.encode())
+            await process.stdin.drain()
+            process.stdin.close()
+            await _pump(process.stdout, on_line)
+            await process.wait()
+            code, state = await self._docker("inspect", "--format", "{{.State.StartedAt}} {{.State.ExitCode}}",
+                                             plan.name)
+            if code != 0 or state.startswith(_NEVER_STARTED):
+                return BuildResult(started=False, error=state)
+            exit_code = int(state.split()[1])
+            if exit_code != 0:
+                return BuildResult(started=True, exit_code=exit_code)
+            await self._checked("commit", "--change", f"LABEL hg.build={plan.labels['hg.build']}", plan.name,
+                                plan.tag)
+            return BuildResult(started=True, exit_code=0,
+                               image_id=await self._checked("image", "inspect", "--format", "{{.Id}}", plan.tag))
+        finally:
+            if process.returncode is None:
+                process.kill()
+            await self._docker("rm", "--force", "--volumes", plan.name)
+
+    async def remove_image(self, image_id: str) -> bool:
+        code, output = await self._docker("image", "rm", image_id)
+        return code == 0 or "No such image" in output
 
     async def ensure_network(self, name: str, *, internal: bool) -> None:
         code, _ = await self._docker("network", "inspect", name)

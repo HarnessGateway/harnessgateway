@@ -11,7 +11,7 @@ from harnessgateway.api.management import Role, file_response, harness_shown, se
 from harnessgateway.api.public import read_json
 from harnessgateway.catalog import Catalog
 from harnessgateway.domain.archive import MANIFEST_NAME, PackageFile, read_archive, write_archive
-from harnessgateway.domain.names import DEFAULT_ENVIRONMENT, check_name
+from harnessgateway.domain.names import check_name
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Invalid, TooLarge
 from harnessgateway.platform import Platform
@@ -107,7 +107,7 @@ def drafts_router(platform: Platform, role: Role) -> APIRouter:
         await drafts.delete(org_id, name)
         await platform.audit(principal, "harness.add", harness.name,
                              {"version": harness.manifest.version, "digest": harness.digest, "source": f"draft:{name}"})
-        platform.install_in_background(org_id, harness.name, DEFAULT_ENVIRONMENT)
+        platform.prepare_in_background(org_id, await platform.carrying(org_id, harness.name))
         return await harness_shown(stores, org_id, harness)
 
     return router

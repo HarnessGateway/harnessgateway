@@ -30,6 +30,7 @@ class Housekeeping:
             with contextlib.suppress(Refused):                              # it came back to life meanwhile
                 await platform.remove_session(org_id, session_id)
         await platform.remove_unused_packages()
+        await platform.remove_unused_builds()
         for org in await stores.orgs.all():
             await stores.snapshots.collect(org.id, grace_s=CHUNK_GRACE_S)
 

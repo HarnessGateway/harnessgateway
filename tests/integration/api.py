@@ -39,9 +39,15 @@ class Running:
         await self.openai.close()
 
     async def installed(self, name: str) -> dict[str, Any]:
-        """Wait for a harness's background install to finish, and return the harness as the API shows it."""
+        """Wait for the environments that carry a harness to be prepared, and return the harness as the API
+        shows it."""
         await self.platform.settle()
         return (await self.developer.get(f"/v1/harnesses/{name}")).json()
+
+    async def prepared(self, name: str) -> dict[str, Any]:
+        """Wait for an environment to be prepared, and return it as the API shows it."""
+        await self.platform.settle()
+        return (await self.developer.get(f"/v1/environments/{name}")).json()
 
 
 @contextlib.asynccontextmanager
@@ -57,7 +63,7 @@ async def running(stores: Stores, org: str, tmp_path: Path, extensions: Extensio
     driver = driver or LocalDriver(tmp_path / "volumes", internal_app(stores))
     platform = Platform.of(stores, driver, extensions or loaded_extensions())
     runner = asyncio.create_task(Runner(stores, driver, extensions=platform.extensions,
-                                        installer=platform.installer, heartbeat_s=0.2).run())
+                                        preparer=platform.preparer, heartbeat_s=0.2).run())
     try:
         async with serving(public_app(platform), port=port) as url:
             api = Running(platform, org, url, keys)

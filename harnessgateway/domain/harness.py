@@ -11,8 +11,6 @@ from harnessgateway.domain.package import Manifest
 class Harness:
     manifest: Manifest
     digest: str
-    provider: str | None = None                                  # the default provider, if one was chosen
-    model: str | None = None                                     # the default model, if one was chosen
     settings_values: Mapping[str, str] = field(default_factory=dict)
     secrets_set: frozenset[str] = frozenset()                    # the names of the secrets that have a value
     added_at: datetime | None = None                             # when the organization first added it

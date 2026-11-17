@@ -1,5 +1,47 @@
 # Changelog
 
+## 4.2.0
+
+This version changes the API: requests and clients written for 4.1 need the changes below.
+
+- The `model` string is `environment/harness/provider/model`, every part named, always. Nothing is filled in:
+  a harness has no default provider or model any more, and there is no default environment to fall back
+  to. A harness that calls no model is named with `none/none`, as in `default/shell/none/none`. The short
+  forms (`claude-code`, `codex/deepseek`, `gpu:pi`) are refused, and the refusal says the grammar.
+- An environment carries a list of harnesses, `harnesses`. A request may name only a harness its
+  environment carries, and each harness it carries is installed on its image. Which harnesses an
+  environment carries is set on the environment: in the console, a checklist in its form. A harness that
+  is removed is taken out of every environment.
+- An environment may have a setup script, `setup: {script, egress, timeout_s}`. It runs once, as root, on
+  the environment's image, before any harness is installed; what it leaves is the image the environment's
+  turns run on. It reaches the package managers, the hosts in `setup.egress` and the hosts of the
+  environment's secrets, through the egress proxy, and sees each secret as a placeholder only. It runs
+  again when the script or the image changes. A turn whose environment's setup failed fails with
+  `setup_failed`.
+- An environment is prepared (set up, then its harnesses installed) when it is made or changed, when a
+  harness it carries is added or replaced, and when the platform starts. Changing it again tries again what
+  failed. Its view says how far it is: `image_id`, `build` (status, and the log on a single environment, for a developer or an admin)
+  and `installs` (one per harness it carries). `POST /v1/harnesses/{name}/install` and
+  `GET /v1/harnesses/{name}/installs` are removed; a harness's view lists the `environments` that carry it.
+- A provider lists the models it offers, `models`, for the console's pickers. A request may name any model.
+  `default_model` is removed. A provider may not be named `none`.
+- A runner key may list and read providers, environments and harnesses, so an application can find out
+  what it may name. `GET /v1/models` is removed.
+- The `default` environment is an environment like any other: it may be deleted. A new installation adds
+  every harness package that ships with the platform and makes `default` carry them all. An installation
+  that is updated keeps its harnesses, and its `default` environment carries every one it has.
+- Housekeeping removes an image set up for an environment an hour after no environment runs on it, and what
+  was installed on it.
+- The catalog's Hermes package installs Hermes itself, with Hermes's own package manager, on any image that
+  has git and Python 3.14: it no longer needs an environment built from Hermes's image, and runs in `default`
+  like the other harnesses. Its install takes a few minutes and about a gigabyte.
+- CI installs every package that ships with the platform on the sandbox image, as the platform does.
+- Console: Setup is shown to every key, read-only for a runner. Harnesses is the organization's inventory;
+  a harness's page lists the environments that carry it, in place of Defaults and Installs. An environment
+  has a page of its own: its setup and its log, each harness's install and its log, and Prepare again. The
+  provider form lists its models. The chat and the playground pick an environment, then a harness it
+  carries, then a provider that speaks it and one of its models.
+
 ## 4.1.4
 
 - A sandbox killed with exit 137 that the platform did not stop (not for a cancel, the time limit or the disk

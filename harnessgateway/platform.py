@@ -9,10 +9,12 @@ from harnessgateway.domain.plan import install_volume, mind_volume, work_volume
 from harnessgateway.domain.principal import Principal
 from harnessgateway.drivers.base import Driver
 from harnessgateway.extensions import Extensions
-from harnessgateway.runner.installer import Installer, InstallFailed
+from harnessgateway.runner.prepare import Preparer
 from harnessgateway.stores import Stores
 
 log = logging.getLogger(__name__)
+
+BUILD_GRACE_S = 3600
 
 
 @dataclass
@@ -20,12 +22,12 @@ class Platform:
     stores: Stores
     driver: Driver
     extensions: Extensions
-    installer: Installer
+    preparer: Preparer
     _background: set[asyncio.Task[Any]] = field(default_factory=set)
 
     @classmethod
     def of(cls, stores: Stores, driver: Driver, extensions: Extensions | None = None) -> "Platform":
-        return cls(stores, driver, extensions or Extensions(), Installer(stores, driver))
+        return cls(stores, driver, extensions or Extensions(), Preparer(stores, driver))
 
     async def audit(self, principal: Principal, action: str, target: str, detail: dict[str, Any] | None = None) -> None:
         """Record a change, and tell the extensions (spec §22.2)."""
@@ -47,25 +49,41 @@ class Platform:
         if session_id is not None:
             await self.remove_session(org_id, session_id)
 
-    def install_in_background(self, org_id: str, harness_name: str, environment_name: str) -> None:
-        """Install a harness for an environment's image without making the caller wait (spec §8.5)."""
-        async def install() -> None:
-            try:
-                harness = await self.stores.harnesses.get(org_id, harness_name)
-                environment = await self.stores.environments.get(org_id, environment_name)
-                image_id = await self.driver.image_id(self.stores.image(environment))
-                await self.installer.ensure(org_id, harness, environment, image_id)
-            except InstallFailed:
-                pass                                            # the install's own record says why
-            except Exception:
-                log.exception("installing %s for %s failed", harness_name, environment_name)
-        task = asyncio.create_task(install())
+    def prepare_in_background(self, org_id: str, environments: list[str] | None = None) -> None:
+        """Build environments and install their harnesses without making the caller wait (spec §9.4): those
+        named, or every one of the organization."""
+        async def prepare() -> None:
+            names = environments if environments is not None else [
+                environment.name for environment in await self.stores.environments.all(org_id)]
+            for name in names:
+                try:
+                    await self.preparer.prepare(org_id, name)
+                except Exception:
+                    log.exception("preparing environment %s failed", name)
+        task = asyncio.create_task(prepare())
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    async def carrying(self, org_id: str, harness_name: str) -> list[str]:
+        """The environments that carry a harness."""
+        return [environment.name for environment in await self.stores.environments.all(org_id)
+                if harness_name in environment.harnesses]
+
     async def settle(self) -> None:
-        """Wait for installs started in the background."""
+        """Wait for preparations started in the background."""
         await asyncio.gather(*self._background, return_exceptions=True)
+
+    async def remove_unused_builds(self, *, grace_s: float = BUILD_GRACE_S) -> None:
+        """Remove the images built for environments that no environment is prepared as now, and what was installed
+        on them, once they have not been touched for a while: a turn may be about to start on one that an
+        environment has just left. An image still in use by a container is kept, and tried again later."""
+        for org_id, build_id, image_id in await self.stores.builds.unused(grace_s=grace_s):
+            if image_id is not None:
+                if not await self.driver.remove_image(image_id):
+                    continue
+                for install_id in await self.stores.harnesses.remove_installs_on(org_id, image_id):
+                    await self.driver.remove_volume(install_volume(install_id))
+            await self.stores.builds.remove(org_id, build_id)
 
     async def remove_unused_packages(self) -> None:
         for org_id, digest, object_key, installs in await self.stores.harnesses.unused_packages():

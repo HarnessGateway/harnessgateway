@@ -2,20 +2,23 @@
 
 import base64
 import dataclasses
+from pathlib import Path
 
 import pytest
 
+from harnessgateway import packaging
 from harnessgateway.domain.sealing import Sealer
 from harnessgateway.errors import Conflict, Invalid, NotFound
 from harnessgateway.store.db import Database
-from harnessgateway.store.environments import Environments
+from harnessgateway.store.environments import Environments, Prepared
 from harnessgateway.store.providers import Providers
 from harnessgateway.stores import Stores
 from tests.conftest import make_org
+from tests.helpers import SHELL, variant
 
 DEEPSEEK = {"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic",
                                          "openai-chat": "https://api.deepseek.com/v1"},
-            "default_model": "deepseek-flash", "api_key": "the-real-key"}
+            "models": ["deepseek-flash", "deepseek-v4-pro"], "api_key": "the-real-key"}
 
 
 @pytest.fixture
@@ -38,7 +41,7 @@ def environments(db: Database, sealer: Sealer) -> Environments:
 async def test_a_provider_is_created_and_read_without_its_key(providers: Providers, org: str) -> None:
     created = await providers.create(org, DEEPSEEK)
     assert created.has_key
-    assert created.provider.default_model == "deepseek-flash"
+    assert created.provider.models == ("deepseek-flash", "deepseek-v4-pro")
     assert await providers.get(org, "deepseek") == created
     assert "the-real-key" not in repr(created)
     assert await providers.key(org, "deepseek") == "the-real-key"
@@ -75,13 +78,21 @@ async def test_an_invalid_provider_is_refused_and_not_stored(providers: Provider
         await providers.create(org, {"name": "bad", "apis": {}})
     with pytest.raises(Invalid, match="api_key"):
         await providers.create(org, {**DEEPSEEK, "api_key": ""})
+    with pytest.raises(Invalid, match="none is not a provider's name"):
+        await providers.create(org, {**DEEPSEEK, "name": "none"})
+    with pytest.raises(Invalid, match="listed twice"):
+        await providers.create(org, {**DEEPSEEK, "models": ["m", "m"]})
+    with pytest.raises(Invalid, match="models"):
+        await providers.create(org, {**DEEPSEEK, "models": [f"m{n}" for n in range(101)]})
+    with pytest.raises(Invalid, match="default_model"):
+        await providers.create(org, {**DEEPSEEK, "default_model": "deepseek-flash"})
     assert await providers.all(org) == []
 
 
 async def test_a_provider_is_changed_field_by_field(providers: Providers, org: str) -> None:
     await providers.create(org, DEEPSEEK)
-    changed = await providers.update(org, "deepseek", {"default_model": "deepseek-v4-pro"})
-    assert changed.provider.default_model == "deepseek-v4-pro"
+    changed = await providers.update(org, "deepseek", {"models": ["deepseek-v4-pro"]})
+    assert changed.provider.models == ("deepseek-v4-pro",)
     assert changed.provider.apis == (await providers.get(org, "deepseek")).provider.apis
     assert await providers.key(org, "deepseek") == "the-real-key"                  # untouched
 
@@ -95,7 +106,7 @@ async def test_a_provider_is_changed_field_by_field(providers: Providers, org: s
     with pytest.raises(Invalid, match="apis"):
         await providers.update(org, "deepseek", {"apis": {"anthropic": "ftp://x"}})
     with pytest.raises(NotFound):
-        await providers.update(org, "absent", {"default_model": "x"})
+        await providers.update(org, "absent", {"models": ["x"]})
 
 
 async def test_a_provider_is_deleted(providers: Providers, org: str) -> None:
@@ -127,10 +138,11 @@ SECURE = {
 
 
 async def test_the_default_environment_is_made_once_and_names_no_image(environments: Environments, org: str) -> None:
-    await environments.ensure_default(org)
-    await environments.ensure_default(org)
+    assert await environments.ensure_default(org)
+    assert not await environments.ensure_default(org)
     [default] = await environments.all(org)
     assert (default.name, default.image, default.cpus, default.network.mode) == ("default", None, 2, "limited")
+    assert (default.harnesses, default.setup.script) == ((), "")
 
 
 async def test_an_environment_that_names_no_image_follows_the_platform_s_sandbox_image(
@@ -204,19 +216,80 @@ async def test_a_secret_listed_again_without_a_value_keeps_the_one_it_had(
         await environments.update(org, "secure", {"secrets": {"THIRD": {"hosts": ["x.example.com"]}}})
 
 
-async def test_an_environment_s_name_cannot_be_changed_and_the_default_cannot_be_deleted(
+async def test_an_environment_s_name_cannot_be_changed_and_a_deleted_one_is_gone(
     environments: Environments, org: str
 ) -> None:
     await environments.ensure_default(org)
     await environments.create(org, SECURE)
     with pytest.raises(Invalid, match="name cannot be changed"):
         await environments.update(org, "secure", {"name": "other"})
-    with pytest.raises(Invalid, match="not deleted"):
-        await environments.delete(org, "default")
     await environments.delete(org, "secure")
     with pytest.raises(NotFound):
         await environments.get(org, "secure")
     with pytest.raises(NotFound):
         await environments.update(org, "secure", {"cpus": 1})
+    with pytest.raises(NotFound):
+        await environments.delete(org, "secure")
     with pytest.raises(Conflict):
         await environments.create(org, {"name": "default"})
+
+
+async def test_the_default_environment_is_deleted_like_any_other(environments: Environments, org: str) -> None:
+    await environments.ensure_default(org)
+    await environments.delete(org, "default")
+    assert await environments.all(org) == []
+    with pytest.raises(NotFound):
+        await environments.get(org, "default")
+    assert await environments.ensure_default(org)                     # made again only when asked
+
+
+async def test_an_environment_carries_only_harnesses_the_organization_has(
+    stores: Stores, org: str, tmp_path: Path
+) -> None:
+    await stores.harnesses.add(org, packaging.pack(SHELL))
+    await stores.harnesses.add(org, variant(tmp_path, "second"))
+    with pytest.raises(Invalid, match="there is no harness named 'absent'") as refused:
+        await stores.environments.create(org, {"name": "gpu", "harnesses": ["shell", "absent"]})
+    assert refused.value.param == "harnesses"
+    with pytest.raises(Invalid, match="there is no harness named 'absent'") as refused:
+        await stores.environments.update(org, "default", {"harnesses": ["absent"]})
+    assert refused.value.param == "harnesses"
+    with pytest.raises(Invalid, match="listed twice"):
+        await stores.environments.create(org, {"name": "gpu", "harnesses": ["shell", "shell"]})
+    assert [e.name for e in await stores.environments.all(org)] == ["default"]
+    assert (await stores.environments.get(org, "default")).harnesses == ()
+
+    created = await stores.environments.create(org, {"name": "gpu", "harnesses": ["shell", "second"]})
+    assert created.harnesses == ("second", "shell")                    # kept sorted
+    assert (await stores.environments.get(org, "gpu")).harnesses == ("second", "shell")
+
+
+async def test_deleting_a_harness_takes_it_off_every_environment_that_carries_it(
+    stores: Stores, org: str, tmp_path: Path
+) -> None:
+    await stores.harnesses.add(org, packaging.pack(SHELL))
+    await stores.harnesses.add(org, variant(tmp_path, "second"))
+    await stores.environments.update(org, "default", {"harnesses": ["second", "shell"]})
+    await stores.environments.create(org, {"name": "gpu", "harnesses": ["shell"]})
+    await stores.environments.create(org, {"name": "plain"})
+
+    await stores.harnesses.delete(org, "shell")
+    carried = {e.name: e.harnesses for e in await stores.environments.all(org)}
+    assert carried == {"default": ("second",), "gpu": (), "plain": ()}
+    await stores.environments.update(org, "gpu", {"cpus": 1})            # what is left is valid as it stands
+
+
+async def test_what_an_environment_was_last_prepared_as_is_kept(stores: Stores, org: str) -> None:
+    await stores.environments.create(org, {"name": "gpu"})
+    assert await stores.environments.prepared(org) == {"default": Prepared(None, None), "gpu": Prepared(None, None)}
+
+    await stores.environments.set_prepared(org, "gpu", Prepared("sha256:built", "bld_one"))
+    assert await stores.environments.prepared(org) == {
+        "default": Prepared(None, None), "gpu": Prepared("sha256:built", "bld_one")}
+    await stores.environments.update(org, "gpu", {"cpus": 1})              # a change alone does not forget it
+    assert (await stores.environments.prepared(org))["gpu"] == Prepared("sha256:built", "bld_one")
+
+    await stores.environments.set_prepared(org, "gpu", Prepared(None, "bld_two"))     # its build failed
+    assert (await stores.environments.prepared(org))["gpu"] == Prepared(None, "bld_two")
+    await stores.environments.delete(org, "gpu")
+    assert await stores.environments.prepared(org) == {"default": Prepared(None, None)}

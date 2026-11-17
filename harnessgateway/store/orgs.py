@@ -17,10 +17,12 @@ class Orgs:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def ensure(self, org_id: str, name: str) -> None:
-        """Make the organization unless it is there."""
+    async def ensure(self, org_id: str, name: str) -> bool:
+        """Make the organization unless it is there. Whether it was made."""
         async with self._db.system() as conn:
-            await conn.execute("INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING", [org_id, name])
+            cursor = await conn.execute("INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                                        [org_id, name])
+        return cursor.rowcount == 1
 
     async def get(self, org_id: str) -> Org:
         async with self._db.org(org_id) as conn:

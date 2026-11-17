@@ -15,8 +15,8 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
-from harnessgateway.domain.plan import Mount, SandboxPlan, StepPlan
-from harnessgateway.drivers.base import OnLine, SandboxExit, StepResult
+from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
+from harnessgateway.drivers.base import BuildResult, OnLine, SandboxExit, StepResult
 from harnessgateway.drivers.docker import LineSplitter
 from harnessgateway.steps.errors import StepError
 from harnessgateway.steps.http import HttpStepClient
@@ -49,6 +49,9 @@ class LocalDriver:
         self.sandboxes: list[SandboxPlan] = []                 # every sandbox plan that was run, in order
         self.steps: list[str] = []                             # every step that was run, by name
         self.images: dict[str, str] = {}                       # image reference -> id, when a test wants to choose
+        self.builds: list[BuildPlan] = []                      # every build that was run, in order
+        self.removed_images: list[str] = []
+        self.in_use: set[str] = set()                          # images a test says a container still uses
 
     def volume(self, name: str) -> Path:
         return self._base / name
@@ -68,6 +71,34 @@ class LocalDriver:
 
     async def describe(self, plan: SandboxPlan) -> str:
         return f"local {plan.name} {' '.join(plan.command)}"
+
+    async def build(self, plan: BuildPlan, on_line: OnLine) -> BuildResult:
+        """The setup script, run by this machine's shell in a folder of its own. What it made is named for the
+        build."""
+        self.builds.append(plan)
+        folder = self._base / plan.name
+        folder.mkdir(parents=True, exist_ok=True)
+        process = await asyncio.create_subprocess_exec(
+            "/bin/sh", "-s", cwd=folder, env={"PATH": os.environ["PATH"]}, stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        self._processes[plan.name] = process
+        try:
+            assert process.stdin is not None
+            assert process.stdout is not None
+            process.stdin.write(plan.stdin.encode())
+            await process.stdin.drain()
+            process.stdin.close()
+            await _pump(process.stdout, on_line)
+            code = await process.wait()
+        finally:
+            del self._processes[plan.name]
+        return BuildResult(started=True, exit_code=code, image_id=f"sha256:{plan.tag}" if code == 0 else None)
+
+    async def remove_image(self, image_id: str) -> bool:
+        if image_id in self.in_use:
+            return False
+        self.removed_images.append(image_id)
+        return True
 
     async def ensure_volume(self, name: str) -> None:
         self.volume(name).mkdir(parents=True, exist_ok=True)

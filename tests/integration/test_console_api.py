@@ -12,6 +12,7 @@ import pytest
 from harnessgateway.api.views import sign_view
 from harnessgateway.domain.names import container_id
 from harnessgateway.stores import Stores
+from tests.helpers import SHELL_MODEL
 from tests.integration.api import Running, running
 
 
@@ -19,6 +20,7 @@ from tests.integration.api import Running, running
 async def api(stores: Stores, org: str, tmp_path: Path) -> AsyncIterator[Running]:
     async with running(stores, org, tmp_path) as api:
         await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
+        await api.admin.patch("/v1/environments/default", json={"harnesses": ["shell"]})
         yield api
 
 
@@ -99,8 +101,9 @@ async def test_installing_a_draft_makes_it_a_harness_and_the_draft_is_done(api: 
     assert installed.status_code == 200, installed.text
     assert installed.json()["name"] == "mine"
     assert (await api.developer.get("/v1/drafts")).json()["data"] == []
-    assert (await api.openai.responses.create(model="mine", input="echo from the draft")).output_text == (
-        "from the draft\n")
+    await api.admin.patch("/v1/environments/default", json={"harnesses": ["mine", "shell"]})
+    answer = await api.openai.responses.create(model="default/mine/none/none", input="echo from the draft")
+    assert answer.output_text == "from the draft\n"
     audit = (await api.admin.get("/v1/audit")).json()["data"]
     assert ("harness.add", "mine", "draft:mine") in [(a["action"], a["target"], a["detail"].get("source"))
                                                     for a in audit]
@@ -125,12 +128,14 @@ async def test_an_installed_harness_is_opened_as_a_draft_and_installing_it_upgra
                             content=json.dumps({**manifest, "version": "9.9.9"}).encode())
     upgraded = await api.developer.post("/v1/drafts/shell/install")
     assert (upgraded.json()["name"], upgraded.json()["version"]) == ("shell", "9.9.9")
+    assert [e["name"] for e in upgraded.json()["environments"]] == ["default"]
+    assert (await api.installed("shell"))["environments"] == [{"name": "default", "status": "ready"}]
     assert (await api.developer.post("/v1/drafts", json={"name": "x", "harness": "absent"})).status_code == 404
 
 
 async def test_what_an_agent_wrote_in_a_session_becomes_a_draft(api: Running) -> None:
     manifest = '{"contract": 1, "name": "built", "version": "0.1.0", "apis": []}'
-    built = await api.openai.responses.create(model="shell", input=(
+    built = await api.openai.responses.create(model=SHELL_MODEL, input=(
         f"mkdir -p pkg/__pycache__ && cd pkg && echo '{manifest}' > harness.json && printf '#!/bin/sh\\n' > install "
         "&& cp $HG_HARNESS/run run && chmod +x install run && echo junk > __pycache__/x.pyc"))
     assert built.metadata is not None
@@ -151,7 +156,7 @@ async def test_what_an_agent_wrote_in_a_session_becomes_a_draft(api: Running) ->
 
 async def _made(api: Running, command: str, **more: str) -> tuple[str, str]:
     """Run a command with the shell harness; the session's container id and the response's id."""
-    response = await api.openai.responses.create(model="shell", input=command, **more)      # type: ignore[call-overload]
+    response = await api.openai.responses.create(model=SHELL_MODEL, input=command, **more)      # type: ignore[call-overload]
     assert response.status == "completed", response
     return container_id(response.metadata["hg_session"]), response.id
 

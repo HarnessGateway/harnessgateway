@@ -4,7 +4,8 @@ import pytest
 
 from harnessgateway.domain.plan import mind_volume, work_volume
 from harnessgateway.errors import Conflict
-from tests.helpers import Platform, text_of, variant
+from harnessgateway.runner.prepare import Preparer
+from tests.helpers import Platform, add, text_of, variant
 
 pytestmark = pytest.mark.usefixtures("database_url")
 
@@ -55,10 +56,38 @@ async def test_a_session_whose_volumes_were_removed_is_restored_from_its_snapsho
 
 
 async def test_a_harness_that_takes_over_is_told_who_ran_before_it(platform: Platform, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    await platform.stores.harnesses.add(platform.org, variant(tmp_path, "second", mind=".second"))
-    one = await platform.run("echo one > work.txt", model="second", timeout=180)
+    await add(platform.stores, platform.org, variant(tmp_path, "second", mind=".second"))
+    one = await platform.run("echo one > work.txt", model="default/second/none/none", timeout=180)
     two = await platform.run('cat work.txt; echo "$HG_HANDOVER"', previous_response_id=one.id, timeout=180)
     assert text_of(two) == "one\nHandover from second. Review /mind/.second.\n"
+
+
+async def test_what_a_setup_script_leaves_as_root_is_in_the_image_the_environment_s_turns_run_on(
+    platform: Platform,
+) -> None:
+    """The setup runs under runc and is committed as the environment's image; a turn's sandbox, under whatever
+    runtime turns run on, starts from that image and sees what the script left."""
+    stores, org = platform.stores, platform.org
+    await stores.environments.update(org, "default", {"setup": {
+        "script": "id -u; mkdir -p /opt/hg-test && echo built > /opt/hg-test/marker", "timeout_s": 300}})
+    await Preparer(stores, platform.driver).prepare(org, "default")
+    prepared = (await stores.environments.prepared(org))["default"]
+    try:
+        assert prepared.image_id is not None
+        assert prepared.build_id is not None
+        build = await stores.builds.get(org, prepared.build_id)
+        assert build.status == "ready", build.log_tail
+        assert "0" in build.log_tail.splitlines()                   # the script ran as root
+        harness = await stores.harnesses.get(org, "shell")
+        assert (await stores.harnesses.installs_on(org, prepared.image_id))[harness.digest].status == "ready"
+
+        turn = await platform.run("cat /opt/hg-test/marker; id -u", timeout=180)
+        assert (turn.status, text_of(turn)) == ("completed", "built\n10000\n"), turn.log_tail
+        assert turn.image_id == prepared.image_id
+    finally:
+        if prepared.image_id:
+            await platform.driver.reap(keep=set())
+            await platform.driver.remove_image(prepared.image_id)
 
 
 async def test_a_stopped_turn_is_cancelled_and_what_it_wrote_is_kept(platform: Platform) -> None:

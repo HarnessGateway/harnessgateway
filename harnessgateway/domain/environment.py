@@ -13,6 +13,8 @@ from harnessgateway.domain.package import AS_WRITTEN, DECLARED_MAX, check_declar
 
 _VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 VALUE_MAX = 16_384
+SCRIPT_MAX = 64 * 1024
+HARNESSES_MAX = 256
 
 
 class Network(Definition):
@@ -40,6 +42,24 @@ class EnvironmentSecret(Definition):
     prefix: Annotated[str, Field(max_length=64)] = ""
 
 
+class Setup(Definition):
+    """What is done to the image before any harness is installed on it (spec §9.4): a shell script run once,
+    as root, whose result is the environment's image. It reaches the package-manager set, the hosts named here
+    and the hosts of the environment's secrets, through the egress proxy."""
+
+    script: Annotated[str, Field(max_length=SCRIPT_MAX)] = ""
+    egress: Annotated[tuple[HostEntry, ...], entries("setup.egress"), AS_WRITTEN] = ()
+    timeout_s: Annotated[int, Field(ge=1, le=3600)] = 900
+
+
+def _harnesses(value: tuple[str, ...]) -> tuple[str, ...]:
+    for name in value:
+        check_name(name, "harnesses")
+    if len(set(value)) != len(value):
+        raise ValueError("harnesses: a harness is listed twice")
+    return tuple(sorted(value))
+
+
 def _image(value: str) -> str:
     if not value or len(value) > 500 or any(c.isspace() for c in value):
         raise ValueError("image is an image reference, with no spaces")
@@ -50,6 +70,8 @@ class Environment(Definition):
     name: Annotated[str, AfterValidator(lambda v: check_name(v, "name"))]
     image: Annotated[str, AfterValidator(_image)] | None = None      # None: the platform's sandbox image, whatever
                                                                      # its version (spec §7.6)
+    setup: Setup = Setup()
+    harnesses: Annotated[tuple[str, ...], Field(max_length=HARNESSES_MAX), AfterValidator(_harnesses)] = ()
     cpus: Annotated[float, Field(ge=0.25, le=64)] = 2
     memory_mb: Annotated[int, Field(ge=256, le=262_144)] = 4096
     pids: Annotated[int, Field(ge=64, le=65_536)] = 512

@@ -21,35 +21,32 @@ export const stream = (path, body, onEvent, signal) => events(path, body, data =
 export const list = async path => (await api("GET", path)).data || [];
 export const quiet = path => list(path).catch(() => []);
 
-/** What the pickers offer: the organization's environments, harnesses and providers. A key that may only run
- *  turns cannot list those, and gets the harnesses from /v1/models. */
+/** What the pickers offer: the organization's environments with the harnesses each carries, its harnesses, and its
+ *  providers with the models each offers. Every key may read them. */
 export async function loadCatalog() {
-  try {
-    const [harnesses, providers, environments] = await Promise.all(
-      [list("/v1/harnesses?limit=100"), list("/v1/providers?limit=100"), list("/v1/environments?limit=100")]);
-    return {
-      harnesses: harnesses.map(h => ({ name: h.name, description: h.description, apis: h.manifest.apis || [], provider: h.provider || "", model: h.model || "" })),
-      providers: providers.map(p => ({ name: p.name, apis: Object.keys(p.apis || {}), model: p.default_model || "" })),
-      environments: environments.map(e => e.name),
-    };
-  } catch (error) {
-    if (error.status !== 403) throw error;
-    const models = await list("/v1/models");
-    return { harnesses: models.map(m => ({ name: m.id, description: "", apis: null, provider: "", model: "" })), providers: [], environments: [] };
-  }
+  const [harnesses, providers, environments] = await Promise.all(
+    [list("/v1/harnesses?limit=100"), list("/v1/providers?limit=100"), list("/v1/environments?limit=100")]);
+  return {
+    harnesses: harnesses.map(h => ({ name: h.name, description: h.description, apis: h.manifest.apis || [] })),
+    providers: providers.map(p => ({ name: p.name, apis: Object.keys(p.apis || {}), models: p.models || [] })),
+    environments: environments.map(e => ({ name: e.name, harnesses: e.harnesses || [] })),
+  };
 }
-/** The providers a harness can use: those that speak one of its APIs. `apis: null` is a harness we know only by name. */
-export const fitting = (catalog, harness) => !harness || !harness.apis ? []
+/** The provider and the model of a harness that calls no model. */
+export const NONE = "none";
+/** The harnesses an environment carries. */
+export const carried = (catalog, environment) => {
+  const found = catalog.environments.find(e => e.name === environment);
+  return found ? catalog.harnesses.filter(h => found.harnesses.includes(h.name)) : [];
+};
+/** The providers a harness can use: those that speak one of its APIs. */
+export const fitting = (catalog, harness) => !harness ? []
   : catalog.providers.filter(p => p.apis.some(a => harness.apis.includes(a)));
-/** [environment:]harness[/provider[/model]], with what is left out left to the platform's defaults. */
-export function modelString({ environment = "", harness, provider = "", model = "" }) {
-  const head = environment && environment !== "default" ? `${environment}:${harness}` : harness;
-  return [head, provider, provider ? model : ""].filter(Boolean).join("/");
-}
+/** environment/harness/provider/model, every part named: none/none for a harness that calls no model. */
+export const modelString = ({ environment, harness, provider, model }) => [environment, harness, provider || NONE, model || NONE].join("/");
 export function parseModel(text) {
-  const [head = "", provider = "", ...rest] = String(text || "").split("/");
-  const at = head.lastIndexOf(":");
-  return { environment: at < 0 ? "" : head.slice(0, at), harness: at < 0 ? head : head.slice(at + 1), provider, model: rest.join("/") };
+  const [environment = "", harness = "", provider = "", ...rest] = String(text || "").split("/");
+  return { environment, harness, provider, model: rest.join("/") };
 }
 
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

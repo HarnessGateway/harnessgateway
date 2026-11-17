@@ -1,8 +1,8 @@
 // The chat: conversations in the sidebar, replies streamed as they come, the composer with attachments, and the
-// harness / provider / model picker. Each conversation is one session on the platform; its turns run in the
+// environment / harness / provider / model picker. Each conversation is one session on the platform; its turns run in the
 // background there, and this page follows their events while it is open.
 
-import { fitting, loadCatalog, modelString, parseModel } from "/lib.js";
+import { NONE, carried, fitting, loadCatalog, modelString, parseModel } from "/lib.js";
 import { attach as upload, cancel, ensureView, filesOf, followTurn, runTurn, sessionOf } from "./backend.js";
 import { $, esc, size, rel, badge, ic, I, copyText, flash, kindOf, SHOWCASE } from "./util.js";
 import { markdown, workspaceLinks } from "./markdown.js";
@@ -111,13 +111,11 @@ function render() {
   renderChats();
   $("session").textContent = c && c.session ? c.session : "";
   if (shownChat !== current) { shownChat = current; if (c) setPick(c.model); }
-  const hv = $("harness").value, all = catalog.harnesses.map(h => h.name);   // harness, provider and model may all change
-  if ($("harness").options.length !== all.length) options($("harness"), all, hv);
   $("harness").parentElement.title = blank ? "Harness" : "Harness: another one takes this chat over, with the same files";
-  const none = loaded && !catalog.harnesses.length;            // nothing to run a message on: say so, and offer no picker
+  const none = loaded && !catalog.environments.some(e => e.harnesses.length);   // nothing to run a message on: say so
   $("route").hidden = none && blank;
   if (blank) col.innerHTML = none
-    ? `<div class="hello"><h1>No harness is installed yet</h1><p>A chat runs on a harness. Add one under <a href="/#/harnesses" target="_top">Setup → Harnesses</a>, then start a chat.</p></div>`
+    ? `<div class="hello"><h1>No environment carries a harness yet</h1><p>A chat runs on a harness in an environment. Tick some in an environment under <a href="/#/environments" target="_top">Setup → Environments</a>, then start a chat.</p></div>`
     : `<div class="hello"><h1>What should we build?</h1><p>The agent works in a sandbox of its own. What it makes opens on the right.</p></div>`;
   else {
     const busy = !!liveTurn(c);
@@ -321,7 +319,7 @@ function attach(list) {
   }
 }
 
-// ── the picker: harness / provider / model, from what the organization has ────────────────────────────────────
+// ── the picker: environment / harness / provider / model, from what the organization has ────────────────────────
 function used() { try { return JSON.parse(localStorage.getItem(MODELS)) || {}; } catch { return {}; } }
 function remember(provider, model) {
   if (!provider || !model) return;
@@ -331,43 +329,39 @@ function remember(provider, model) {
 }
 function harnessOf(name) { return catalog.harnesses.find(h => h.name === name); }
 function options(sel, names, value) {
-  if (value && !names.includes(value)) names = [value, ...names];   // a chat's model the catalog no longer has
+  if (value && !names.includes(value)) names = [value, ...names];   // a chat's own pick the catalog no longer has
   sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
   sel.value = value || names[0] || "";
 }
-function fillEnvironments(want) {
-  const names = catalog.environments.length ? catalog.environments : ["default"];
-  options($("environment"), names, want || "default");
+function fillEnvironments(want) { options($("environment"), catalog.environments.map(e => e.name), want || "default"); }
+function fillHarnesses(want) {             // the harnesses the environment carries: a request may name no other
+  options($("harness"), carried(catalog, $("environment").value).map(h => h.name), want);
 }
 function fillProviders(want, keep) {        // keep: a chat's own provider stays even if the catalog lacks it
   const h = harnessOf($("harness").value);
   const fits = fitting(catalog, h).map(p => p.name);
-  $("route").classList.toggle("solo", !fits.length && !(keep && want));   // a harness that calls no model, or one known only by name
-  const pick = [want, h && h.provider].find(n => n && fits.includes(n)) || (keep && want) || fits[0];
-  options($("provider"), fits, pick);
+  $("route").classList.toggle("solo", h ? !h.apis.length : !(keep && want));       // it calls no model: none/none
+  options($("provider"), fits, (want && fits.includes(want)) || keep ? want : fits[0]);
   fillModels();
 }
-function defaultModel() {
-  const h = harnessOf($("harness").value), p = catalog.providers.find(x => x.name === $("provider").value);
-  return (h && h.model) || (p && p.model) || "";
-}
-function fillModels() {
-  const def = defaultModel();
-  $("model").placeholder = def ? `${def} (default)` : "model";
-  const list = [...new Set([def, ...(used()[$("provider").value] || [])].filter(Boolean))];
-  $("models").innerHTML = list.map(m => `<option value="${esc(m)}">`).join("");
+function offered() { return (catalog.providers.find(p => p.name === $("provider").value) || { models: [] }).models; }
+function fillModels() {                     // the provider's models, then those used with it lately
+  const models = offered();
+  $("model").placeholder = "model";
+  $("models").innerHTML = [...new Set([...models, ...(used()[$("provider").value] || [])])].map(m => `<option value="${esc(m)}">`).join("");
+  if (!models.includes($("model").value.trim())) $("model").value = models[0] || "";
 }
 function setPick(id) {
   const { environment, harness, provider, model } = parseModel(id);
   fillEnvironments(environment);
-  options($("harness"), catalog.harnesses.map(h => h.name), harness);
-  fillProviders(provider, true);
-  $("model").value = model;
+  fillHarnesses(harness);
+  fillProviders(provider === NONE ? "" : provider, provider !== NONE);
+  if (model && model !== NONE) $("model").value = model;
 }
 function pickedModel() {
   const solo = $("route").classList.contains("solo");
   return modelString({ environment: $("environment").value, harness: $("harness").value,
-                       provider: solo ? "" : $("provider").value, model: solo ? "" : $("model").value.trim() });
+                       provider: solo ? NONE : $("provider").value, model: solo ? NONE : $("model").value.trim() });
 }
 
 // ── wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -437,7 +431,8 @@ function wire() {
     current = row.dataset.id; files = []; resetPanel(); save(); render();
     await refreshFiles(); renderPanel();
   });
-  $("harness").addEventListener("change", () => { fillProviders(""); $("model").value = ""; });   // the harness's own defaults
+  $("environment").addEventListener("change", () => { fillHarnesses($("harness").value); fillProviders($("provider").value); });
+  $("harness").addEventListener("change", () => fillProviders($("provider").value));
   $("provider").addEventListener("change", fillModels);
 }
 
@@ -450,7 +445,7 @@ async function openFromHash() {                      // #open=sess_…: a sessio
     const s = await sessionOf(sid).catch(() => null);
     if (!s) return;
     c = { id: newId(), title: `${s.harness || "session"} · ${sid.slice(5, 13)}`, previous: s.head_response_id || null, session: sid, turns: [],
-          model: modelString({ environment: s.environment || "", harness: s.harness || "", provider: s.provider || "", model: s.model || "" }),
+          model: modelString({ environment: s.environment, harness: s.harness, provider: s.provider, model: s.model }),
           rewound: "A session started elsewhere. The next message continues it; its turns so far are under Sessions." };
     chats.unshift(c);
   }
@@ -501,7 +496,7 @@ function start() {
   loadCatalog().then(found => {
     catalog = found; loaded = true;
     const c = chat();
-    setPick(c ? c.model : (catalog.harnesses[0] || {}).name || "");
+    setPick(c ? c.model : "");
     render();
   }).catch(e => { if (e.status === 401) window.top.location.href = "/"; });      // not signed in: the console asks
 }

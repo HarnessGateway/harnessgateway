@@ -9,7 +9,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from harnessgateway.domain.handover import PastTurn
-from harnessgateway.domain.modelpath import ModelPath
+from harnessgateway.domain.modelpath import NONE, ModelPath
 from harnessgateway.domain.outcome import Outcome
 from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.response import TurnView, envelope_event, response_object, terminal_event_type
@@ -74,8 +74,8 @@ class Turn:
 
     @property
     def path(self) -> ModelPath:
-        """What the turn runs with, as a model string in full."""
-        return ModelPath(harness=self.harness, environment=self.environment, provider=self.provider, model=self.model)
+        """What the turn runs with, as its model string."""
+        return ModelPath(self.environment, self.harness, self.provider or NONE, self.model or NONE)
 
     @property
     def outcome(self) -> Outcome | None:

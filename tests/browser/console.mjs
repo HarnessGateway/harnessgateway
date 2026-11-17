@@ -4,7 +4,8 @@
 //
 // tests/browser/test_console.py runs it against a platform it starts itself. It needs Playwright with its
 // Chromium, and a platform whose catalog holds the shell package. Against a platform that stays up it leaves
-// behind sessions, harnesses, two environments, a provider and a key, all named "browser-…" or "b…".
+// behind sessions, harnesses, two environments, a provider and a key, all named "browser-…" or "b…", and the
+// default environment carrying the harnesses it made.
 
 import { createRequire } from "node:module";
 
@@ -35,6 +36,13 @@ const go = async (hash, heading) => {
 const dialog = () => page.locator(".backdrop form");
 const submit = () => dialog().locator("button[type=submit]").click();
 const chat = () => page.frameLocator("iframe.chat");
+/** Have the default environment (or another) carry a harness, over the API. */
+const carry = async (harness, environment = "default") => {
+  const at = `${url}/v1/environments/${environment}`, headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  const { harnesses } = await (await fetch(at, { headers })).json();
+  const done = await fetch(at, { method: "PATCH", headers, body: JSON.stringify({ harnesses: [...new Set([...harnesses, harness])] }) });
+  if (!done.ok) throw new Error(`${environment} could not carry ${harness}: ${await done.text()}`);
+};
 /** Send a message in the chat and wait for the turn to end: the reply's actions appear then. */
 const say = async (text) => {
   const before = await chat().locator(".msg.assistant .actions").count();
@@ -58,33 +66,36 @@ try {
     if (setup.join(", ") !== "Providers, Environments, Harnesses") throw new Error(`Setup lists ${setup.join(", ")}`);
   });
 
-  const installed = await (await fetch(`${url}/v1/harnesses`, { headers: { Authorization: `Bearer ${key}` } })).json();
-  if (installed.data.length) console.log("skip  with no harness installed, the chat says where to add one (this platform has harnesses)");
-  else await step("with no harness installed, the chat says where to add one", async () => {
+  const known = await (await fetch(`${url}/v1/environments`, { headers: { Authorization: `Bearer ${key}` } })).json();
+  if (known.data.some((e) => e.harnesses.length)) console.log("skip  with no harness carried, the chat says where to tick one (this platform has some)");
+  else await step("with no harness carried by an environment, the chat says where to tick one", async () => {
     await go("chat");
-    await chat().locator(".hello:has-text('No harness is installed yet')").waitFor();
+    await chat().locator(".hello:has-text('No environment carries a harness yet')").waitFor();
     if (await chat().locator("#route").isVisible()) throw new Error("the chat offers a picker with nothing to pick");
     await chat().locator("#input").fill("hi");
     await chat().locator("#input").press("Enter");
     await page.waitForTimeout(500);
     if (await chat().locator(".msg").count()) throw new Error("a message was sent with no harness to run it");
     await chat().locator(".hello a").click();
-    await page.waitForSelector("#content h1:has-text('Harnesses')");
+    await page.waitForSelector("#content h1:has-text('Environments')");
   });
 
-  await step("a harness is added from the catalog and installs", async () => {
+  await step("a harness is added from the catalog, and an environment that carries it installs it", async () => {
     await go("harnesses", "Harnesses");
     if (!(await page.locator(`a.hcard[href="#/harnesses/shell"]`).count())) await page.click(".hcard.catalog [data-add=shell]");
     await page.waitForSelector(`a.hcard[href="#/harnesses/shell"]`);
-    for (let tries = 0; tries < 60 && (await page.locator(`a.hcard[href="#/harnesses/shell"] .pill.warn`).count()); tries++) {
-      await page.waitForTimeout(1000);
-      await page.reload();
-      await page.waitForSelector(`a.hcard[href="#/harnesses/shell"]`);
-    }
     await page.click(`a.hcard[href="#/harnesses/shell"]`);
-    await page.waitForSelector("#view:has-text('\"name\": \"shell\"')");          // the package's files, as installed
-    await page.click(".tabs a:has-text('Installs')");
-    await page.waitForSelector("#tab .pill.ok:has-text('ready')");
+    await page.waitForSelector("#view:has-text('\"name\": \"shell\"')");          // the package's files, as added
+    await go("environments", "Environments");
+    await page.click(`#content tr:has-text("default") [data-edit]`);
+    const shell = dialog().locator(".group:has-text('Harnesses') [name=harness][value=shell]");
+    if (!(await shell.isChecked())) await shell.check();
+    await submit();
+    await page.waitForSelector("#content h1:has-text('default')");                  // the environment's own page
+    await page.waitForSelector(`#content tr:has-text("shell") .pill.ok:has-text("ready")`);
+    await go("harnesses/shell/environments");
+    await page.waitForSelector(`#tab tr:has-text("default") .pill.ok:has-text("ready")`);
+    if (!(await page.locator("#tab:has-text('default/shell/none/none')").count())) throw new Error("the harness does not show its model string");
   });
 
   await step("a new harness starts from the template, is edited as a draft, and installs", async () => {
@@ -104,7 +115,7 @@ try {
     await page.click("#save");
     await page.waitForSelector(".toast.ok:has-text('Saved')");
     await page.click("#install");
-    await page.waitForSelector("#content .tabs a:has-text('Installs')");          // the harness's page, not the draft's
+    await page.waitForSelector("#content .tabs a:has-text('Environments')");      // the harness's page, not the draft's
     await page.waitForSelector(`#tree .f:has-text("NOTES.md")`);                  // the installed package holds the file
     await go("harnesses", "Harnesses");
     if (await page.locator(".hcard.draft").count()) throw new Error("the draft was left behind");
@@ -167,8 +178,9 @@ try {
       await submit();
       await page.waitForSelector(`#tree .f.on:has-text("harness.json")`);
       await page.click("#install");
-      await page.waitForSelector("#content .tabs a:has-text('Installs')");
+      await page.waitForSelector("#content .tabs a:has-text('Environments')");
     }
+    await carry(builder);
     const name = `b${stamp}`;
     const manifest = JSON.stringify({ contract: 1, name, version: "0.1.0", description: "Written in a session.", apis: [] });
     await go("chat");
@@ -185,12 +197,14 @@ try {
     await page.waitForSelector(`#ed`);
     await page.waitForFunction((n) => document.querySelector("#ed").value.includes(n), name);
     await page.click("#install");
-    await page.waitForSelector("#content .tabs a:has-text('Installs')");
+    await page.waitForSelector("#content .tabs a:has-text('Environments')");
+    await page.waitForSelector(".note:has-text('No environment carries this harness')");     // added, and carried by none yet
+    await carry(name);
     await go("chat");
-    await chat().locator(`#harness option[value=${name}]`).waitFor({ state: "attached" });   // it is a model name now
+    await chat().locator(`#harness option[value=${name}]`).waitFor({ state: "attached" });   // a request may name it now
   });
 
-  await step("a provider is a name, an API shape, a base URL and a key, and the key is never shown", async () => {
+  await step("a provider is a name, an API shape, a base URL, its models and a key, and the key is never shown", async () => {
     const name = `browser-${stamp}`;
     const baseUrl = () => dialog().locator("[name=base_url]").inputValue();
     await go("providers", "Providers");
@@ -207,6 +221,7 @@ try {
     await dialog().locator("[name=shape]").selectOption("anthropic");              // a URL that was typed stays
     await dialog().locator("[name=shape]").selectOption("openai-chat");
     if ((await baseUrl()) !== "https://api.example.com/v1") throw new Error("a typed base URL was replaced");
+    await dialog().locator("[name=models]").fill("model-a\nmodel-b");
     await dialog().locator("[name=api_key]").fill("the-secret-key");
     await submit();
     await page.waitForSelector(`#content tr:has-text("${name}"):has-text("openai-chat"):has-text("https://api.example.com/v1") .pill.ok:has-text("set")`);
@@ -214,24 +229,26 @@ try {
 
     const stored = await (await fetch(`${url}/v1/providers/${name}`, { headers: { Authorization: `Bearer ${key}` } })).json();
     const apis = Object.entries(stored.apis).map(([api, at]) => `${api}=${at}`).join(" ");          // one shape is one API
-    if (apis !== "openai-chat=https://api.example.com/v1" || stored.default_model !== null) {
+    if (apis !== "openai-chat=https://api.example.com/v1" || stored.models.join(" ") !== "model-a model-b") {
       throw new Error(`the provider was stored as ${JSON.stringify(stored)}`);
     }
     await page.click(`#content tr:has-text("${name}") [data-edit]`);                // it opens again as it was saved
-    if ((await dialog().locator("[name=shape]").inputValue()) !== "openai-chat" || (await baseUrl()) !== "https://api.example.com/v1") {
+    if ((await dialog().locator("[name=shape]").inputValue()) !== "openai-chat" || (await baseUrl()) !== "https://api.example.com/v1" ||
+        (await dialog().locator("[name=models]").inputValue()) !== "model-a\nmodel-b") {
       throw new Error("the provider did not open as it was saved");
     }
     await dialog().locator("[data-cancel]").click();
   });
 
-  await step("an environment's network is closed, limited or open, and only limited has rules", async () => {
+  await step("an environment is set up by its script, carries the harnesses ticked, and its network is closed, limited or open", async () => {
     const name = `browser-${stamp}`;
     const mode = () => dialog().locator("[name=mode]"), rules = () => dialog().locator("#limited");
     await go("environments", "Environments");
     await page.click("#add");
     const groups = await dialog().locator(".group").evaluateAll((all) => all.map((group) =>
-      `${group.querySelector("h3").textContent}: ${[...group.querySelectorAll("[name]")].map((f) => f.name).join(" ")}`));
-    const wanted = ["General: name image", "Resources: cpus memory_mb pids disk_mb tmp_mb turn_timeout_s",
+      `${group.querySelector("h3").textContent}: ${[...new Set([...group.querySelectorAll("[name]")].map((f) => f.name))].join(" ")}`));
+    const wanted = ["General: name image", "Setup: script setup_egress setup_timeout_s", "Harnesses: harness",
+                    "Resources: cpus memory_mb pids disk_mb tmp_mb turn_timeout_s",
                     "Network access: mode allow deny package_managers", "Variables and secrets: variables"];
     if (groups.join(" | ") !== wanted.join(" | ")) throw new Error(`the environment form is grouped as: ${groups.join(" | ")}`);
     if (!(await dialog().locator(".group:has-text('Variables and secrets') #secret").count())) throw new Error("secrets are not with the variables");
@@ -253,8 +270,17 @@ try {
     await dialog().locator(".secret-edit [data-s=name]").fill("GITHUB_TOKEN");
     await dialog().locator(".secret-edit [data-s=hosts]").fill("api.github.com");
     await dialog().locator(".secret-edit [data-s=value]").fill("the-secret-token");
+    await dialog().locator("[name=script]").fill('echo "setting up with $GITHUB_TOKEN"');
+    await dialog().locator("[name=harness][value=shell]").check();
     await submit();
-    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("2 allowed + package managers"):has-text("1 denied"):has-text("1 secret")`);
+    await page.waitForSelector(`#content h1:has-text("${name}")`);                 // its own page: the build, then the installs
+    await page.waitForSelector(`#content .pill.ok:has-text("set up")`);
+    await page.waitForSelector(`#content tr:has-text("shell") .pill.ok:has-text("ready")`);
+    await page.click("#content summary:has-text('log') >> nth=0");
+    const log = await page.locator("#content details pre >> nth=0").innerText();
+    if (!log.includes("setting up with hgs_") || log.includes("the-secret-token")) throw new Error(`the setup saw the secret, or did not run: ${log}`);
+    await go("environments", "Environments");
+    await page.waitForSelector(`#content tr:has-text("${name}"):has-text("2 allowed + package managers"):has-text("1 denied"):has-text("1 secret"):has-text("shell")`);
     if (!(await page.locator("#content th:has-text('Variables and secrets')").count())) throw new Error("the table does not name its variables and secrets column");
     await page.click(`#content tr:has-text("${name}") [data-edit]`);                  // it opens again with what was saved
     if ((await dialog().locator("[name=allow]").inputValue()) !== "api.github.com\n*.example.com") throw new Error("the allowed hosts were not kept");
@@ -266,6 +292,8 @@ try {
     await dialog().locator("[name=name]").fill(`closed-${stamp}`);
     await mode().selectOption("closed");
     await submit();
+    await page.waitForSelector(`#content h1:has-text("closed-${stamp}")`);
+    await go("environments", "Environments");
     await page.waitForSelector(`#content tr:has-text("closed-${stamp}") .pill:has-text("closed")`);
     const stored = await (await fetch(`${url}/v1/environments/closed-${stamp}`, { headers: { Authorization: `Bearer ${key}` } })).json();
     if (stored.network.mode !== "closed" || stored.network.allow.length || stored.network.deny.length) {
@@ -285,16 +313,21 @@ try {
     await page.click("#save");
     await page.waitForSelector(".toast.ok:has-text('Saved')");
     await page.click("#install");
-    await page.waitForSelector("#content .tabs a:has-text('Installs')");
+    await page.waitForSelector("#content .tabs a:has-text('Environments')");
+    await carry(harness);
+    await carry(harness, named);
 
     await go("chat");
     await chat().locator("#new").click();
-    await chat().locator(`#harness option[value=${harness}]`).waitFor({ state: "attached" });
-    await chat().locator("#harness").selectOption(harness);
     await chat().locator("#environment").selectOption(named);
+    await chat().locator(`#harness option[value=${harness}]`).waitFor({ state: "attached" });   // what it carries
+    await chat().locator("#harness").selectOption(harness);
     await chat().locator("#provider").selectOption(named);
+    const offered = await chat().locator("#models option").evaluateAll((options) => options.map((o) => o.value).join(" "));
+    if (offered !== "model-a model-b" || (await chat().locator("#model").inputValue()) !== "model-a") {
+      throw new Error(`the chat offers the provider's models as: ${offered}`);
+    }
     const ran = 'echo "ran in $HG_ENVIRONMENT on $HG_PROVIDER over $HG_PROVIDER_API with $HG_MODEL"';
-    await chat().locator("#model").fill("model-a");
     await say(ran);
     await chat().locator(`.msg.assistant .reply:has-text("ran in ${named} on ${named} over openai-chat with model-a")`).waitFor();
     await chat().locator("#model").fill("model-b");                                  // the next message, another model
@@ -318,8 +351,10 @@ try {
 
   await step("the playground sends one request and shows the response", async () => {
     await go("playground", "Playground");
+    await page.selectOption("#route [name=environment]", "default");
     await page.selectOption("#route [name=harness]", "shell");
-    await page.fill("#req", JSON.stringify({ model: "shell", input: "echo from the playground", stream: true }));
+    if (JSON.parse(await page.inputValue("#req")).model !== "default/shell/none/none") throw new Error("the playground did not write the model string");
+    await page.fill("#req", JSON.stringify({ model: "default/shell/none/none", input: "echo from the playground", stream: true }));
     await page.click("#send");
     await page.waitForSelector("#res:has-text('from the playground')");
     await page.waitForSelector("#st:has-text('completed')");

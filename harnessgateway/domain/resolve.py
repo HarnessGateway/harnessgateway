@@ -1,13 +1,12 @@
 """From a request's model string to what the turn will run with (spec §10.2)."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from harnessgateway.domain.contract import ApiName
 from harnessgateway.domain.environment import Environment
 from harnessgateway.domain.harness import Harness
-from harnessgateway.domain.modelpath import ModelPath
-from harnessgateway.domain.names import DEFAULT_ENVIRONMENT
+from harnessgateway.domain.modelpath import NONE, ModelPath
 from harnessgateway.domain.provider import Provider
 from harnessgateway.errors import Invalid
 
@@ -26,31 +25,13 @@ class Resolved:
 
     @property
     def path(self) -> ModelPath:
-        """The model string written in full: what the response reports."""
-        return ModelPath(
-            harness=self.harness.name,
-            environment=self.environment.name,
-            provider=self.provider.name if self.provider else None,
-            model=self.model,
-        )
+        """The model string it was resolved from."""
+        return ModelPath(self.environment.name, self.harness.name, self.provider.name if self.provider else NONE,
+                         self.model or NONE)
 
 
 def _refuse(message: str) -> Invalid:
     return Invalid(message, param="model")
-
-
-def _provider(path: ModelPath, harness: Harness, providers: Sequence[Provider]) -> Provider:
-    wanted = path.provider or harness.provider
-    if wanted:
-        for provider in providers:
-            if provider.name == wanted:
-                return provider
-        raise _refuse(f"there is no provider named {wanted!r}")
-    for provider in providers:                                   # in the order they were created
-        if any(api in provider.apis for api in harness.manifest.apis):
-            return provider
-    speaks = " or ".join(harness.manifest.apis)
-    raise _refuse(f"harness {harness.name!r} needs a provider that speaks {speaks}: add one, or name one in the model")
 
 
 def resolve(
@@ -58,34 +39,37 @@ def resolve(
     *,
     environments: Mapping[str, Environment],
     harnesses: Mapping[str, Harness],
-    providers: Sequence[Provider],
+    providers: Mapping[str, Provider],
 ) -> Resolved:
-    environment = environments.get(path.environment or DEFAULT_ENVIRONMENT)
+    environment = environments.get(path.environment)
     if environment is None:
         raise _refuse(f"there is no environment named {path.environment!r}")
     harness = harnesses.get(path.harness)
     if harness is None:
         raise _refuse(f"there is no harness named {path.harness!r}")
+    if harness.name not in environment.harnesses:
+        raise _refuse(f"environment {environment.name!r} does not carry harness {harness.name!r}: "
+                      f"add it to the environment's harnesses")
     missing = harness.missing()
     if missing:
         raise _refuse(f"harness {harness.name!r} needs a value for {', '.join(missing)}")
 
     if not harness.manifest.apis:
-        if path.provider:
-            raise _refuse(f"harness {harness.name!r} uses no provider: the model is just {harness.name!r}")
+        if (path.provider, path.model) != (NONE, NONE):
+            raise _refuse(f"harness {harness.name!r} calls no model: name it "
+                          f"{environment.name}/{harness.name}/{NONE}/{NONE}")
         return Resolved(environment, harness, None, None, None)
 
-    provider = _provider(path, harness, providers)
+    speaks = " or ".join(harness.manifest.apis)
+    if path.provider == NONE:
+        raise _refuse(f"harness {harness.name!r} calls a model: name a provider that speaks {speaks}")
+    provider = providers.get(path.provider)
+    if provider is None:
+        raise _refuse(f"there is no provider named {path.provider!r}")
     api = next((api for api in harness.manifest.apis if api in provider.apis), None)
     if api is None:
-        raise _refuse(
-            f"provider {provider.name!r} speaks {', '.join(provider.apis)}, "
-            f"but harness {harness.name!r} speaks {', '.join(harness.manifest.apis)}"
-        )
-    model = path.model or harness.model or provider.default_model
-    if model is None:
-        raise _refuse(
-            f"no model: name one ({harness.name}/{provider.name}/<model>), "
-            f"or set a default model on the harness or the provider"
-        )
-    return Resolved(environment, harness, provider, api, model)
+        raise _refuse(f"provider {provider.name!r} speaks {', '.join(provider.apis)}, "
+                      f"but harness {harness.name!r} speaks {speaks}")
+    if path.model == NONE:
+        raise _refuse(f"harness {harness.name!r} calls a model: name it")
+    return Resolved(environment, harness, provider, api, path.model)

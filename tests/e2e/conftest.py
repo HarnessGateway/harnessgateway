@@ -23,7 +23,7 @@ from harnessgateway.drivers.docker import DockerDriver
 from harnessgateway.runner.runner import Runner
 from harnessgateway.serve import trust_bundle
 from harnessgateway.stores import Stores
-from tests.helpers import SHELL, Platform, free_port, serving
+from tests.helpers import SHELL, Platform, add, free_port, serving
 
 IMAGE = os.environ.get("HG_TEST_IMAGE", "node:22-slim")      # any image with sh; steps stand in with it too
 SANDBOX_IMAGE = os.environ.get("HG_TEST_SANDBOX_IMAGE", "python:3.13")
@@ -67,7 +67,7 @@ async def _gateway(network: str) -> str:
 @pytest.fixture
 async def platform(stores: Stores, org: str, platform_image: str) -> AsyncIterator[Platform]:
     """A whole platform on this machine's Docker: the internal API on a port steps can reach, a runner, and
-    the shell harness added."""
+    the shell harness added and carried by the default environment."""
     async with stores.db.system() as conn:               # the queue is shared: start with nothing waiting
         await conn.execute("UPDATE turns SET status = 'cancelled' WHERE status IN ('queued', 'in_progress')")
     driver = DockerDriver(platform_image=platform_image, runtime=RUNTIME)
@@ -79,7 +79,7 @@ async def platform(stores: Stores, org: str, platform_image: str) -> AsyncIterat
         internal_url=f"http://{await _gateway(CONTROL_NETWORK)}:{port}")
     stores = Stores.of(settings, stores.db, stores.blobs)
     await stores.environments.update(org, "default", {"image": SANDBOX_IMAGE})
-    await stores.harnesses.add(org, packaging.pack(SHELL))
+    await add(stores, org, packaging.pack(SHELL))
 
     async with serving(internal_app(stores), host="0.0.0.0", port=port):
         running = asyncio.create_task(Runner(stores, driver, heartbeat_s=0.5).run())

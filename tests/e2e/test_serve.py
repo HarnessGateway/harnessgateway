@@ -17,7 +17,6 @@ import pytest
 from openai import AsyncOpenAI
 from psycopg.conninfo import make_conninfo
 
-from harnessgateway import packaging
 from harnessgateway.domain.names import DEFAULT_ORG
 from harnessgateway.domain.plan import CONTROL_NETWORK, SANDBOX_NETWORK
 from harnessgateway.drivers.docker import DockerDriver
@@ -27,7 +26,7 @@ from harnessgateway.store.db import Database
 from harnessgateway.stores import Stores
 from tests.conftest import SERVER
 from tests.e2e.conftest import RUNTIME, SANDBOX_IMAGE, _gateway
-from tests.helpers import SHELL, free_port
+from tests.helpers import SHELL, SHELL_MODEL, free_port
 
 pytestmark = pytest.mark.usefixtures("database_url")
 
@@ -109,7 +108,7 @@ async def served(tmp_path: Path, platform_image: str) -> AsyncIterator[Served]:
         "HG_SECRET_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", "HG_PROXY_KEY": "test-proxy-key",
         "HG_DATA": str(tmp_path / "data"), "HG_PLATFORM_IMAGE": platform_image, "HG_SANDBOX_IMAGE": SANDBOX_IMAGE,
         "HG_INTERNAL_URL": f"http://{await _gateway(CONTROL_NETWORK)}:{internal_port}", "HG_PORT": str(port),
-        "HG_INTERNAL_PORT": str(internal_port), "HG_RUNTIME": RUNTIME,
+        "HG_INTERNAL_PORT": str(internal_port), "HG_RUNTIME": RUNTIME, "HG_CATALOG": str(SHELL.parent),
     }
     first = subprocess.run([sys.executable, "-m", "harnessgateway", "init"], env=env, capture_output=True, text=True,
                            check=True)
@@ -123,7 +122,7 @@ async def served(tmp_path: Path, platform_image: str) -> AsyncIterator[Served]:
     db = Database(settings.database_url)
     await db.open()
     stores = Stores.of(settings, db, DirectoryBlobs(Path(settings.data)))
-    await stores.harnesses.add(DEFAULT_ORG, packaging.pack(SHELL))
+    assert (await stores.environments.get(DEFAULT_ORG, "default")).harnesses == ("shell",)    # init added it
     served = Served(env, f"http://127.0.0.1:{port}", key, stores)
     await served.start()
     try:
@@ -147,15 +146,15 @@ async def served(tmp_path: Path, platform_image: str) -> AsyncIterator[Served]:
 
 
 async def test_from_init_to_a_response_through_the_sdk(served: Served) -> None:
-    response = await served.client.responses.create(model="shell", input="echo hello from a container; id -u")
+    response = await served.client.responses.create(model=SHELL_MODEL, input="echo hello from a container; id -u")
     assert response.status == "completed"
     assert response.output_text == "hello from a container\n10000\n"
-    again = await served.client.responses.create(model="shell", input="pwd", previous_response_id=response.id)
+    again = await served.client.responses.create(model=SHELL_MODEL, input="pwd", previous_response_id=response.id)
     assert again.output_text == "/work\n"
 
 
 async def test_another_process_streams_a_turn_that_is_already_running(served: Served, tmp_path: Path) -> None:
-    turn = await served.client.responses.create(model="shell", input="echo one; sleep 3; echo two", background=True)
+    turn = await served.client.responses.create(model=SHELL_MODEL, input="echo one; sleep 3; echo two", background=True)
     await served.text_seen(turn.id, "one")
     script = tmp_path / "streamer.py"
     script.write_text(STREAMER)
@@ -171,8 +170,8 @@ async def test_another_process_streams_a_turn_that_is_already_running(served: Se
 
 
 async def test_a_turn_running_when_the_platform_is_killed_is_ended_when_it_comes_back(served: Served) -> None:
-    first = await served.client.responses.create(model="shell", input="echo kept > a.txt")
-    lost = await served.client.responses.create(model="shell", input="echo started; sleep 600", background=True,
+    first = await served.client.responses.create(model=SHELL_MODEL, input="echo kept > a.txt")
+    lost = await served.client.responses.create(model=SHELL_MODEL, input="echo started; sleep 600", background=True,
                                                 previous_response_id=first.id)
     await served.text_seen(lost.id, "started")
     assert first.metadata is not None
@@ -190,13 +189,13 @@ async def test_a_turn_running_when_the_platform_is_killed_is_ended_when_it_comes
     assert final.error.message == "the platform restarted during this turn"
     assert final.metadata is not None
     assert final.metadata["hg_reason"] == "sandbox_failed"
-    onward = await served.client.responses.create(model="shell", input="cat a.txt", previous_response_id=first.id)
+    onward = await served.client.responses.create(model=SHELL_MODEL, input="cat a.txt", previous_response_id=first.id)
     assert onward.output_text == "kept\n"
 
 
 async def test_a_stop_signal_stops_saves_and_ends_running_turns(served: Served) -> None:
-    turn = await served.client.responses.create(model="shell", input="echo partial > kept.txt; echo started; sleep 600",
-                                                background=True)
+    turn = await served.client.responses.create(model=SHELL_MODEL, background=True,
+                                                input="echo partial > kept.txt; echo started; sleep 600")
     await served.text_seen(turn.id, "started")
     assert await served.stop(signal.SIGTERM) == 0
     assert await _containers() == []

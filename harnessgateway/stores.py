@@ -9,6 +9,7 @@ from harnessgateway.domain.sealing import Sealer, keyed_hash
 from harnessgateway.settings import Settings
 from harnessgateway.store.audit import Audit
 from harnessgateway.store.blobs import BlobStore
+from harnessgateway.store.builds import Builds
 from harnessgateway.store.db import Database
 from harnessgateway.store.drafts import Drafts
 from harnessgateway.store.egress import Egress
@@ -33,6 +34,7 @@ class Stores:
     snapshots: Snapshots
     providers: Providers
     environments: Environments
+    builds: Builds
     harnesses: Harnesses
     drafts: Drafts
     files: Files
@@ -56,6 +58,7 @@ class Stores:
             snapshots=Snapshots(db, blobs),
             providers=Providers(db, sealer),
             environments=Environments(db, sealer),
+            builds=Builds(db),
             harnesses=Harnesses(db, blobs, sealer),
             drafts=Drafts(db),
             files=Files(db, blobs),
@@ -71,7 +74,7 @@ class Stores:
             path,
             environments={environment.name: environment for environment in await self.environments.all(org_id)},
             harnesses={harness.name: harness for harness in await self.harnesses.all(org_id)},
-            providers=[record.provider for record in await self.providers.all(org_id)],
+            providers={record.provider.name: record.provider for record in await self.providers.all(org_id)},
         )
 
     def hash(self, token: str) -> str:

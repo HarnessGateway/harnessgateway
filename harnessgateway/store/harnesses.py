@@ -9,8 +9,6 @@ from psycopg.types.json import Jsonb
 
 from harnessgateway.domain.archive import Package, read_archive
 from harnessgateway.domain.harness import Harness
-from harnessgateway.domain.modelpath import MODEL_MAX
-from harnessgateway.domain.names import check_name
 from harnessgateway.domain.package import Manifest
 from harnessgateway.domain.sealing import Sealer
 from harnessgateway.errors import Invalid, NotFound
@@ -20,8 +18,8 @@ from harnessgateway.store.db import Database
 from harnessgateway.store.sealed import check_value, open_all, seal
 
 LOG_TAIL = 64 * 1024
-_CHANGEABLE = frozenset({"provider", "model", "settings", "secrets"})
-_COLUMNS = "h.digest, h.provider, h.model, h.settings, h.secrets_sealed, h.created_at, p.manifest"
+_CHANGEABLE = frozenset({"settings", "secrets"})
+_COLUMNS = "h.digest, h.settings, h.secrets_sealed, h.created_at, p.manifest"
 _INSTALL_COLUMNS = "id, digest, image_id, status, log_tail, updated_at"
 
 InstallStatus = Literal["pending", "ready", "failed"]
@@ -46,9 +44,8 @@ def package_key(org_id: str, digest: str) -> str:
 
 
 def _harness(row: Mapping[str, Any]) -> Harness:
-    return Harness(manifest=Manifest.load(row["manifest"]), digest=row["digest"], provider=row["provider"],
-                   model=row["model"], settings_values=row["settings"], secrets_set=frozenset(row["secrets_sealed"]),
-                   added_at=row["created_at"])
+    return Harness(manifest=Manifest.load(row["manifest"]), digest=row["digest"], settings_values=row["settings"],
+                   secrets_set=frozenset(row["secrets_sealed"]), added_at=row["created_at"])
 
 
 def _declared(changes: object, declared: Mapping[str, object], what: str) -> dict[str, object]:
@@ -70,8 +67,7 @@ class Harnesses:
 
     async def add(self, org_id: str, archive: bytes) -> Harness:
         """Add a package as a harness, or replace the harness of the same name. The package is validated in
-        full first. A replaced harness keeps its defaults, and each setting and secret the new manifest still
-        declares."""
+        full first. A replaced harness keeps each setting and secret the new manifest still declares."""
         package = read_archive(archive)
         manifest = package.manifest
         key = package_key(org_id, package.digest)
@@ -96,7 +92,7 @@ class Harnesses:
         return await self.get(org_id, manifest.name)
 
     async def update(self, org_id: str, name: str, changes: Mapping[str, Any]) -> Harness:
-        """Set the default provider and model, setting values and secret values. `null` unsets."""
+        """Set setting values and secret values. `null` unsets."""
         unknown = sorted(set(changes) - _CHANGEABLE)
         if unknown:
             raise Invalid(f"{unknown[0]} cannot be changed; what can: {', '.join(sorted(_CHANGEABLE))}")
@@ -107,14 +103,7 @@ class Harnesses:
             if row is None:
                 raise NotFound(f"there is no harness named {name!r}")
             manifest = Manifest.load(row["manifest"])
-            provider, model = row["provider"], row["model"]
             settings, secrets = dict(row["settings"]), dict(row["secrets_sealed"])
-            if "provider" in changes:
-                provider = None if changes["provider"] is None else check_name(changes["provider"], "provider")
-            if "model" in changes:
-                model = changes["model"]
-                if model is not None and (not isinstance(model, str) or not 0 < len(model) <= MODEL_MAX):
-                    raise Invalid(f"model is 1 to {MODEL_MAX} characters, or null", param="model")
             for setting, value in _declared(changes.get("settings", {}), manifest.settings, "settings").items():
                 if value is None:
                     settings.pop(setting, None)
@@ -127,16 +116,19 @@ class Harnesses:
                     secrets[secret] = seal(self._sealer, check_value(value, f"secrets.{secret}"), org=org_id,
                                            kind=_kind(name), name=secret)
             await conn.execute(
-                "UPDATE harnesses SET provider = %s, model = %s, settings = %s, secrets_sealed = %s, "
-                "updated_at = now() WHERE org_id = %s AND name = %s",
-                [provider, model, Jsonb(settings), Jsonb(secrets), org_id, name])
+                "UPDATE harnesses SET settings = %s, secrets_sealed = %s, updated_at = now() "
+                "WHERE org_id = %s AND name = %s", [Jsonb(settings), Jsonb(secrets), org_id, name])
         return await self.get(org_id, name)
 
     async def delete(self, org_id: str, name: str) -> None:
+        """Remove a harness, and take it off every environment that carries it."""
         async with self._db.org(org_id) as conn:
             cursor = await conn.execute("DELETE FROM harnesses WHERE org_id = %s AND name = %s", [org_id, name])
-        if cursor.rowcount == 0:
-            raise NotFound(f"there is no harness named {name!r}")
+            if cursor.rowcount == 0:
+                raise NotFound(f"there is no harness named {name!r}")
+            await conn.execute(
+                "UPDATE environments SET spec = jsonb_set(spec, '{harnesses}', (spec -> 'harnesses') - %s::text), "
+                "updated_at = now() WHERE org_id = %s AND spec -> 'harnesses' ? %s", [name, org_id, name])
 
     async def get(self, org_id: str, name: str) -> Harness:
         async with self._db.org(org_id) as conn:
@@ -190,6 +182,21 @@ class Harnesses:
         if row is None:
             raise NotFound(f"there is no install {install_id}")
         return Install(**row)
+
+    async def installs_on(self, org_id: str, image_id: str) -> dict[str, Install]:
+        """Every install for an image, by package digest."""
+        async with self._db.org(org_id) as conn:
+            rows = await (await conn.execute(
+                f"SELECT {_INSTALL_COLUMNS} FROM installs WHERE org_id = %s AND image_id = %s",
+                [org_id, image_id])).fetchall()
+        return {row["digest"]: Install(**row) for row in rows}
+
+    async def remove_installs_on(self, org_id: str, image_id: str) -> list[str]:
+        """Forget every install for an image that is gone. Their ids: the caller removes their volumes."""
+        async with self._db.org(org_id) as conn:
+            rows = await (await conn.execute("DELETE FROM installs WHERE org_id = %s AND image_id = %s RETURNING id",
+                                             [org_id, image_id])).fetchall()
+        return [row["id"] for row in rows]
 
     async def installs(self, org_id: str, digest: str) -> list[Install]:
         async with self._db.org(org_id) as conn:

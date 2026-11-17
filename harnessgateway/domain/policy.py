@@ -37,6 +37,7 @@ class Policy:
             "mode": self.egress.mode,
             "allow": [str(entry) for entry in self.egress.allow],
             "deny": [str(entry) for entry in self.egress.deny],
+            "allowed_by": self.egress.allowed_by,
             "secrets": [{"hosts": [str(entry) for entry in secret.hosts], "value": secret.value,
                          "placeholder": secret.placeholder, "header": secret.header, "prefix": secret.prefix}
                         for secret in self.secrets],
@@ -48,7 +49,8 @@ class Policy:
             return tuple(HostEntry.parse(value) for value in values)
         return cls(
             org_id=data["org_id"], subject_id=data["subject_id"], environment=data["environment"],
-            egress=EgressPolicy(mode=data["mode"], allow=entries(data["allow"]), deny=entries(data["deny"])),
+            egress=EgressPolicy(mode=data["mode"], allow=entries(data["allow"]), deny=entries(data["deny"]),
+                                allowed_by=data["allowed_by"]),
             secrets=tuple(BoundSecret(hosts=entries(secret["hosts"]), value=secret["value"],
                                       placeholder=secret["placeholder"], header=secret["header"],
                                       prefix=secret["prefix"]) for secret in data["secrets"]),

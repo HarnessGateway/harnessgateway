@@ -259,7 +259,7 @@ async def test_a_chunk_that_arrives_changed_fails_the_restore(client: LocalClien
 async def test_the_turn_s_inputs_are_written(client: LocalClient, roots: dict[str, Path], tmp_path: Path) -> None:
     await client.blobs.put("orgs/o/files/file_1", b"%PDF-1.7 ...")
     await client.blobs.put("orgs/o/files/file_2", b"a,b\n1,2\n")
-    request = {"model": "claude-code", "input": "Summarize the report."}
+    request = {"model": "default/claude-code/deepseek/deepseek-flash", "input": "Summarize the report."}
     history = [{"id": "resp_1", "harness": "pi", "status": "completed", "input": "hi", "output": []}]
     plan = replace(EMPTY, request=request, history=history, handover="Handover from pi. Review /mind/.pi.", files=(
         InputFile("file_1", "report.pdf", "orgs/o/files/file_1"),

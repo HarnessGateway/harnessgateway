@@ -1,6 +1,7 @@
 """The management API: how an organization sets the platform up (spec §14). JSON, in shapes of our own."""
 
 import codecs
+import contextlib
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,12 +18,12 @@ from harnessgateway.domain.archive import PACKED_MAX, PackageFile, write_archive
 from harnessgateway.domain.contract import CONTRACT_VERSION
 from harnessgateway.domain.environment import Environment
 from harnessgateway.domain.harness import Harness
-from harnessgateway.domain.names import DEFAULT_ENVIRONMENT, check_id, container_id
+from harnessgateway.domain.names import check_id, container_id
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Invalid, NotFound, TooLarge
 from harnessgateway.packaging import LEFT_OUT
 from harnessgateway.platform import Platform
-from harnessgateway.store.harnesses import Install
+from harnessgateway.store.environments import Prepared
 from harnessgateway.store.keys import Key
 from harnessgateway.store.providers import ProviderRecord
 from harnessgateway.store.turns import SessionSummary, Turn
@@ -57,7 +58,7 @@ def _provider(record: ProviderRecord) -> dict[str, Any]:
 def providers_router(platform: Platform, role: Role) -> APIRouter:
     router = APIRouter()
     providers = platform.stores.providers
-    Developer = Annotated[Principal, Depends(role("developer"))]
+    Anyone = Annotated[Principal, Depends(role("runner"))]
     Admin = Annotated[Principal, Depends(role("admin"))]
 
     @router.post("/v1/providers")
@@ -68,11 +69,11 @@ def providers_router(platform: Platform, role: Role) -> APIRouter:
         return _provider(record)
 
     @router.get("/v1/providers")
-    async def listing(principal: Developer, limit: int = 20, after: str | None = None) -> Any:
+    async def listing(principal: Anyone, limit: int = 20, after: str | None = None) -> Any:
         return _named([_provider(r) for r in await providers.all(principal.org_id)], after=after, limit=limit)
 
     @router.get("/v1/providers/{name}")
-    async def one(name: str, principal: Developer) -> Any:
+    async def one(name: str, principal: Anyone) -> Any:
         return _provider(await providers.get(principal.org_id, name))
 
     @router.patch("/v1/providers/{name}")
@@ -93,37 +94,73 @@ def providers_router(platform: Platform, role: Role) -> APIRouter:
 
 # ── environments ────────────────────────────────────────────────────────────────────────────────────
 
-def _environment(environment: Environment) -> dict[str, Any]:
-    return environment.dump()                                   # secret values are never part of it
+async def environment_shown(stores: Stores, org_id: str, environment: Environment, prepared: Prepared | None, *,
+                            logs: bool) -> dict[str, Any]:
+    """An environment as the API shows it: its definition, with no secret value, and how far it is prepared (spec
+    §9.5): the image its turns run on, the build of its setup script, and the install of each of its harnesses.
+    Logs are shown for one environment, not in a list."""
+    prepared = prepared or Prepared(None, None)
+    build = None
+    if environment.setup.script and prepared.build_id:
+        with contextlib.suppress(NotFound):
+            made = await stores.builds.get(org_id, prepared.build_id)
+            build = {"status": made.status, "updated_at": _time(made.updated_at),
+                     **({"log": made.log_tail} if logs else {})}
+    on_image = await stores.harnesses.installs_on(org_id, prepared.image_id) if prepared.image_id else {}
+    by_name = {harness.name: harness for harness in await stores.harnesses.all(org_id)}
+    installs = []
+    for name in environment.harnesses:
+        install = on_image.get(by_name[name].digest) if name in by_name else None
+        installs.append({
+            "harness": name,
+            "status": (install.status if install else "pending") if prepared.image_id else None,
+            "updated_at": _time(install.updated_at) if install else None,
+            **({"log": install.log_tail if install else ""} if logs else {}),
+        })
+    return {**environment.dump(), "image_id": prepared.image_id, "build": build, "installs": installs}
 
 
 def environments_router(platform: Platform, role: Role) -> APIRouter:
     router = APIRouter()
-    environments = platform.stores.environments
-    Developer = Annotated[Principal, Depends(role("developer"))]
+    stores = platform.stores
+    environments = stores.environments
+    Anyone = Annotated[Principal, Depends(role("runner"))]
     Admin = Annotated[Principal, Depends(role("admin"))]
+
+    async def shown(principal: Principal, environment: Environment) -> dict[str, Any]:
+        """One environment, with its logs for a developer or an admin: a runner's key is an application's."""
+        prepared = (await environments.prepared(principal.org_id)).get(environment.name)
+        return await environment_shown(stores, principal.org_id, environment, prepared,
+                                       logs=principal.role != "runner")
 
     @router.post("/v1/environments")
     async def create(request: Request, principal: Admin) -> Any:
         body = _object(await read_json(request))
         environment = await environments.create(principal.org_id, body)
         await platform.audit(principal, "environment.create", environment.name, {"fields": sorted(body)})
-        return _environment(environment)
+        platform.prepare_in_background(principal.org_id, [environment.name])
+        return await shown(principal, environment)
 
     @router.get("/v1/environments")
-    async def listing(principal: Developer, limit: int = 20, after: str | None = None) -> Any:
-        return _named([_environment(e) for e in await environments.all(principal.org_id)], after=after, limit=limit)
+    async def listing(principal: Anyone, limit: int = 20, after: str | None = None) -> Any:
+        prepared = await environments.prepared(principal.org_id)
+        found = [await environment_shown(stores, principal.org_id, e, prepared.get(e.name), logs=False)
+                 for e in await environments.all(principal.org_id)]
+        return _named(found, after=after, limit=limit)
 
     @router.get("/v1/environments/{name}")
-    async def one(name: str, principal: Developer) -> Any:
-        return _environment(await environments.get(principal.org_id, name))
+    async def one(name: str, principal: Anyone) -> Any:
+        return await shown(principal, await environments.get(principal.org_id, name))
 
     @router.patch("/v1/environments/{name}")
     async def update(name: str, request: Request, principal: Admin) -> Any:
+        """Change an environment. It is prepared again: what changed is built and installed, and what failed
+        before is tried again."""
         changes = _object(await read_json(request))
         environment = await environments.update(principal.org_id, name, changes)
         await platform.audit(principal, "environment.update", name, {"fields": sorted(changes)})
-        return _environment(environment)
+        platform.prepare_in_background(principal.org_id, [environment.name])
+        return await shown(principal, environment)
 
     @router.delete("/v1/environments/{name}")
     async def delete(name: str, principal: Admin) -> Any:
@@ -136,20 +173,22 @@ def environments_router(platform: Platform, role: Role) -> APIRouter:
 
 # ── harnesses ───────────────────────────────────────────────────────────────────────────────────────
 
-def _install(install: Install) -> dict[str, Any]:
-    return {"id": install.id, "image_id": install.image_id, "status": install.status,
-            "updated_at": _time(install.updated_at)}
-
-
 async def harness_shown(stores: Stores, org_id: str, harness: Harness) -> dict[str, Any]:
-    """An installed harness as the API shows it."""
+    """A harness as the API shows it, with the environments that carry it and how its install on each stands."""
     manifest = harness.manifest
+    prepared = await stores.environments.prepared(org_id)
+    carried = []
+    for environment in await stores.environments.all(org_id):
+        if harness.name in environment.harnesses:
+            image_id = prepared[environment.name].image_id if environment.name in prepared else None
+            install = (await stores.harnesses.installs_on(org_id, image_id)).get(harness.digest) if image_id else None
+            carried.append({"name": environment.name,
+                            "status": (install.status if install else "pending") if image_id else None})
     return {
         "name": harness.name, "version": manifest.version, "description": manifest.description,
-        "digest": harness.digest, "manifest": manifest.dump(), "provider": harness.provider,
-        "model": harness.model, "settings": harness.setting_values(), "secrets_set": sorted(harness.secrets_set),
-        "missing": harness.missing(), "added_at": _time(harness.added_at),
-        "installs": [_install(i) for i in await stores.harnesses.installs(org_id, harness.digest)],
+        "digest": harness.digest, "manifest": manifest.dump(), "settings": harness.setting_values(),
+        "secrets_set": sorted(harness.secrets_set), "missing": harness.missing(), "added_at": _time(harness.added_at),
+        "environments": carried,
     }
 
 
@@ -191,6 +230,7 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
     stores = platform.stores
     harnesses = stores.harnesses
     catalog = Catalog(Path(stores.settings.catalog))
+    Anyone = Annotated[Principal, Depends(role("runner"))]
     Developer = Annotated[Principal, Depends(role("developer"))]
 
     async def shown(org_id: str, harness: Harness) -> dict[str, Any]:
@@ -218,16 +258,16 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
         harness = await harnesses.add(principal.org_id, archive)
         await platform.audit(principal, "harness.add", harness.name,
                              {"version": harness.manifest.version, "digest": harness.digest, "source": source})
-        platform.install_in_background(principal.org_id, harness.name, DEFAULT_ENVIRONMENT)
+        platform.prepare_in_background(principal.org_id, await platform.carrying(principal.org_id, harness.name))
         return await shown(principal.org_id, harness)
 
     @router.get("/v1/harnesses")
-    async def listing(principal: Developer, limit: int = 20, after: str | None = None) -> Any:
+    async def listing(principal: Anyone, limit: int = 20, after: str | None = None) -> Any:
         found = [await shown(principal.org_id, harness) for harness in await harnesses.all(principal.org_id)]
         return _named(found, after=after, limit=limit)
 
     @router.get("/v1/harnesses/{name}")
-    async def one(name: str, principal: Developer) -> Any:
+    async def one(name: str, principal: Anyone) -> Any:
         return await shown(principal.org_id, await harnesses.get(principal.org_id, name))
 
     @router.patch("/v1/harnesses/{name}")
@@ -246,23 +286,6 @@ def harnesses_router(platform: Platform, role: Role) -> APIRouter:
         await harnesses.delete(principal.org_id, name)
         await platform.audit(principal, "harness.delete", name)
         return {"name": name, "deleted": True}
-
-    @router.post("/v1/harnesses/{name}/install")
-    async def install(name: str, request: Request, principal: Developer) -> Any:
-        body = _object(await read_json(request))
-        harness = await harnesses.get(principal.org_id, name)
-        environment = await stores.environments.get(principal.org_id, str(body.get("environment",
-                                                                                 DEFAULT_ENVIRONMENT)))
-        platform.install_in_background(principal.org_id, harness.name, environment.name)
-        await platform.audit(principal, "harness.install", name, {"environment": environment.name})
-        return {"name": name, "environment": environment.name, "status": "pending"}
-
-    @router.get("/v1/harnesses/{name}/installs")
-    async def installs(name: str, principal: Developer) -> Any:
-        harness = await harnesses.get(principal.org_id, name)
-        found = await harnesses.installs(principal.org_id, harness.digest)
-        return {"object": "list", "data": [{**_install(i), "log": i.log_tail} for i in found], "has_more": False,
-                "last_id": found[-1].id if found else None}
 
     @router.get("/v1/harnesses/{name}/files")
     async def package_files(name: str, principal: Developer) -> Any:

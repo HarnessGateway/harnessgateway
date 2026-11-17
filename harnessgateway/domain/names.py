@@ -18,6 +18,7 @@ PREFIXES = {
     "key": "key",
     "org": "org",
     "install": "inst",
+    "build": "bld",
 }
 _CONTAINER_PREFIX = "cntr"
 

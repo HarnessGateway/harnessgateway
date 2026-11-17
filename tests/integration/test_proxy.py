@@ -22,13 +22,14 @@ from harnessgateway.domain.hosts import HostEntry
 from harnessgateway.domain.modelpath import ModelPath
 from harnessgateway.domain.outcome import Outcome
 from harnessgateway.domain.sealing import new_placeholder, new_token
+from harnessgateway.policies import Policies
 from harnessgateway.proxy import platform as platform_module
 from harnessgateway.proxy.authority import Authority, new_authority
 from harnessgateway.proxy.platform import PlatformClient
 from harnessgateway.proxy.server import EgressProxy
 from harnessgateway.store.turns import Turn
 from harnessgateway.stores import Stores
-from tests.helpers import serving
+from tests.helpers import add, serving
 from tests.integration.test_harness_store import demo_archive
 
 
@@ -104,19 +105,19 @@ async def world(stores: Stores, org: str, tmp_path: Path) -> AsyncIterator[World
             int(url.rsplit(":", 1)[1]), theirs) as unbound:
         http = int(url.rsplit(":", 1)[1])
         await stores.providers.create(org, {"name": "local", "apis": {"openai-chat": f"http://localhost:{http}/v1"},
-                                            "api_key": "the-provider-key", "default_model": "m"})
+                                            "api_key": "the-provider-key", "models": ["m"]})
         await stores.environments.update(org, "default", {
             "network": {"mode": "limited", "allow": [f"127.0.0.1:{http}", f"localhost:{unbound}"],
                         "deny": ["denied.example.com"]},
             "secrets": {"EXAMPLE_TOKEN": {"hosts": [f"localhost:{https}"], "header": "X-Api-Key", "prefix": "Key ",
                                           "value": "the-environment-secret"}}})
-        await stores.harnesses.add(org, demo_archive(tmp_path, apis=["openai-chat"], settings={}, secrets={
+        await add(stores, org, demo_archive(tmp_path, apis=["openai-chat"], settings={}, secrets={
             "GITHUB_TOKEN": {"hosts": [f"localhost:{https}"]}}))
         await stores.harnesses.update(org, "demo", {"secrets": {"GITHUB_TOKEN": "the-harness-secret"}})
 
-        resolved = await stores.resolve(org, ModelPath.parse("demo"))
+        resolved = await stores.resolve(org, ModelPath.parse("default/demo/local/m"))
         await stores.turns.create(org, resolved=resolved, parent=None, key_id=None,
-                                  request={"model": "demo", "input": "x"})
+                                  request={"model": "default/demo/local/m", "input": "x"})
         turn = await stores.turns.claim("runner-test")
         assert turn is not None
         token = new_token()
@@ -383,3 +384,45 @@ async def test_an_install_reaches_package_managers_and_what_its_manifest_names_a
     await world.stores.harnesses.end_install(world.org, install.id, ready=True, log="")
     world.platform._policies.clear()
     assert await world.platform.policy(install.id, token) is None
+
+
+async def test_a_build_reaches_package_managers_its_setup_egress_and_its_secrets_hosts_and_nothing_else(
+    world: World
+) -> None:
+    """A setup script runs before any turn, so what turns may reach is not added to what it may: it reaches the
+    package managers, what the environment's setup names and the hosts of its secrets, which it holds as
+    placeholders. A host the environment denies stays denied."""
+    stores, org = world.stores, world.org
+    await stores.environments.update(org, "default", {"setup": {"script": "true",
+                                                                "egress": [f"127.0.0.1:{world.http}"]}})
+    build = await stores.builds.build_for(org, "sha256:base", "true")
+    token, placeholder = new_token(), new_placeholder()
+    await stores.builds.begin(org, build.id, environment="default", proxy_token_hash=stores.hash(token),
+                              placeholders={placeholder: "EXAMPLE_TOKEN"})
+    policy = await Policies(stores).of(build.id, token)
+    assert policy is not None
+    assert (policy.org_id, policy.subject_id, policy.environment) == (org, build.id, "default")
+    [secret] = policy.secrets
+    assert (secret.placeholder, secret.value, secret.header, secret.prefix) == (
+        placeholder, "the-environment-secret", "X-Api-Key", "Key ")
+    assert secret.bound_to("localhost", world.https)
+    decide = policy.egress.decide
+    assert decide("registry.npmjs.org", 443).allowed
+    assert decide("pypi.org", 443).allowed
+    assert decide("127.0.0.1", world.http).allowed
+    assert decide("localhost", world.https).allowed
+    assert not decide("localhost", world.unbound).allowed            # in the environment's network.allow only
+    assert not decide("denied.example.com", 443).allowed
+    assert not decide("api.example.com", 443).allowed
+
+    async with world.client(user=build.id, token=token) as client:
+        assert (await client.get(f"http://127.0.0.1:{world.http}/echo")).status_code == 200
+        assert (await client.get(f"http://localhost:{world.unbound}/echo")).status_code == 403
+        said = (await client.get(f"https://localhost:{world.https}/echo?token={placeholder}")).json()
+    assert said["query"] == {"token": "the-environment-secret"}
+    assert said["headers"]["x-api-key"] == "Key the-environment-secret"
+
+    await stores.builds.end(org, build.id, image_id="sha256:built", log="")
+    world.platform._policies.clear()
+    assert await Policies(stores).of(build.id, token) is None
+    assert await world.platform.policy(build.id, token) is None

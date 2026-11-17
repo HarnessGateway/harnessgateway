@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.helpers import Platform, text_of, variant
+from tests.helpers import Platform, add, text_of, variant
 
 pytestmark = pytest.mark.usefixtures("database_url")
 
@@ -59,11 +59,11 @@ async def test_in_a_closed_environment_a_turn_reaches_its_provider_with_its_key_
     await platform.stores.environments.update(platform.org, "default", {"network": {"mode": "closed"}})
     await platform.stores.providers.create(platform.org, {
         "name": "outside", "apis": {"openai-chat": f"http://{egress}/v1"}, "api_key": "the-provider-key"})
-    await platform.stores.harnesses.add(platform.org, variant(tmp_path, "caller", apis=["openai-chat"]))
+    await add(platform.stores, platform.org, variant(tmp_path, "caller", apis=["openai-chat"]))
     turn = await platform.run(
         'curl -sS -H "Authorization: Bearer $HG_PROVIDER_KEY" "$HG_PROVIDER_URL/models"; echo; '
         "curl -sS http://example.com/; curl -sS -o /dev/null -w '%{http_code}\\n' https://registry.npmjs.org/",
-        model="caller/outside/a-model", timeout=180)
+        model="default/caller/outside/a-model", timeout=180)
     lines = text_of(turn).splitlines()
     seen = json.loads(lines[0])
     assert (seen["path"], seen["headers"]["Authorization"]) == ("/v1/models", "Bearer the-provider-key"), turn.log_tail

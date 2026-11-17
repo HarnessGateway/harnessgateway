@@ -9,10 +9,11 @@ It is the smallest harness package there is, and the one to copy when writing a 
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="hg_...")
-first = client.responses.create(model="shell", input="echo hello > note.txt; ls")
+first = client.responses.create(model="default/shell/none/none", input="echo hello > note.txt; ls")
 print(first.output_text)                     # note.txt
 
-later = client.responses.create(model="shell", input="cat note.txt", previous_response_id=first.id)
+later = client.responses.create(model="default/shell/none/none", input="cat note.txt",
+                                previous_response_id=first.id)
 print(later.output_text)                     # hello
 ```
 

@@ -3,6 +3,7 @@
 Building a plan is pure. Rendering one on some infrastructure is a driver's whole job.
 """
 
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -55,6 +56,24 @@ class StepPlan:
     env: dict[str, str]
     mounts: list[Mount]
     network: str | None
+
+
+@dataclass(frozen=True)
+class BuildPlan:
+    """An environment's setup script, run once as root on its base image; what it leaves is committed as the
+    environment's image (spec §9.4). The script and the variables it is given arrive on standard input, so
+    nothing of them is kept in the image's configuration."""
+
+    name: str
+    labels: dict[str, str]
+    image: str                         # the base image's id
+    stdin: str
+    mounts: list[Mount]
+    cpus: float
+    memory_mb: int
+    pids: int
+    network: str
+    tag: str                           # what the committed image is called on this host
 
 
 @dataclass(frozen=True)
@@ -186,6 +205,38 @@ def install_plan(
     )
 
 
+def build_tag(build_id: str) -> str:
+    return f"harnessgateway-environment:{build_id.lower()}"
+
+
+def build_plan(*, org_id: str, build_id: str, image_id: str, environment: Environment, proxy_token: str,
+               secret_placeholders: Mapping[str, str]) -> BuildPlan:
+    """The setup of an environment's image. The script sees the proxy, the platform's certificate bundle and a
+    placeholder for each of the environment's secrets: no provider, and none of its variables."""
+    variables = {**_network_variables(build_id, proxy_token), **secret_placeholders}
+    exports = "".join(f"export {name}={shlex.quote(value)}\n" for name, value in variables.items())
+    return BuildPlan(
+        name=f"hg-build-{build_id}",
+        labels={"hg.org": org_id, "hg.build": build_id},
+        image=image_id,
+        stdin=f"set -e\n{exports}{environment.setup.script.rstrip()}\n",
+        mounts=[_CA_MOUNT],
+        cpus=environment.cpus,
+        memory_mb=environment.memory_mb,
+        pids=environment.pids,
+        network=SANDBOX_NETWORK,
+        tag=build_tag(build_id),
+    )
+
+
+def setup_policy(environment: Environment) -> EgressPolicy:
+    """What an environment's setup script may reach, whatever its mode: the package managers, the hosts its
+    setup names and the hosts of its secrets. A host the environment denies stays denied."""
+    secret_hosts = [host for secret in environment.secrets.values() for host in secret.hosts]
+    return EgressPolicy(mode="limited", allow=(*PACKAGE_MANAGER_HOSTS, *environment.setup.egress, *secret_hosts),
+                        deny=environment.network.deny, allowed_by="the environment's setup.egress")
+
+
 def turn_policy(resolved: Resolved) -> EgressPolicy:
     """What a turn's sandbox may reach (spec §9.3). Its provider, in every mode. A limited environment adds what
     it allows, what the package declares, the hosts of the secrets in use and, if it says so, the package managers."""
@@ -210,6 +261,7 @@ def install_policy(environment: Environment, manifest: Manifest) -> EgressPolicy
         mode="limited",
         allow=(*PACKAGE_MANAGER_HOSTS, *manifest.install.egress),
         deny=environment.network.deny,
+        allowed_by="the package's install.egress",
     )
 
 

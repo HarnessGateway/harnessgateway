@@ -8,7 +8,10 @@ from pydantic import AfterValidator, Field, field_validator
 from harnessgateway.domain.contract import ApiName
 from harnessgateway.domain.definition import Definition
 from harnessgateway.domain.hosts import HostEntry
+from harnessgateway.domain.modelpath import MODEL_MAX, NONE
 from harnessgateway.domain.names import check_name
+
+MODELS_MAX = 100
 
 
 def _base_url(value: str) -> str:
@@ -20,10 +23,27 @@ def _base_url(value: str) -> str:
     return value.rstrip("/")
 
 
+def _name(value: str) -> str:
+    check_name(value, "name")
+    if value == NONE:
+        raise ValueError(f"{NONE} is not a provider's name: in a model string it means no provider")
+    return value
+
+
+def _models(value: tuple[str, ...]) -> tuple[str, ...]:
+    if len(set(value)) != len(value):
+        raise ValueError("a model is listed twice")
+    return value
+
+
 class Provider(Definition):
-    name: Annotated[str, AfterValidator(lambda v: check_name(v, "name"))]
+    """`models` are the models the organization offers through this provider: what its people are shown to pick
+    from. A request may name any model the endpoint serves."""
+
+    name: Annotated[str, AfterValidator(_name)]
     apis: Annotated[dict[ApiName, str], Field(min_length=1)]
-    default_model: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    models: Annotated[tuple[Annotated[str, Field(min_length=1, max_length=MODEL_MAX)], ...],
+                      Field(max_length=MODELS_MAX), AfterValidator(_models)] = ()
 
     @field_validator("apis")
     @classmethod

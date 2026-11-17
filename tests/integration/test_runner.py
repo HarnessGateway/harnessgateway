@@ -18,21 +18,21 @@ from harnessgateway import packaging
 from harnessgateway.api.internal import internal_app
 from harnessgateway.domain.plan import install_volume, mind_volume, turn_volume, work_volume
 from harnessgateway.errors import Conflict, Invalid
-from harnessgateway.runner.installer import Installer
+from harnessgateway.runner.prepare import Preparer
 from harnessgateway.runner.runner import Runner
 from harnessgateway.runner.turn import TurnRunner
 from harnessgateway.settings import Settings
 from harnessgateway.stores import Stores
-from tests.helpers import SHELL, Platform, text_of, variant
+from tests.helpers import SHELL, SHELL_MODEL, Platform, add, text_of, variant
 from tests.integration.local_driver import LocalDriver
 
 
 @pytest.fixture
 async def idle(stores: Stores, org: str, tmp_path: Path) -> Platform:
-    """A platform with the shell harness added and no runner running."""
+    """A platform with the shell harness added, carried by the default environment, and no runner running."""
     async with stores.db.system() as conn:               # the queue is shared: start with nothing waiting
         await conn.execute("UPDATE turns SET status = 'cancelled' WHERE status IN ('queued', 'in_progress')")
-    await stores.harnesses.add(org, packaging.pack(SHELL))
+    await add(stores, org, packaging.pack(SHELL))
     return Platform(stores, org, LocalDriver(tmp_path / "volumes", internal_app(stores)))
 
 
@@ -142,7 +142,9 @@ async def test_a_second_turn_on_a_session_with_one_in_progress_is_refused(platfo
 
 async def test_a_request_that_does_not_resolve_is_refused_and_nothing_is_queued(platform: Platform) -> None:
     with pytest.raises(Invalid, match="there is no harness named 'absent'"):
-        await platform.ask("x", model="absent")
+        await platform.ask("x", model="default/absent/none/none")
+    with pytest.raises(Invalid, match="four parts are needed in 'shell'"):
+        await platform.ask("x", model="shell")
     with pytest.raises(Invalid, match="names no response"):
         await platform.ask("x", previous_response_id="resp_00000000000000000000000000")
     with pytest.raises(Invalid, match="a file that does not exist: file_x"):
@@ -150,16 +152,44 @@ async def test_a_request_that_does_not_resolve_is_refused_and_nothing_is_queued(
     assert await platform.stores.turns.claim("someone") is None
 
 
+async def test_a_harness_that_calls_a_model_is_given_a_provider_and_a_model_by_name_never_by_default(
+    idle: Platform, tmp_path: Path
+) -> None:
+    stores, org = idle.stores, idle.org
+    await add(stores, org, variant(tmp_path, "caller", apis=["openai-chat"]))
+    await stores.providers.create(org, {"name": "local", "apis": {"openai-chat": "http://localhost:9/v1"},
+                                        "models": ["m"]})
+    await stores.providers.create(org, {"name": "other", "apis": {"anthropic": "http://localhost:9/anthropic"}})
+    for model, refusal in [
+        ("default/caller/none/none", "harness 'caller' calls a model: name a provider that speaks openai-chat"),
+        ("default/caller/local/none", "harness 'caller' calls a model: name it"),
+        ("default/caller/absent/m", "there is no provider named 'absent'"),
+        ("default/caller/other/m", "provider 'other' speaks anthropic, but harness 'caller' speaks openai-chat"),
+        ("caller", "four parts are needed in 'caller'"),
+        ("default/caller/local", "four parts are needed"),
+    ]:
+        with pytest.raises(Invalid, match=refusal) as refused:
+            await idle.ask("x", model=model)
+        assert refused.value.param == "model"
+    assert await stores.turns.claim("someone") is None
+
+    turn = await idle.ask("x", model="default/caller/local/vendor/a-model")       # the model is the rest
+    assert (turn.provider, turn.api, turn.model) == ("local", "openai-chat", "vendor/a-model")
+    assert str(turn.path) == "default/caller/local/vendor/a-model"
+    await stores.turns.cancel(org, turn.id)
+
+
 # ── switching ───────────────────────────────────────────────────────────────────────────────────────
 
 async def test_a_switched_to_harness_gets_the_handover_the_history_and_the_same_folders(
     platform: Platform, tmp_path: Path
 ) -> None:
-    await platform.stores.harnesses.add(platform.org, variant(tmp_path, "second", mind=".second"))
-    await platform.stores.harnesses.add(platform.org, variant(tmp_path, "third", mind=".third"))
+    await add(platform.stores, platform.org, variant(tmp_path, "second", mind=".second"))
+    await add(platform.stores, platform.org, variant(tmp_path, "third", mind=".third"))
     one = await platform.run("echo one > work.txt; echo [$HG_HANDOVER]")
-    two = await platform.run("cat work.txt; echo [$HG_HANDOVER]", model="second", previous_response_id=one.id)
-    three = await platform.run('echo "[$HG_HANDOVER]"; cat $HG_TURN/handover.txt', model="third",
+    two = await platform.run("cat work.txt; echo [$HG_HANDOVER]", model="default/second/none/none",
+                             previous_response_id=one.id)
+    three = await platform.run('echo "[$HG_HANDOVER]"; cat $HG_TURN/handover.txt', model="default/third/none/none",
                                previous_response_id=two.id)
     back = await platform.run('echo "[$HG_HANDOVER]"; cat $HG_TURN/history.json', previous_response_id=three.id)
     again = await platform.run('echo "[$HG_HANDOVER]"; cat $HG_TURN/history.json', previous_response_id=back.id)
@@ -179,9 +209,9 @@ async def test_a_switched_to_harness_gets_the_handover_the_history_and_the_same_
 async def test_another_environment_is_another_install_and_another_sandbox(platform: Platform) -> None:
     await platform.stores.environments.create(platform.org, {
         "name": "small", "image": "other:image", "cpus": 0.5, "memory_mb": 512, "tmp_mb": 64,
-        "network": {"mode": "closed"}, "variables": {"GREETING": "hi"}})
+        "network": {"mode": "closed"}, "variables": {"GREETING": "hi"}, "harnesses": ["shell"]})
     one = await platform.run("echo made > f.txt")
-    two = await platform.run('cat f.txt; echo "$GREETING $HG_ENVIRONMENT"', model="small:shell",
+    two = await platform.run('cat f.txt; echo "$GREETING $HG_ENVIRONMENT"', model="small/shell/none/none",
                              previous_response_id=one.id)
     assert text_of(two) == "made\nhi small\n"
     assert (two.environment, two.image_id) == ("small", "sha256:other:image")
@@ -246,8 +276,8 @@ async def test_a_package_that_prints_something_that_is_not_an_event_fails_the_tu
     shutil.copytree(SHELL, folder)
     (folder / "harness.json").write_text(json.dumps({"contract": 1, "name": "bad", "version": "1", "apis": []}))
     (folder / "run").write_text("#!/bin/sh\necho 'this is not an event'\nsleep 60\n")
-    await platform.stores.harnesses.add(platform.org, packaging.pack(folder))
-    turn = await platform.run("anything", model="bad")
+    await add(platform.stores, platform.org, packaging.pack(folder))
+    turn = await platform.run("anything", model="default/bad/none/none")
     assert (turn.status, turn.reason) == ("failed", "invalid_output")
     assert "not JSON" in (turn.message or "")
 
@@ -257,8 +287,8 @@ async def test_a_package_that_exits_without_a_terminal_line_fails_the_turn(platf
     shutil.copytree(SHELL, folder)
     (folder / "harness.json").write_text(json.dumps({"contract": 1, "name": "quiet", "version": "1", "apis": []}))
     (folder / "run").write_text("#!/bin/sh\necho 'something went wrong' >&2\nexit 4\n")
-    await platform.stores.harnesses.add(platform.org, packaging.pack(folder))
-    turn = await platform.run("anything", model="quiet")
+    await add(platform.stores, platform.org, packaging.pack(folder))
+    turn = await platform.run("anything", model="default/quiet/none/none")
     assert (turn.status, turn.reason) == ("failed", "harness_error")
     assert "code 4" in (turn.message or "")
     assert "something went wrong" in turn.log_tail
@@ -271,8 +301,8 @@ async def test_a_package_whose_install_fails_fails_the_turn_and_is_tried_again_n
     shutil.copytree(SHELL, folder)
     (folder / "harness.json").write_text(json.dumps({"contract": 1, "name": "broken", "version": "1", "apis": []}))
     (folder / "install").write_text("#!/bin/sh\necho 'the image has no such tool' >&2\nexit 1\n")
-    harness = await platform.stores.harnesses.add(platform.org, packaging.pack(folder))
-    turn = await platform.run("echo hi", model="broken")
+    harness = await add(platform.stores, platform.org, packaging.pack(folder))
+    turn = await platform.run("echo hi", model="default/broken/none/none")
     assert (turn.status, turn.reason) == ("failed", "install_failed")
     assert turn.snapshot_id is None
     assert "the image has no such tool" in turn.log_tail
@@ -281,7 +311,7 @@ async def test_a_package_whose_install_fails_fails_the_turn_and_is_tried_again_n
     assert "the image has no such tool" in install.log_tail
     assert not platform.driver.volume(install_volume(install.id)).exists()
 
-    again = await platform.run("echo hi", model="broken")
+    again = await platform.run("echo hi", model="default/broken/none/none")
     assert again.reason == "install_failed"
     assert sum(1 for plan in platform.driver.sandboxes if plan.command == ["/harness/install"]) == 2
 
@@ -292,8 +322,8 @@ async def test_usage_the_package_reports_is_kept_on_the_turn(platform: Platform,
     (folder / "harness.json").write_text(json.dumps({"contract": 1, "name": "counted", "version": "1", "apis": []}))
     (folder / "run").write_text(
         "#!/bin/sh\necho '{\"type\": \"hg.done\", \"usage\": {\"input_tokens\": 120, \"output_tokens\": 30}}'\n")
-    await platform.stores.harnesses.add(platform.org, packaging.pack(folder))
-    turn = await platform.run("anything", model="counted")
+    await add(platform.stores, platform.org, packaging.pack(folder))
+    turn = await platform.run("anything", model="default/counted/none/none")
     assert turn.status == "completed"
     assert turn.usage is not None
     assert (turn.usage["input_tokens"], turn.usage["output_tokens"], turn.usage["total_tokens"]) == (120, 30, 150)
@@ -306,7 +336,7 @@ async def test_a_definition_that_vanished_before_the_turn_ran_fails_it(idle: Pla
     await idle.stores.harnesses.delete(idle.org, "shell")
     claimed = await idle.stores.turns.claim("runner-test")
     assert claimed is not None
-    turn = await TurnRunner(idle.stores, idle.driver, Installer(idle.stores, idle.driver)).run(claimed)
+    turn = await TurnRunner(idle.stores, idle.driver, Preparer(idle.stores, idle.driver)).run(claimed)
     assert (turn.id, turn.status, turn.reason) == (queued.id, "failed", "sandbox_failed")
     assert "there is no harness named 'shell'" in turn.log_tail
 
@@ -339,7 +369,7 @@ async def test_a_turn_left_in_progress_by_a_runner_that_died_is_failed_and_its_s
         await conn.execute("UPDATE turns SET status = 'cancelled' WHERE status = 'queued'")
     lost = await platform.stores.turns.create(
         platform.org, resolved=await platform.stores.resolve(platform.org, first.path), parent=first, key_id=None,
-        request={"model": "shell", "input": "sleep 600"})
+        request={"model": SHELL_MODEL, "input": "sleep 600"})
     async with platform.stores.db.system() as conn:
         await conn.execute(
             "UPDATE turns SET status = 'in_progress', runner_id = 'runner-dead', "

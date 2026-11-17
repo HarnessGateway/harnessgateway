@@ -12,6 +12,7 @@ import uvicorn
 from harnessgateway import __version__
 from harnessgateway.api.internal import internal_app
 from harnessgateway.api.public import public_app
+from harnessgateway.catalog import Catalog
 from harnessgateway.domain.names import DEFAULT_ORG
 from harnessgateway.domain.plan import CA_VOLUME, ca_step
 from harnessgateway.drivers.base import Driver
@@ -62,14 +63,18 @@ async def opened(settings: Settings, extensions: Extensions) -> AsyncIterator[St
 
 
 async def init(settings: Settings, *, new_admin_key: bool = False) -> str | None:
-    """First-time setup: the organization, its default environment, and the first admin key. Returns the key
-    when it made one. Run again, it changes nothing that exists.
+    """First-time setup: the organization, the harnesses that ship with the platform, a default environment that
+    carries them all, and the first admin key. Returns the key when it made one. Run again, it changes nothing:
+    what was set up once is the organization's to change.
 
     With `new_admin_key` it makes another admin key even though keys exist: the way back in when every admin
     key is lost. It is run on the host, by someone who could read the database anyway."""
     async with opened(settings, Extensions.load(settings.extensions)) as stores:
-        await stores.orgs.ensure(DEFAULT_ORG, "Organization")
-        await stores.environments.ensure_default(DEFAULT_ORG)
+        if await stores.orgs.ensure(DEFAULT_ORG, "Organization"):
+            catalog = Catalog(Path(settings.catalog))
+            shipped = [(await stores.harnesses.add(DEFAULT_ORG, catalog.archive(m.name))).name
+                       for m in catalog.entries()]
+            await stores.environments.ensure_default(DEFAULT_ORG, shipped)
         existing = await stores.keys.all(DEFAULT_ORG)
         if existing and not new_admin_key:
             return None
@@ -101,7 +106,7 @@ async def serve(settings: Settings) -> None:
     async with opened(settings, extensions) as stores:
         driver = driver_for(settings, extensions)
         platform = Platform.of(stores, driver, extensions)
-        runner = Runner(stores, driver, extensions=extensions, installer=platform.installer)
+        runner = Runner(stores, driver, extensions=extensions, preparer=platform.preparer)
         gone = await driver.reap(keep=set())
         ended = await runner.recover()
         isolation = await driver.isolation()
@@ -125,6 +130,8 @@ async def serve(settings: Settings) -> None:
         while not all(server.started for server in servers):
             await asyncio.sleep(0.05)
         await trust_bundle(stores, driver)
+        for org in await stores.orgs.all():
+            platform.prepare_in_background(org.id)                 # a new version may need a new image
         working = [asyncio.create_task(runner.run()), asyncio.create_task(Housekeeping(platform).run())]
         await stop.wait()
         log.info("stopping: running turns are stopped, saved and ended")

@@ -14,7 +14,7 @@ from harnessgateway.store.db import Database
 from harnessgateway.store.sealed import check_value
 
 _KIND = "provider"
-_CHANGEABLE = frozenset({"apis", "default_model", "api_key"})
+_CHANGEABLE = frozenset({"apis", "models", "api_key"})
 
 
 @dataclass(frozen=True)
@@ -25,11 +25,11 @@ class ProviderRecord:
 
 
 def _record(row: Mapping[str, Any]) -> ProviderRecord:
-    provider = Provider.load({"name": row["name"], "apis": row["apis"], "default_model": row["default_model"]})
+    provider = Provider.load({"name": row["name"], "apis": row["apis"], "models": row["models"]})
     return ProviderRecord(provider, row["has_key"], row["created_at"])
 
 
-_COLUMNS = "name, apis, default_model, key_sealed IS NOT NULL AS has_key, created_at"
+_COLUMNS = "name, apis, models, key_sealed IS NOT NULL AS has_key, created_at"
 
 
 class Providers:
@@ -48,9 +48,9 @@ class Providers:
         provider = Provider.load(fields)
         async with self._db.org(org_id) as conn:
             row = await (await conn.execute(
-                "INSERT INTO providers (org_id, name, apis, default_model, key_sealed) VALUES (%s, %s, %s, %s, %s) "
+                "INSERT INTO providers (org_id, name, apis, models, key_sealed) VALUES (%s, %s, %s, %s, %s) "
                 f"ON CONFLICT DO NOTHING RETURNING {_COLUMNS}",
-                [org_id, provider.name, Jsonb(provider.apis), provider.default_model,
+                [org_id, provider.name, Jsonb(provider.apis), Jsonb(list(provider.models)),
                  self._seal(org_id, provider.name, key)])).fetchone()
         if row is None:
             raise Conflict(f"a provider named {provider.name!r} already exists")
@@ -69,9 +69,9 @@ class Providers:
                 await conn.execute("UPDATE providers SET key_sealed = %s WHERE org_id = %s AND name = %s",
                                    [self._seal(org_id, name, changes["api_key"]), org_id, name])
             row = await (await conn.execute(
-                "UPDATE providers SET apis = %s, default_model = %s, updated_at = now() "
+                "UPDATE providers SET apis = %s, models = %s, updated_at = now() "
                 f"WHERE org_id = %s AND name = %s RETURNING {_COLUMNS}",
-                [Jsonb(provider.apis), provider.default_model, org_id, name])).fetchone()
+                [Jsonb(provider.apis), Jsonb(list(provider.models)), org_id, name])).fetchone()
         if row is None:
             raise NotFound(f"there is no provider named {name!r}")
         return _record(row)

@@ -68,6 +68,24 @@ jobs:
             git --version && curl --version >/dev/null && rg --version >/dev/null && jq --version
             if command -v apk || command -v busybox; then echo "a package manager or BusyBox is left"; exit 1; fi
             test -z "$(find / -xdev -type f -perm /6000 2>/dev/null)"'
+      # Each package that ships with the platform installs on the sandbox image as the platform installs it: as
+      # user 10000, into /harness with the kit beside it, on a read-only image with a scratch /tmp. A package that
+      # no longer installs (a new npm that skips install scripts, a moved download) fails here, not for a user.
+      - name: Every package that ships with the platform installs on the sandbox image
+        run: |
+          git clone --depth 1 https://github.com/HarnessGateway/harness-packages /tmp/harness-packages
+          for manifest in /tmp/harness-packages/*/harness.json; do
+            name=$(jq -r .name "$manifest") version=$(jq -r .version "$manifest")
+            dir=$(mktemp -d)
+            cp -r "$(dirname "$manifest")/." "$dir/"
+            mkdir -p "$dir/kit" && cp harnessgateway/kit/hgkit.py "$dir/kit/"
+            sudo chown -R 10000:10000 "$dir"
+            echo "::group::$name $version"
+            docker run --rm --user 10000:10000 --read-only --tmpfs /tmp:rw,exec --volume "$dir:/harness" \
+              --workdir /harness --env HOME=/tmp/home --env HG_CONTRACT=1 --env HG_HARNESS=/harness \
+              --env HG_HARNESS_NAME="$name" --env HG_HARNESS_VERSION="$version" --entrypoint /harness/install sandbox:ci
+            echo "::endgroup::"
+          done
       # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
       - name: Scan the platform image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0

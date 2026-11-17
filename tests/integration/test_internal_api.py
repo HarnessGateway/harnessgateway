@@ -21,8 +21,11 @@ from harnessgateway.steps.save import save
 from harnessgateway.steps.unpack import unpack
 from harnessgateway.store.turns import Turn
 from harnessgateway.stores import Stores
+from tests.helpers import SHELL_MODEL, add
 from tests.integration.test_harness_store import SHELL, demo_archive
 from tests.integration.test_steps import picture, populate, volumes
+
+OTHER = "default/other/none/none"
 
 
 @pytest.fixture(autouse=True)
@@ -35,11 +38,11 @@ def client_for(stores: Stores, token: str) -> HttpStepClient:
     return HttpStepClient("http://internal.test", token, transport=httpx.ASGITransport(app=internal_app(stores)))
 
 
-async def running(stores: Stores, org: str, model: str = "shell", text: Any = "echo hi", *,
+async def running(stores: Stores, org: str, model: str = SHELL_MODEL, text: Any = "echo hi", *,
                   parent: Turn | None = None, handover: str = "") -> tuple[Turn, str]:
     """A turn as its runner has it just before the first step: claimed, with its step token set."""
     resolved = resolve(ModelPath.parse(model), environments={e.name: e for e in await stores.environments.all(org)},
-                       harnesses={h.name: h for h in await stores.harnesses.all(org)}, providers=[])
+                       harnesses={h.name: h for h in await stores.harnesses.all(org)}, providers={})
     queued = await stores.turns.create(org, resolved=resolved, parent=parent, key_id=None,
                                        request={"model": model, "input": text})
     turn = await stores.turns.claim("runner-test")
@@ -62,7 +65,7 @@ async def saved(stores: Stores, turn: Turn, token: str, roots: dict[str, Path]) 
 
 @pytest.fixture
 async def shell(stores: Stores, org: str) -> None:
-    await stores.harnesses.add(org, packaging.pack(SHELL))
+    await add(stores, org, packaging.pack(SHELL))
 
 
 async def test_a_caller_without_a_live_step_token_is_refused(stores: Stores, org: str, shell: None) -> None:
@@ -96,7 +99,7 @@ async def test_a_first_turn_s_plan_starts_from_nothing(stores: Stores, org: str,
     client = client_for(stores, token)
     plan = await client.restore_plan(turn.id)
     assert (plan.manifest_key, plan.warm, plan.history, plan.handover, plan.files) == (None, False, [], "", ())
-    assert plan.request == {"model": "shell", "input": "echo hello"}
+    assert plan.request == {"model": SHELL_MODEL, "input": "echo hello"}
     assert await client.save_plan(turn.id) is None
     await client.close()
 
@@ -130,17 +133,16 @@ async def test_folders_saved_by_one_turn_are_restored_for_the_next_over_http(
 async def test_the_history_is_the_turns_this_harness_has_not_seen(
     stores: Stores, org: str, shell: None, tmp_path: Path
 ) -> None:
-    await stores.harnesses.add(org, demo_archive(tmp_path, name="other", apis=[], mind=".other", settings={},
-                                                 secrets={}))
+    await add(stores, org, demo_archive(tmp_path, name="other", apis=[], mind=".other", settings={}, secrets={}))
     roots = volumes(tmp_path / "v")
-    one, token = await running(stores, org, "shell", "one")
+    one, token = await running(stores, org, SHELL_MODEL, "one")
     one = await saved(stores, one, token, roots)
-    two, token = await running(stores, org, "other", "two", parent=one)
+    two, token = await running(stores, org, OTHER, "two", parent=one)
     two = await saved(stores, two, token, roots)
-    three, token = await running(stores, org, "other", "three", parent=two)
+    three, token = await running(stores, org, OTHER, "three", parent=two)
     three = await saved(stores, three, token, roots)
 
-    back, token = await running(stores, org, "shell", "four", parent=three,
+    back, token = await running(stores, org, SHELL_MODEL, "four", parent=three,
                                 handover="Handover from other. Review /mind/.other.")
     client = client_for(stores, token)
     plan = await client.restore_plan(back.id)
@@ -149,7 +151,7 @@ async def test_the_history_is_the_turns_this_harness_has_not_seen(
         (two.id, "other", "completed", "two"), (three.id, "other", "completed", "three")]
     await client.close()
 
-    same, token = await running(stores, org, "other", "five", parent=three)
+    same, token = await running(stores, org, OTHER, "five", parent=three)
     client = client_for(stores, token)
     assert (await client.restore_plan(same.id)).history == []
     await client.close()

@@ -12,11 +12,27 @@ from typing import Any
 import uvicorn
 
 from harnessgateway import packaging
+from harnessgateway.domain.harness import Harness
 from harnessgateway.intake import Intake
 from harnessgateway.store.turns import Turn
 from harnessgateway.stores import Stores
 
 SHELL = Path(__file__).parents[1] / "packages" / "shell"
+SHELL_MODEL = "default/shell/none/none"
+
+
+async def add(stores: Stores, org: str, archive: bytes, *, environments: tuple[str, ...] = ("default",)) -> Harness:
+    """Add a harness, and have these environments carry it."""
+    harness = await stores.harnesses.add(org, archive)
+    await carry(stores, org, harness.name, environments=environments)
+    return harness
+
+
+async def carry(stores: Stores, org: str, *names: str, environments: tuple[str, ...] = ("default",)) -> None:
+    """Have environments carry these harnesses, besides those they carry."""
+    for environment in environments:
+        carried = (await stores.environments.get(org, environment)).harnesses
+        await stores.environments.update(org, environment, {"harnesses": sorted({*carried, *names})})
 
 
 def variant(tmp_path: Path, name: str, **changes: Any) -> bytes:
@@ -35,7 +51,7 @@ class Platform:
         self.stores, self.org, self.driver = stores, org, driver
         self.intake = Intake(stores)
 
-    async def ask(self, text: Any, model: str = "shell", **request: Any) -> Turn:
+    async def ask(self, text: Any, model: str = SHELL_MODEL, **request: Any) -> Turn:
         return await self.intake.accept(self.org, {"model": model, "input": text, **request})
 
     async def final(self, turn: Turn, timeout: float = 30) -> Turn:
@@ -46,7 +62,7 @@ class Platform:
         await asyncio.wait_for(last(), timeout)
         return await self.stores.turns.get(self.org, turn.id)
 
-    async def run(self, text: Any, model: str = "shell", **request: Any) -> Turn:
+    async def run(self, text: Any, model: str = SHELL_MODEL, **request: Any) -> Turn:
         return await self.final(await self.ask(text, model, **request))
 
     async def started(self, turn: Turn, marker: str = "started") -> None:

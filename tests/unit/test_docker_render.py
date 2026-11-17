@@ -3,8 +3,8 @@
 import shlex
 
 from harnessgateway.domain.masking import mask
-from harnessgateway.domain.plan import Mount, SandboxPlan, StepPlan
-from harnessgateway.drivers.docker import LineSplitter, render_sandbox, render_step
+from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
+from harnessgateway.drivers.docker import LineSplitter, render_build, render_sandbox, render_step
 
 SANDBOX = SandboxPlan(
     name="hg-sess_X",
@@ -86,6 +86,24 @@ def test_a_step_runs_from_the_platform_image_as_root_and_removes_itself() -> Non
         "--volume", "hg-mind-sess_X:/mind:ro,nocopy",
         "--env", "HG_API=http://serve:8001", "--env", "HG_STEP_TOKEN=stok",
         "platform:4", "harnessgateway", "step", "save", "resp_Y",
+    ]
+
+
+def test_a_build_runs_the_script_from_standard_input_as_root_under_runc() -> None:
+    """runc, because `docker commit` keeps what the script changed; the script is not on the command line, so it
+    is not kept in the committed image's configuration either."""
+    plan = BuildPlan(name="hg-build-bld_X", labels={"hg.org": "org_default", "hg.build": "bld_X"},
+                     image="sha256:base", stdin="set -e\napt-get install -y ripgrep\n",
+                     mounts=[Mount("hg-ca", "/etc/hg", read_only=True)], cpus=2, memory_mb=4096, pids=512,
+                     network="hg-sandbox", tag="harnessgateway-environment:bld_x")
+    assert render_build(plan) == [
+        "docker", "run", "--interactive", "--name", "hg-build-bld_X",
+        "--label", "hg.org=org_default", "--label", "hg.build=bld_X", "--network", "hg-sandbox",
+        "--runtime", "runc",
+        "--cpus", "2", "--memory", "4096m", "--memory-swap", "4096m", "--pids-limit", "512",
+        "--security-opt", "no-new-privileges", "--user", "0:0",
+        "--volume", "hg-ca:/etc/hg:ro,nocopy",
+        "--entrypoint", "/bin/sh", "sha256:base", "-s",
     ]
 
 

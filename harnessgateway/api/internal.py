@@ -182,7 +182,7 @@ def internal_app(stores: Stores) -> FastAPI:
         asked = await request.json()
         found = await policies.of(str(asked.get("id")), str(asked.get("token")))
         if found is None:
-            raise NotFound("no running turn or install has that id and token")
+            raise NotFound("no running turn, install or build has that id and token")
         return found.to_json()
 
     @app.post("/internal/proxy/records", dependencies=[Proxy])

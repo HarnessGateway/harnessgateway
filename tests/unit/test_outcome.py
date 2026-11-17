@@ -15,6 +15,7 @@ def test_a_package_that_reports_done_and_exits_cleanly_completes() -> None:
 @pytest.mark.parametrize(
     ("observed", "status", "reason"),
     [
+        (Observed(setup_failed=True), "failed", "setup_failed"),
         (Observed(install_failed=True), "failed", "install_failed"),
         (Observed(restore_failed=True), "failed", "restore_failed"),
         (Observed(sandbox_failed=True), "failed", "sandbox_failed"),

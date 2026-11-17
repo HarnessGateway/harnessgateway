@@ -1,1 +1,1 @@
-{"model": "shell", "input": "echo hello; echo to-stderr >&2; printf 'no newline'"}
+{"model": "default/shell/none/none", "input": "echo hello; echo to-stderr >&2; printf 'no newline'"}

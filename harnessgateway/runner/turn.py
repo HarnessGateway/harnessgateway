@@ -24,7 +24,9 @@ from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.sealing import new_placeholder, new_token
 from harnessgateway.drivers.base import Driver, DriverError, SandboxExit
 from harnessgateway.errors import Refused
-from harnessgateway.runner.installer import Installer, InstallFailed
+from harnessgateway.runner.builder import BuildFailed
+from harnessgateway.runner.installer import InstallFailed
+from harnessgateway.runner.prepare import Preparer
 from harnessgateway.steps.watch import OVER_LIMIT
 from harnessgateway.store.snapshots import Snapshot
 from harnessgateway.store.turns import LOG_TAIL, Turn
@@ -85,10 +87,10 @@ class _Ready:
 
 
 class TurnRunner:
-    def __init__(self, stores: Stores, driver: Driver, installer: Installer) -> None:
+    def __init__(self, stores: Stores, driver: Driver, preparer: Preparer) -> None:
         self._stores = stores
         self._driver = driver
-        self._installer = installer
+        self._preparer = preparer
         self._stops: dict[str, _Stop] = {}
 
     def stop(self, turn_id: str, reason: str) -> None:
@@ -128,12 +130,17 @@ class TurnRunner:
             snapshot_bytes=snapshot.bytes if snapshot else 0)
 
     async def _prepare(self, turn: Turn, record: _Log) -> _Ready:
-        """Decide everything the turn runs with, and make sure its harness is installed."""
-        stores, driver = self._stores, self._driver
+        """Decide everything the turn runs with, and make sure its environment is built and its harness installed."""
+        stores, preparer = self._stores, self._preparer
         try:
             resolved = await stores.resolve(turn.org_id, turn.path)
-            image_id = await driver.image_id(stores.image(resolved.environment))
-        except (Refused, DriverError) as e:
+        except Refused as e:
+            raise _Failed(Observed(sandbox_failed=True), f"the turn could not be prepared: {e}") from None
+        try:
+            image_id = (await preparer.builder.ensure(turn.org_id, resolved.environment)).image_id
+        except BuildFailed as e:
+            raise _Failed(Observed(setup_failed=True), f"the environment's setup failed:\n{e}") from None
+        except DriverError as e:
             raise _Failed(Observed(sandbox_failed=True), f"the turn could not be prepared: {e}") from None
 
         chain = await stores.turns.chain(turn.org_id, turn.id)
@@ -152,7 +159,8 @@ class TurnRunner:
                                    step_token_hash=stores.hash(step_token), proxy_token_hash=stores.hash(proxy_token),
                                    placeholders=placeholders)
         try:
-            install_id = await self._installer.ensure(turn.org_id, resolved.harness, resolved.environment, image_id)
+            install_id = await preparer.installer.ensure(turn.org_id, resolved.harness, resolved.environment,
+                                                         image_id)
         except InstallFailed as e:
             raise _Failed(Observed(install_failed=True), f"install failed:\n{e}") from None
         plan = sandbox_plan(TurnFacts(

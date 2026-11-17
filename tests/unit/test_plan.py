@@ -9,17 +9,19 @@ from harnessgateway.domain.package import Manifest
 from harnessgateway.domain.plan import (
     Mount,
     TurnFacts,
+    build_plan,
     install_plan,
     install_policy,
     restore_step,
     sandbox_plan,
     save_step,
+    setup_policy,
     turn_policy,
     unpack_step,
     watch_step,
 )
 from harnessgateway.domain.provider import Provider
-from harnessgateway.domain.resolve import resolve
+from harnessgateway.domain.resolve import Resolved, resolve
 
 SESSION, TURN, INSTALL = "sess_" + "S" * 26, "resp_" + "T" * 26, "inst_" + "J" * 26
 ENVIRONMENT = Environment.load({
@@ -36,10 +38,19 @@ MANIFEST = Manifest.load({
     "secrets": {"GITHUB_TOKEN": {"hosts": ["api.github.com"]}},
 })
 HARNESS = Harness(manifest=MANIFEST, digest="d" * 64, secrets_set=frozenset({"GITHUB_TOKEN"}))
-PROVIDER = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"},
-                          "default_model": "deepseek-flash"})
-RESOLVED = resolve(ModelPath.parse("secure:claude-code"), environments={"secure": ENVIRONMENT},
-                   harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
+PROVIDER = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"}})
+
+
+def resolved_in(environment: Environment, harness: Harness, provider: Provider | None = PROVIDER) -> Resolved:
+    """What a turn of this harness resolves to in this environment, on this provider's deepseek-flash."""
+    carrying = Environment.load({**environment.dump(), "harnesses": [harness.name]})
+    text = f"{provider.name}/deepseek-flash" if provider else "none/none"
+    return resolve(ModelPath.parse(f"{carrying.name}/{harness.name}/{text}"),
+                   environments={carrying.name: carrying}, harnesses={harness.name: harness},
+                   providers={provider.name: provider} if provider else {})
+
+
+RESOLVED = resolved_in(ENVIRONMENT, HARNESS)
 
 
 def facts(**changes: Any) -> TurnFacts:
@@ -113,8 +124,7 @@ CLOSED = Environment.load({
 def test_a_harness_without_a_provider_in_a_closed_environment_has_no_network_at_all() -> None:
     manifest = Manifest.load({"contract": 1, "name": "shell", "version": "1", "apis": []})
     shell = Harness(manifest=manifest, digest="e" * 64)
-    resolved = resolve(ModelPath.parse("closed:shell"), environments={"closed": CLOSED},
-                       harnesses={"shell": shell}, providers=[])
+    resolved = resolved_in(CLOSED, shell, None)
     plan = sandbox_plan(facts(resolved=resolved, provider_key_placeholder=None, secret_placeholders={}, handover=""))
     assert plan.network is None
     assert not any("PROXY" in name.upper() for name in plan.env)
@@ -125,8 +135,7 @@ def test_a_harness_without_a_provider_in_a_closed_environment_has_no_network_at_
 
 
 def test_in_a_closed_environment_a_turn_reaches_its_provider_and_nothing_else() -> None:
-    resolved = resolve(ModelPath.parse("closed:claude-code"), environments={"closed": CLOSED},
-                       harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
+    resolved = resolved_in(CLOSED, HARNESS)
     plan = sandbox_plan(facts(resolved=resolved))
     assert plan.network == "hg-sandbox"                        # the proxy is its one way to the provider
     assert plan.env["HTTPS_PROXY"] == f"http://{TURN}:ptok@egress:8080"
@@ -139,8 +148,7 @@ def test_in_a_closed_environment_a_turn_reaches_its_provider_and_nothing_else() 
 
 def test_in_an_open_environment_a_turn_reaches_any_public_host() -> None:
     wide = Environment.load({"name": "wide", "network": {"mode": "open"}})
-    resolved = resolve(ModelPath.parse("wide:claude-code"), environments={"wide": wide},
-                       harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
+    resolved = resolved_in(wide, HARNESS)
     policy = turn_policy(resolved)
     assert policy.decide("anything.example.net", 8443).allowed
     assert policy.decide("api.deepseek.com", 443).allowed
@@ -159,16 +167,14 @@ def test_the_turn_s_policy_is_everything_it_is_entitled_to_and_nothing_else() ->
 def test_a_harness_secret_with_no_value_opens_no_host() -> None:
     harness = Harness(manifest=MANIFEST, digest="d" * 64)                     # GITHUB_TOKEN not set
     bare = Environment.load({"name": "c", "network": {"package_managers": False}})
-    without, with_it = (resolve(ModelPath.parse("c:claude-code"), environments={"c": bare},
-                                harnesses={"claude-code": h}, providers=[PROVIDER]) for h in (harness, HARNESS))
+    without, with_it = (resolved_in(bare, h) for h in (harness, HARNESS))
     assert not turn_policy(without).decide("api.github.com", 443).allowed
     assert turn_policy(with_it).decide("api.github.com", 443).allowed
 
 
 def test_without_the_package_manager_set_the_registries_are_closed() -> None:
     bare = Environment.load({"name": "c", "network": {"package_managers": False}})
-    resolved = resolve(ModelPath.parse("c:claude-code"), environments={"c": bare},
-                       harnesses={"claude-code": HARNESS}, providers=[PROVIDER])
+    resolved = resolved_in(bare, HARNESS)
     assert not turn_policy(resolved).decide("registry.npmjs.org", 443).allowed
 
 
@@ -182,6 +188,7 @@ def test_an_install_reaches_the_registries_and_what_the_package_names_whatever_t
     assert not policy.decide("api.deepseek.com", 443).allowed
     assert not policy.decide("api.example.com", 443).allowed
     assert not policy.decide("bad.example.com", 443).allowed
+    assert policy.decide("api.example.com", 443).reason.endswith("add api.example.com to the package's install.egress")
 
 
 def test_the_install_plan() -> None:
@@ -229,3 +236,43 @@ def test_the_trusted_steps() -> None:
     assert unpack.command == ["harnessgateway", "step", "unpack", INSTALL]
     assert unpack.mounts == [Mount(f"hg-harness-{INSTALL}", "/harness", read_only=False)]
     assert unpack.labels == {"hg.org": "org_default", "hg.install": INSTALL}
+
+
+SETUP = Environment.load({
+    **ENVIRONMENT.dump(),
+    "setup": {"script": "apt-get install -y ripgrep\ncurl -fsS https://downloads.example.com/x | tar -x\n",
+              "egress": ["downloads.example.com"]},
+})
+
+
+def test_the_build_plan_gives_the_script_the_proxy_and_the_secret_placeholders_and_nothing_else() -> None:
+    plan = build_plan(org_id="org_default", build_id="bld_X", image_id="sha256:base", environment=SETUP,
+                      proxy_token="btok", secret_placeholders={"EXAMPLE_TOKEN": "hgs_" + "2" * 32})
+    assert (plan.name, plan.image, plan.tag) == ("hg-build-bld_X", "sha256:base", "harnessgateway-environment:bld_x")
+    assert plan.labels == {"hg.org": "org_default", "hg.build": "bld_X"}
+    assert plan.mounts == [Mount("hg-ca", "/etc/hg", read_only=True)]
+    assert (plan.cpus, plan.memory_mb, plan.pids, plan.network) == (1.5, 2048, 256, "hg-sandbox")
+    lines = plan.stdin.splitlines()
+    assert lines[0] == "set -e"                                   # a failing command fails the build
+    assert "export HTTPS_PROXY=http://bld_X:btok@egress:8080" in lines
+    assert f"export EXAMPLE_TOKEN={'hgs_' + '2' * 32}" in lines
+    assert not any("TZ" in line for line in lines)                # the environment's variables are the turns'
+    assert lines[-2:] == ["apt-get install -y ripgrep", "curl -fsS https://downloads.example.com/x | tar -x"]
+
+
+def test_a_value_with_shell_characters_is_quoted_in_the_build_s_exports() -> None:
+    plan = build_plan(org_id="o", build_id="bld_X", image_id="i", environment=SETUP, proxy_token="a'b $c",
+                      secret_placeholders={})
+    assert "export HTTPS_PROXY='http://bld_X:a'\"'\"'b $c@egress:8080'" in plan.stdin.splitlines()
+
+
+def test_setup_reaches_the_registries_its_hosts_and_its_secrets_hosts_whatever_the_mode() -> None:
+    for mode in ("closed", "limited", "open"):
+        environment = Environment.load({**SETUP.dump(), "network": {"mode": mode}})
+        policy = setup_policy(environment)
+        for host in ("registry.npmjs.org", "downloads.example.com", "api.example.com"):
+            assert policy.decide(host, 443).allowed, (mode, host)
+        assert policy.decide("anything.else", 443).reason == (
+            "anything.else:443 is not allowed: add anything.else to the environment's setup.egress")
+    assert not setup_policy(Environment.load({**SETUP.dump(), "setup": {"egress": ["bad.example.com"]}})).decide(
+        "bad.example.com", 443).allowed                           # what the environment denies stays denied

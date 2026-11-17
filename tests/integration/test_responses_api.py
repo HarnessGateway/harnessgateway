@@ -23,7 +23,7 @@ from harnessgateway.extensions import Extension, Extensions
 from harnessgateway.platform import Platform
 from harnessgateway.runner.runner import Runner
 from harnessgateway.stores import Stores
-from tests.helpers import SHELL, serving
+from tests.helpers import SHELL, SHELL_MODEL, add, serving
 from tests.integration.local_driver import LocalDriver
 
 
@@ -46,7 +46,7 @@ class Api:
 async def running_api(stores: Stores, org: str, tmp_path: Path, extensions: Extensions) -> AsyncIterator[Api]:
     async with stores.db.system() as conn:               # the queue is shared: start with nothing waiting
         await conn.execute("UPDATE turns SET status = 'cancelled' WHERE status IN ('queued', 'in_progress')")
-    await stores.harnesses.add(org, packaging.pack(SHELL))
+    await add(stores, org, packaging.pack(SHELL))
     _, key = await stores.keys.create(org, name="test", role="runner")
     driver = LocalDriver(tmp_path / "volumes", internal_app(stores))
     runner = asyncio.create_task(Runner(stores, driver, heartbeat_s=0.2).run())
@@ -70,10 +70,10 @@ async def api(stores: Stores, org: str, tmp_path: Path) -> AsyncIterator[Api]:
 # ── running a turn ──────────────────────────────────────────────────────────────────────────────────
 
 async def test_the_sdk_runs_a_turn_and_reads_its_text(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="echo hello", metadata={"ticket": "42"})
+    response = await api.client.responses.create(model=SHELL_MODEL, input="echo hello", metadata={"ticket": "42"})
     assert response.status == "completed"
     assert response.output_text == "hello\n"
-    assert response.model == "default:shell"
+    assert response.model == SHELL_MODEL == "default/shell/none/none"
     assert response.id.startswith("resp_")
     assert response.error is None
     assert response.metadata is not None
@@ -82,7 +82,7 @@ async def test_the_sdk_runs_a_turn_and_reads_its_text(api: Api) -> None:
 
 
 async def test_a_turn_that_fails_still_answers_200_with_the_failure_in_the_response(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="echo before; exit 3")
+    response = await api.client.responses.create(model=SHELL_MODEL, input="echo before; exit 3")
     assert response.status == "failed"
     assert response.error is not None
     assert (response.error.code, response.error.message) == ("server_error", "The command exited with code 3.")
@@ -92,7 +92,7 @@ async def test_a_turn_that_fails_still_answers_200_with_the_failure_in_the_respo
 
 
 async def test_the_sdk_streams_a_turn_as_it_happens(api: Api) -> None:
-    stream = await api.client.responses.create(model="shell", input="echo one; sleep 1; echo two", stream=True)
+    stream = await api.client.responses.create(model=SHELL_MODEL, input="echo one; sleep 1; echo two", stream=True)
     seen: list[tuple[str, float]] = []
     numbers = []
     async for event in stream:
@@ -109,7 +109,7 @@ async def test_the_sdk_streams_a_turn_as_it_happens(api: Api) -> None:
 
 
 async def test_the_sdk_s_stream_helper_gathers_the_final_response(api: Api) -> None:
-    async with api.client.responses.stream(model="shell", input="echo streamed") as stream:
+    async with api.client.responses.stream(model=SHELL_MODEL, input="echo streamed") as stream:
         deltas = [event.delta async for event in stream if event.type == "response.output_text.delta"]
         final = await stream.get_final_response()
     assert deltas == ["streamed\n"]
@@ -117,22 +117,22 @@ async def test_the_sdk_s_stream_helper_gathers_the_final_response(api: Api) -> N
 
 
 async def test_continuing_and_forking_with_previous_response_id(api: Api) -> None:
-    first = await api.client.responses.create(model="shell", input="echo one > a.txt")
-    second = await api.client.responses.create(model="shell", input="ls; echo two > b.txt",
+    first = await api.client.responses.create(model=SHELL_MODEL, input="echo one > a.txt")
+    second = await api.client.responses.create(model=SHELL_MODEL, input="ls; echo two > b.txt",
                                                previous_response_id=first.id)
     assert second.output_text == "a.txt\n"
     assert second.previous_response_id == first.id
     assert second.metadata is not None
     assert first.metadata is not None
     assert second.metadata["hg_session"] == first.metadata["hg_session"]
-    fork = await api.client.responses.create(model="shell", input="ls", previous_response_id=first.id)
+    fork = await api.client.responses.create(model=SHELL_MODEL, input="ls", previous_response_id=first.id)
     assert fork.output_text == "a.txt\n"
     assert fork.metadata is not None
     assert fork.metadata["hg_session"] != first.metadata["hg_session"]
 
 
 async def test_a_background_turn_returns_at_once_and_is_polled(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="sleep 0.5; echo done", background=True)
+    response = await api.client.responses.create(model=SHELL_MODEL, input="sleep 0.5; echo done", background=True)
     assert response.status == "queued"
     assert response.output == []
     final = await api.final(response.id)
@@ -140,7 +140,7 @@ async def test_a_background_turn_returns_at_once_and_is_polled(api: Api) -> None
 
 
 async def test_a_running_turn_is_cancelled(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="echo started; sleep 60", background=True)
+    response = await api.client.responses.create(model=SHELL_MODEL, input="echo started; sleep 60", background=True)
     async with asyncio.timeout(20):
         while "started" not in (await api.client.responses.retrieve(response.id)).output_text and not any(
                 "started" in event.get("delta", "") for event in await api.stores.turns.events(api.org, response.id)):
@@ -155,7 +155,8 @@ async def test_a_running_turn_is_cancelled(api: Api) -> None:
 
 
 async def test_a_finished_or_running_turn_s_stream_can_be_joined_from_any_point(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="echo one; sleep 1; echo two", background=True)
+    response = await api.client.responses.create(model=SHELL_MODEL, input="echo one; sleep 1; echo two",
+                                                 background=True)
     live = await api.client.responses.retrieve(response.id, stream=True)
     kinds = [event.type async for event in live]
     assert kinds[0] == "response.created"
@@ -168,7 +169,7 @@ async def test_a_finished_or_running_turn_s_stream_can_be_joined_from_any_point(
 
 
 async def test_a_turn_can_be_retrieved_its_input_listed_and_then_deleted(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="echo hi")
+    response = await api.client.responses.create(model=SHELL_MODEL, input="echo hi")
     assert (await api.client.responses.retrieve(response.id)).output_text == "hi\n"
     items = await api.client.responses.input_items.list(response.id)
     assert [(item.type, item.role, item.content[0].text) for item in items.data] == [  # type: ignore[union-attr]
@@ -178,30 +179,28 @@ async def test_a_turn_can_be_retrieved_its_input_listed_and_then_deleted(api: Ap
     with pytest.raises(openai.NotFoundError, match=response.id):
         await api.client.responses.retrieve(response.id)
     with pytest.raises(openai.BadRequestError, match="names no response"):
-        await api.client.responses.create(model="shell", input="ls", previous_response_id=response.id)
+        await api.client.responses.create(model=SHELL_MODEL, input="ls", previous_response_id=response.id)
 
 
 async def test_a_turn_that_is_not_to_be_stored_is_gone_once_it_has_answered(api: Api) -> None:
-    response = await api.client.responses.create(model="shell", input="echo once", store=False)
+    response = await api.client.responses.create(model=SHELL_MODEL, input="echo once", store=False)
     assert (response.status, response.output_text) == ("completed", "once\n")
     with pytest.raises(openai.NotFoundError):
         await api.client.responses.retrieve(response.id)
 
-    stream = await api.client.responses.create(model="shell", input="echo once", store=False, stream=True)
+    stream = await api.client.responses.create(model=SHELL_MODEL, input="echo once", store=False, stream=True)
     events = [event async for event in stream]
     with pytest.raises(openai.NotFoundError):
         await api.client.responses.retrieve(events[-1].response.id)  # type: ignore[union-attr]
     with pytest.raises(openai.BadRequestError, match="store cannot be false"):
-        await api.client.responses.create(model="shell", input="x", store=False, background=True)
+        await api.client.responses.create(model=SHELL_MODEL, input="x", store=False, background=True)
 
 
-async def test_installed_harnesses_are_the_models(api: Api) -> None:
-    models = await api.client.models.list()
-    assert [(model.id, model.object, model.owned_by) for model in models.data] == [
-        ("shell", "model", "harnessgateway")]
-    assert (await api.client.models.retrieve("shell")).id == "shell"
-    with pytest.raises(openai.NotFoundError, match="a model is an installed harness"):
-        await api.client.models.retrieve("absent")
+async def test_there_is_no_list_of_models_since_a_model_string_names_its_parts(api: Api) -> None:
+    with pytest.raises(openai.NotFoundError):
+        await api.client.models.list()
+    with pytest.raises(openai.NotFoundError):
+        await api.client.models.retrieve("shell")
 
 
 # ── refusals ────────────────────────────────────────────────────────────────────────────────────────
@@ -210,22 +209,27 @@ async def test_a_request_without_a_valid_key_is_refused(api: Api) -> None:
     for key in ("hg_" + "x" * 40, "sk-not-ours"):
         stranger = AsyncOpenAI(api_key=key, base_url=f"{api.url}/v1", max_retries=0)
         with pytest.raises(openai.AuthenticationError) as refusal:
-            await stranger.responses.create(model="shell", input="echo hi")
+            await stranger.responses.create(model=SHELL_MODEL, input="echo hi")
         assert refusal.value.status_code == 401
         await stranger.close()
     async with httpx.AsyncClient() as http:
-        bare = await http.post(f"{api.url}/v1/responses", json={"model": "shell", "input": "x"})
+        bare = await http.post(f"{api.url}/v1/responses", json={"model": SHELL_MODEL, "input": "x"})
     assert bare.status_code == 401
     assert bare.json()["error"]["type"] == "invalid_api_key"
 
 
 @pytest.mark.parametrize(("request_", "message", "param"), [
-    ({"model": "absent", "input": "x"}, "there is no harness named 'absent'", "model"),
-    ({"model": "Not A Name", "input": "x"}, r"model is \[environment:\]harness\[/provider\[/model\]\]", "model"),
-    ({"model": "shell/deepseek", "input": "x"}, "uses no provider", "model"),
-    ({"model": "shell", "input": "x", "tools": [{"type": "web_search"}]}, "only tools of type mcp", "tools"),
-    ({"model": "shell", "input": "x", "metadata": {"hg_reason": "mine"}}, "hg_", "metadata"),
-    ({"model": "shell", "input": "x", "previous_response_id": "resp_00000000000000000000000000"},
+    ({"model": "default/absent/none/none", "input": "x"}, "there is no harness named 'absent'", "model"),
+    ({"model": "gpu/shell/none/none", "input": "x"}, "there is no environment named 'gpu'", "model"),
+    ({"model": "Not A Name", "input": "x"}, "model is environment/harness/provider/model", "model"),
+    ({"model": "shell", "input": "x"}, "model is environment/harness/provider/model.*four parts", "model"),
+    ({"model": "default:shell", "input": "x"}, "four parts are needed in 'default:shell'", "model"),
+    ({"model": "default/shell", "input": "x"}, "four parts are needed", "model"),
+    ({"model": "default/shell/deepseek/m", "input": "x"}, "calls no model: name it default/shell/none/none", "model"),
+    ({"model": "default/shell/none/", "input": "x"}, "four parts are needed", "model"),
+    ({"model": SHELL_MODEL, "input": "x", "tools": [{"type": "web_search"}]}, "only tools of type mcp", "tools"),
+    ({"model": SHELL_MODEL, "input": "x", "metadata": {"hg_reason": "mine"}}, "hg_", "metadata"),
+    ({"model": SHELL_MODEL, "input": "x", "previous_response_id": "resp_00000000000000000000000000"},
      "names no response", "previous_response_id"),
 ])
 async def test_a_request_that_is_not_valid_is_refused_with_the_openai_error_shape(
@@ -238,9 +242,17 @@ async def test_a_request_that_is_not_valid_is_refused_with_the_openai_error_shap
     assert refusal.value.type == "invalid_request_error"
 
 
+async def test_a_harness_the_environment_does_not_carry_is_refused(api: Api) -> None:
+    await api.stores.environments.create(api.org, {"name": "bare"})
+    with pytest.raises(openai.BadRequestError, match="environment 'bare' does not carry harness 'shell'") as refusal:
+        await api.client.responses.create(model="bare/shell/none/none", input="echo hi")
+    assert refusal.value.param == "model"
+    assert (await api.client.responses.create(model=SHELL_MODEL, input="echo hi")).output_text == "hi\n"
+
+
 async def test_fields_the_api_does_not_have_and_bodies_that_are_not_json_are_refused(api: Api) -> None:
     async with httpx.AsyncClient(headers={"Authorization": f"Bearer {api.key}"}) as http:
-        unknown = await http.post(f"{api.url}/v1/responses", json={"model": "shell", "input": "x", "session": "s"})
+        unknown = await http.post(f"{api.url}/v1/responses", json={"model": SHELL_MODEL, "input": "x", "session": "s"})
         garbage = await http.post(f"{api.url}/v1/responses", content=b"{not json")
         missing = await http.get(f"{api.url}/v1/responses/not-an-id")
     assert (unknown.status_code, unknown.json()["error"]["message"]) == (
@@ -252,14 +264,14 @@ async def test_fields_the_api_does_not_have_and_bodies_that_are_not_json_are_ref
 async def test_a_body_over_the_limit_is_refused(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(public, "BODY_MAX", 1000)
     with pytest.raises(openai.APIStatusError, match="at most") as refusal:
-        await api.client.responses.create(model="shell", input="x" * 2000)
+        await api.client.responses.create(model=SHELL_MODEL, input="x" * 2000)
     assert refusal.value.status_code == 413
 
 
 async def test_a_session_with_a_turn_in_progress_refuses_another(api: Api) -> None:
-    running = await api.client.responses.create(model="shell", input="sleep 60", background=True)
+    running = await api.client.responses.create(model=SHELL_MODEL, input="sleep 60", background=True)
     with pytest.raises(openai.ConflictError, match=f"the session has a turn in progress: {running.id}"):
-        await api.client.responses.create(model="shell", input="ls", previous_response_id=running.id)
+        await api.client.responses.create(model=SHELL_MODEL, input="ls", previous_response_id=running.id)
     await api.client.responses.cancel(running.id)
     await api.final(running.id)
 
@@ -291,8 +303,8 @@ class Gatekeeper(Extension):
 async def test_an_extension_can_authenticate_and_refuse_a_turn(stores: Stores, org: str, tmp_path: Path) -> None:
     async with running_api(stores, org, tmp_path, Extensions([Gatekeeper(org)])) as api:
         alice = AsyncOpenAI(api_key="session-of-alice", base_url=f"{api.url}/v1", max_retries=0)
-        assert (await alice.responses.create(model="shell", input="echo hi")).output_text == "hi\n"
+        assert (await alice.responses.create(model=SHELL_MODEL, input="echo hi")).output_text == "hi\n"
         with pytest.raises(openai.PermissionDeniedError, match="your plan does not allow that"):
-            await alice.responses.create(model="shell", input="echo forbidden")
-        assert (await api.client.responses.create(model="shell", input="echo key")).output_text == "key\n"
+            await alice.responses.create(model=SHELL_MODEL, input="echo forbidden")
+        assert (await api.client.responses.create(model=SHELL_MODEL, input="echo key")).output_text == "key\n"
         await alice.close()

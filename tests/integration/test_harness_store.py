@@ -39,7 +39,7 @@ def harnesses(db: Database, blobs: DirectoryBlobs) -> Harnesses:
 async def test_a_package_is_added_as_a_harness(harnesses: Harnesses, blobs: DirectoryBlobs, org: str) -> None:
     archive = packaging.pack(SHELL)
     harness = await harnesses.add(org, archive)
-    assert (harness.name, harness.manifest.version, harness.provider, harness.model) == ("shell", "1.0.0", None, None)
+    assert (harness.name, harness.manifest.version) == ("shell", "1.0.0")
     assert await harnesses.get(org, "shell") == harness
     assert [h.name for h in await harnesses.all(org)] == ["shell"]
     assert await blobs.get(package_key(org, harness.digest)) == archive
@@ -51,20 +51,16 @@ async def test_an_invalid_package_stores_nothing(harnesses: Harnesses, org: str)
     assert await harnesses.all(org) == []
 
 
-async def test_defaults_settings_and_secrets_are_set_and_unset(harnesses: Harnesses, org: str, tmp_path: Path) -> None:
+async def test_settings_and_secrets_are_set_and_unset(harnesses: Harnesses, org: str, tmp_path: Path) -> None:
     await harnesses.add(org, demo_archive(tmp_path))
     changed = await harnesses.update(org, "demo", {
-        "provider": "deepseek", "model": "deepseek-flash", "settings": {"EFFORT": "high", "STYLE": "terse"},
-        "secrets": {"GITHUB_TOKEN": "the-token"}})
-    assert (changed.provider, changed.model) == ("deepseek", "deepseek-flash")
+        "settings": {"EFFORT": "high", "STYLE": "terse"}, "secrets": {"GITHUB_TOKEN": "the-token"}})
     assert changed.setting_values() == {"EFFORT": "high", "STYLE": "terse"}
     assert changed.secrets_set == {"GITHUB_TOKEN"}
     assert "the-token" not in repr(changed)
     assert await harnesses.secret_values(org, "demo") == {"GITHUB_TOKEN": "the-token"}
 
-    unset = await harnesses.update(org, "demo", {"model": None, "settings": {"EFFORT": None},
-                                                "secrets": {"GITHUB_TOKEN": None}})
-    assert (unset.provider, unset.model) == ("deepseek", None)
+    unset = await harnesses.update(org, "demo", {"settings": {"EFFORT": None}, "secrets": {"GITHUB_TOKEN": None}})
     assert unset.setting_values() == {"EFFORT": "medium", "STYLE": "terse"}          # back to the package's default
     assert unset.secrets_set == frozenset()
 
@@ -73,8 +69,8 @@ async def test_defaults_settings_and_secrets_are_set_and_unset(harnesses: Harnes
     ({"settings": {"UNKNOWN": "x"}}, r"settings\.UNKNOWN is not declared by the package; declared: EFFORT, STYLE"),
     ({"secrets": {"UNKNOWN": "x"}}, r"secrets\.UNKNOWN is not declared"),
     ({"settings": {"EFFORT": 5}}, r"settings\.EFFORT is a string"),
-    ({"provider": "Not A Name"}, "provider"),
-    ({"model": ""}, "model"),
+    ({"provider": "deepseek"}, "provider cannot be changed; what can: secrets, settings"),
+    ({"model": "deepseek-flash"}, "model cannot be changed"),
     ({"digest": "x"}, "digest cannot be changed"),
     ({"settings": ["EFFORT"]}, "settings is an object"),
 ])
@@ -90,16 +86,14 @@ async def test_replacing_a_harness_keeps_what_the_new_manifest_still_declares(
     harnesses: Harnesses, org: str, tmp_path: Path
 ) -> None:
     first = await harnesses.add(org, demo_archive(tmp_path))
-    await harnesses.update(org, "demo", {
-        "provider": "deepseek", "settings": {"EFFORT": "high", "STYLE": "terse"},
-        "secrets": {"GITHUB_TOKEN": "the-token", "OTHER_TOKEN": "other"}})
+    await harnesses.update(org, "demo", {"settings": {"EFFORT": "high", "STYLE": "terse"},
+                                         "secrets": {"GITHUB_TOKEN": "the-token", "OTHER_TOKEN": "other"}})
 
     replaced = await harnesses.add(org, demo_archive(
         tmp_path, version="2.0.0", settings={"EFFORT": {"default": "low"}},
         secrets={"GITHUB_TOKEN": {"hosts": ["api.github.com"]}}))
     assert replaced.manifest.version == "2.0.0"
     assert replaced.digest != first.digest
-    assert replaced.provider == "deepseek"
     assert replaced.setting_values() == {"EFFORT": "high"}
     assert await harnesses.secret_values(org, "demo") == {"GITHUB_TOKEN": "the-token"}
     assert [h.name for h in await harnesses.all(org)] == ["demo"]
@@ -113,7 +107,7 @@ async def test_a_harness_is_deleted(harnesses: Harnesses, org: str) -> None:
     with pytest.raises(NotFound):
         await harnesses.delete(org, "shell")
     with pytest.raises(NotFound):
-        await harnesses.update(org, "shell", {"model": "x"})
+        await harnesses.update(org, "shell", {"settings": {}})
 
 
 async def test_an_install_is_one_per_package_and_image(harnesses: Harnesses, org: str) -> None:

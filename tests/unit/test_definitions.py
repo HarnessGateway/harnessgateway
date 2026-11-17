@@ -126,6 +126,8 @@ def test_an_environment_with_only_a_name_gets_the_defaults() -> None:
     assert (e.network.mode, e.network.allow, e.network.deny, e.network.package_managers) == ("limited", (), (), True)
     assert e.variables == {}
     assert e.secrets == {}
+    assert (e.setup.script, e.setup.egress, e.setup.timeout_s) == ("", (), 900)
+    assert e.harnesses == ()
 
 
 def test_a_full_environment_is_read() -> None:
@@ -135,8 +137,12 @@ def test_a_full_environment_is_read() -> None:
         "network": {"mode": "limited", "allow": ["a.com"], "deny": ["*.bad.com"], "package_managers": False},
         "variables": {"TZ": "UTC", "npm_config_loglevel": "error"},
         "secrets": {"EXAMPLE_TOKEN": {"hosts": ["api.example.com"], "header": "Authorization", "prefix": "Bearer "}},
+        "setup": {"script": "apt-get install -y ripgrep\n", "egress": ["downloads.example.com"], "timeout_s": 60},
+        "harnesses": ["shell", "codex", "claude-code"],
     })
     assert e.image == "ghcr.io/acme/agents:1"
+    assert e.setup.egress[0].host == "downloads.example.com"
+    assert e.harnesses == ("claude-code", "codex", "shell")                  # kept in order of name
     assert e.network.deny[0].host == "*.bad.com"
     assert e.secrets["EXAMPLE_TOKEN"].header == "Authorization"
     assert e.secrets["EXAMPLE_TOKEN"].prefix == "Bearer "
@@ -167,6 +173,14 @@ def test_a_full_environment_is_read() -> None:
         ({"secrets": {"HOME": {"hosts": ["a.com"]}}}, "HOME"),
         ({"variables": {"T": "1"}, "secrets": {"T": {"hosts": ["a.com"]}}}, "T"),
         ({"secrets": {"T": {"hosts": ["a.com"], "value": "shh"}}}, "value"),
+        ({"setup": {"script": "x" * (64 * 1024 + 1)}}, "setup"),
+        ({"setup": {"egress": ["*"]}}, "setup.egress"),
+        ({"setup": {"timeout_s": 0}}, "setup"),
+        ({"setup": {"timeout_s": 3601}}, "setup"),
+        ({"setup": {"run": "x"}}, "run"),
+        ({"harnesses": ["Codex"]}, "harnesses"),
+        ({"harnesses": ["codex", "codex"]}, "harnesses"),
+        ({"harnesses": "codex"}, "harnesses"),
         ({"extra": 1}, "extra"),
     ],
 )
@@ -194,10 +208,10 @@ def test_a_provider_is_read() -> None:
     p = Provider.load({
         "name": "deepseek",
         "apis": {"anthropic": "https://api.deepseek.com/anthropic/", "openai-chat": "https://api.deepseek.com/v1"},
-        "default_model": "deepseek-flash",
+        "models": ["deepseek-flash", "deepseek-v4-pro"],
     })
     assert p.apis["anthropic"] == "https://api.deepseek.com/anthropic"      # the trailing slash is dropped
-    assert p.default_model == "deepseek-flash"
+    assert p.models == ("deepseek-flash", "deepseek-v4-pro")
     assert p.host("openai-chat").host == "api.deepseek.com"
     assert p.host("openai-chat").port is None
 
@@ -217,8 +231,11 @@ def test_a_provider_on_the_local_network_may_use_http_and_a_port() -> None:
         ({"apis": {"anthropic": "https://"}}, "apis"),
         ({"apis": {"anthropic": "https://user:pw@x.com"}}, "apis"),
         ({"apis": {"anthropic": "https://x.com/v1?key=1"}}, "apis"),
-        ({"default_model": ""}, "default_model"),
-        ({"default_model": "m" * 201}, "default_model"),
+        ({"name": "none"}, "name"),                      # it stands for no provider in a model string
+        ({"models": [""]}, "models"),
+        ({"models": ["m" * 201]}, "models"),
+        ({"models": ["a", "a"]}, "models"),
+        ({"models": [f"m{i}" for i in range(101)]}, "models"),
         ({"api_key": "sk-123"}, "api_key"),
     ],
 )

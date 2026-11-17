@@ -156,6 +156,7 @@ class EgressPolicy:
     mode: Literal["closed", "limited", "open"]
     allow: tuple[HostEntry, ...]
     deny: tuple[HostEntry, ...]
+    allowed_by: str = "the environment's network.allow"      # where a host is added, said when one is refused
 
     def decide(self, host: str, port: int) -> Decision:
         where = f"{host}:{port}"
@@ -165,4 +166,4 @@ class EgressPolicy:
             return Decision(True)
         if self.mode == "closed":
             return Decision(False, f"{where} is not allowed: a closed environment reaches the turn's provider only")
-        return Decision(False, f"{where} is not allowed: add {host} to the environment's network.allow")
+        return Decision(False, f"{where} is not allowed: add {host} to {self.allowed_by}")

@@ -1,13 +1,19 @@
 """Spec §16: API keys and the organization."""
 
+import dataclasses
+from collections.abc import AsyncIterator
+
 import pytest
 
+from harnessgateway.catalog import Catalog
+from harnessgateway.domain.names import DEFAULT_ORG
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Forbidden, Invalid, NotFound
 from harnessgateway.serve import init
 from harnessgateway.settings import Settings
 from harnessgateway.stores import Stores
 from tests.conftest import make_org
+from tests.helpers import SHELL
 
 
 async def test_a_key_is_shown_once_and_only_its_hash_is_kept(stores: Stores, org: str) -> None:
@@ -76,8 +82,20 @@ async def test_the_organization_is_made_once_and_its_retention_can_be_set(stores
         await conn.execute("DELETE FROM orgs WHERE id = 'org_made_here'")
 
 
+@pytest.fixture
+async def no_default_org(stores: Stores) -> AsyncIterator[None]:
+    """Setup makes the organization `org_default`, which no other test uses: it starts without it, and it is
+    removed afterwards."""
+    async def remove() -> None:
+        async with stores.db.system() as conn:
+            await conn.execute("DELETE FROM orgs WHERE id = %s", [DEFAULT_ORG])
+    await remove()
+    yield
+    await remove()
+
+
 async def test_setup_makes_the_first_admin_key_once_and_a_lost_one_is_replaced_from_the_host(
-    stores: Stores, settings: Settings,
+    stores: Stores, settings: Settings, no_default_org: None,
 ) -> None:
     first = await init(settings)
     assert first is not None
@@ -91,3 +109,22 @@ async def test_setup_makes_the_first_admin_key_once_and_a_lost_one_is_replaced_f
         assert (principal.org_id, principal.role) == ("org_default", "admin")
     assert [key.name for key in await stores.keys.all("org_default")] == [
         "first admin key", "admin key made on the host"]
+
+
+async def test_setup_adds_the_packages_that_ship_and_a_default_environment_that_carries_them_once(
+    stores: Stores, settings: Settings, no_default_org: None,
+) -> None:
+    shipped = dataclasses.replace(settings, catalog=str(SHELL.parent))
+    names = [manifest.name for manifest in Catalog(SHELL.parent).entries()]
+    assert "shell" in names
+    assert await init(shipped) is not None
+    assert [harness.name for harness in await stores.harnesses.all(DEFAULT_ORG)] == names
+    [default] = await stores.environments.all(DEFAULT_ORG)
+    assert (default.name, default.harnesses) == ("default", tuple(names))
+
+    for name in names:
+        await stores.harnesses.delete(DEFAULT_ORG, name)
+    await stores.environments.delete(DEFAULT_ORG, "default")
+    assert await init(shipped) is None                     # what was set up once is the organization's to change
+    assert await stores.harnesses.all(DEFAULT_ORG) == []
+    assert await stores.environments.all(DEFAULT_ORG) == []

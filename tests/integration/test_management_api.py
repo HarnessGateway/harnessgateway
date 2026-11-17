@@ -8,17 +8,25 @@ import pytest
 
 from harnessgateway import __version__, packaging
 from harnessgateway.stores import Stores
-from tests.helpers import SHELL, variant
+from tests.helpers import SHELL, SHELL_MODEL, variant
 from tests.integration.api import Running, running
+from tests.integration.local_driver import LocalDriver
 
 DEEPSEEK = {"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"},
-            "default_model": "deepseek-flash", "api_key": "the-real-key"}
+            "models": ["deepseek-flash"], "api_key": "the-real-key"}
 
 
 @pytest.fixture
 async def api(stores: Stores, org: str, tmp_path: Path) -> AsyncIterator[Running]:
     async with running(stores, org, tmp_path) as api:
         yield api
+
+
+async def add_shell(api: Running) -> None:
+    """Add the shell harness from the catalog, and have the default environment carry it, installed."""
+    assert (await api.developer.post("/v1/harnesses", json={"catalog": "shell"})).status_code == 200
+    assert (await api.admin.patch("/v1/environments/default", json={"harnesses": ["shell"]})).status_code == 200
+    await api.platform.settle()
 
 
 # ── providers ───────────────────────────────────────────────────────────────────────────────────────
@@ -28,15 +36,15 @@ async def test_providers_are_made_read_changed_and_deleted_and_the_key_is_never_
     assert made.status_code == 200
     assert made.json()["has_key"] is True
     assert "the-real-key" not in made.text
-    assert (await api.developer.get("/v1/providers/deepseek")).json()["default_model"] == "deepseek-flash"
+    assert (await api.developer.get("/v1/providers/deepseek")).json()["models"] == ["deepseek-flash"]
     listed = (await api.developer.get("/v1/providers")).json()
     assert (listed["object"], [p["name"] for p in listed["data"]], listed["has_more"], listed["last_id"]) == (
         "list", ["deepseek"], False, "deepseek")
     assert "the-real-key" not in str(listed)
 
-    changed = await api.admin.patch("/v1/providers/deepseek", json={"default_model": "deepseek-v4-pro",
+    changed = await api.admin.patch("/v1/providers/deepseek", json={"models": ["deepseek-flash", "deepseek-v4-pro"],
                                                                     "api_key": None})
-    assert (changed.json()["default_model"], changed.json()["has_key"]) == ("deepseek-v4-pro", False)
+    assert (changed.json()["models"], changed.json()["has_key"]) == (["deepseek-flash", "deepseek-v4-pro"], False)
     assert (await api.admin.delete("/v1/providers/deepseek")).json() == {"name": "deepseek", "deleted": True}
     assert (await api.developer.get("/v1/providers/deepseek")).status_code == 404
 
@@ -49,7 +57,12 @@ async def test_what_is_wrong_with_a_provider_is_named(api: Running) -> None:
     again = await api.admin.post("/v1/providers", json=DEEPSEEK)
     assert (again.status_code, again.json()["error"]["type"]) == (409, "conflict")
     assert (await api.admin.post("/v1/providers", content=b"[1]")).status_code == 400
-    assert (await api.admin.patch("/v1/providers/absent", json={"default_model": "m"})).status_code == 404
+    assert (await api.admin.patch("/v1/providers/absent", json={"models": ["m"]})).status_code == 404
+    named_none = await api.admin.post("/v1/providers", json={**DEEPSEEK, "name": "none"})
+    assert (named_none.status_code, "none is not a provider's name" in named_none.json()["error"]["message"]) == (
+        400, True)
+    old = await api.admin.patch("/v1/providers/deepseek", json={"default_model": "m"})
+    assert (old.status_code, "default_model cannot be changed" in old.json()["error"]["message"]) == (400, True)
 
 
 async def test_lists_are_paged_with_limit_and_after(api: Running) -> None:
@@ -78,11 +91,84 @@ async def test_environments_are_made_read_changed_and_deleted_and_secret_values_
     changed = await api.admin.patch("/v1/environments/secure", json={"cpus": 4})
     assert (changed.json()["cpus"], changed.json()["memory_mb"]) == (4, 1024)
     assert "the-secret" not in (await api.developer.get("/v1/environments/secure")).text
+    shown = await api.prepared("secure")
+    assert (shown["image_id"], shown["build"], shown["installs"], shown["harnesses"]) == (
+        "sha256:sandbox:test", None, [], [])
+    assert shown["setup"] == {"script": "", "egress": [], "timeout_s": 900}
 
-    assert (await api.admin.delete("/v1/environments/default")).status_code == 400
     assert (await api.admin.delete("/v1/environments/secure")).json() == {"name": "secure", "deleted": True}
+    assert (await api.admin.delete("/v1/environments/default")).json() == {"name": "default", "deleted": True}
+    assert (await api.developer.get("/v1/environments")).json()["data"] == []
     bad = await api.admin.post("/v1/environments", json={"name": "bad", "cpus": 1000})
     assert (bad.status_code, "cpus" in bad.json()["error"]["message"]) == (400, True)
+    unknown = await api.admin.post("/v1/environments", json={"name": "bad", "harnesses": ["absent"]})
+    assert (unknown.status_code, unknown.json()["error"]["param"]) == (400, "harnesses")
+
+
+async def test_a_setup_script_is_built_once_into_the_image_its_environment_s_turns_run_on(api: Running) -> None:
+    driver = api.platform.driver
+    assert isinstance(driver, LocalDriver)
+    await add_shell(api)
+    patched = await api.admin.patch("/v1/environments/default", json={"setup": {"script": "echo set up"}})
+    assert patched.status_code == 200, patched.text
+    default = await api.prepared("default")
+    assert (default["build"]["status"], default["build"]["log"]) == ("ready", "set up")
+    assert default["build"]["updated_at"]
+    image_id = default["image_id"]
+    assert image_id.startswith("sha256:harnessgateway-environment:")
+    assert [(i["harness"], i["status"]) for i in default["installs"]] == [("shell", "ready")]
+    assert (await api.installed("shell"))["environments"] == [{"name": "default", "status": "ready"}]
+    [listed] = (await api.developer.get("/v1/environments")).json()["data"]
+    assert (listed["image_id"], listed["build"]["status"], "log" in listed["build"]) == (image_id, "ready", False)
+
+    answer = await api.openai.responses.create(model=SHELL_MODEL, input="echo on the built image")
+    assert answer.output_text == "on the built image\n"
+    assert driver.sandboxes[-1].image == image_id
+    assert len(driver.builds) == 1
+
+    await api.admin.post("/v1/environments", json={"name": "twin", "harnesses": ["shell"],
+                                                   "setup": {"script": "echo set up"}})
+    twin = await api.prepared("twin")                         # the same script on the same image: the same build
+    assert (twin["image_id"], twin["build"]["status"], [i["status"] for i in twin["installs"]]) == (
+        image_id, "ready", ["ready"])
+    assert len(driver.builds) == 1
+
+
+async def test_a_setup_script_that_fails_fails_its_environment_s_turns_until_it_is_fixed(api: Running) -> None:
+    await add_shell(api)
+    await api.admin.patch("/v1/environments/default", json={"setup": {"script": "echo trying\nexit 3"}})
+    default = await api.prepared("default")
+    assert (default["image_id"], default["build"]["status"]) == (None, "failed")
+    assert default["build"]["log"].splitlines() == ["trying", "setup exited with code 3"]
+    assert [(i["harness"], i["status"]) for i in default["installs"]] == [("shell", None)]
+    assert (await api.installed("shell"))["environments"] == [{"name": "default", "status": None}]
+
+    failed = await api.openai.responses.create(model=SHELL_MODEL, input="echo never")
+    assert failed.metadata is not None
+    assert failed.error is not None
+    assert (failed.status, failed.metadata["hg_reason"]) == ("failed", "setup_failed")
+    assert failed.error.message == "the environment's setup script failed"
+    assert failed.output_text == ""
+    assert "setup exited with code 3" in (await api.developer.get(f"/v1/responses/{failed.id}/trace")).json()["log"]
+
+    await api.admin.patch("/v1/environments/default", json={"setup": {"script": "echo fixed"}})
+    fixed = await api.prepared("default")
+    assert (fixed["build"]["status"], [i["status"] for i in fixed["installs"]]) == ("ready", ["ready"])
+    assert (await api.openai.responses.create(model=SHELL_MODEL, input="echo now")).output_text == "now\n"
+
+
+async def test_a_setup_script_holds_a_placeholder_for_each_secret_and_never_its_value(api: Running) -> None:
+    driver = api.platform.driver
+    assert isinstance(driver, LocalDriver)
+    made = await api.admin.post("/v1/environments", json={
+        "name": "tokened", "setup": {"script": 'echo "token is $EXAMPLE_TOKEN"'},
+        "secrets": {"EXAMPLE_TOKEN": {"hosts": ["api.example.com"], "value": "s3cret-value-for-test"}}})
+    assert made.status_code == 200, made.text
+    build = (await api.prepared("tokened"))["build"]
+    assert build["status"] == "ready"
+    assert build["log"].startswith("token is hgs_")
+    assert "s3cret-value-for-test" not in build["log"]
+    assert "s3cret-value-for-test" not in driver.builds[-1].stdin
 
 
 # ── harnesses ───────────────────────────────────────────────────────────────────────────────────────
@@ -95,10 +181,13 @@ async def test_the_catalog_offers_what_ships_and_a_package_is_added_from_it(api:
     assert (added.json()["name"], added.json()["version"], added.json()["missing"]) == ("shell", "1.0.0", [])
     assert (await api.developer.get("/v1/catalog")).json()["data"][0]["installed_version"] == "1.0.0"
     assert (await api.developer.post("/v1/harnesses", json={"catalog": "absent"})).status_code == 404
+    assert (await api.installed("shell"))["environments"] == []          # no environment carries it yet
 
-    shown = await api.installed("shell")                      # it is installed for the default environment at once
-    assert [install["status"] for install in shown["installs"]] == ["ready"]
-    answer = await api.openai.responses.create(model="shell", input="echo ready")
+    await api.admin.patch("/v1/environments/default", json={"harnesses": ["shell"]})
+    shown = await api.installed("shell")                     # it is installed for the environment at once
+    assert shown["environments"] == [{"name": "default", "status": "ready"}]
+    assert {"provider", "model", "installs"}.isdisjoint(shown)
+    answer = await api.openai.responses.create(model=SHELL_MODEL, input="echo ready")
     assert answer.output_text == "ready\n"
 
 
@@ -109,27 +198,38 @@ async def test_a_package_is_uploaded_its_settings_set_and_its_installs_shown(api
     assert added.status_code == 200, added.text
     assert added.json()["settings"] == {"EFFORT": "medium"}
 
-    changed = await api.developer.patch("/v1/harnesses/demo", json={"settings": {"EFFORT": "high"}, "model": "m"})
-    assert (changed.json()["settings"], changed.json()["model"]) == ({"EFFORT": "high"}, "m")
+    changed = await api.developer.patch("/v1/harnesses/demo", json={"settings": {"EFFORT": "high"}})
+    assert changed.json()["settings"] == {"EFFORT": "high"}
+    defaults = await api.developer.patch("/v1/harnesses/demo", json={"model": "m"})
+    assert (defaults.status_code, "model cannot be changed" in defaults.json()["error"]["message"]) == (400, True)
     refused = await api.developer.patch("/v1/harnesses/demo", json={"secrets": {"GITHUB_TOKEN": "the-token"}})
     assert (refused.status_code, refused.json()["error"]["type"]) == (403, "insufficient_permissions")
     by_admin = await api.admin.patch("/v1/harnesses/demo", json={"secrets": {"GITHUB_TOKEN": "the-token"}})
     assert by_admin.json()["secrets_set"] == ["GITHUB_TOKEN"]
     assert "the-token" not in by_admin.text
 
-    await api.platform.settle()
-    installs = (await api.developer.get("/v1/harnesses/demo/installs")).json()["data"]
-    assert [(i["status"], i["image_id"]) for i in installs] == [("ready", "sha256:sandbox:test")]
-    assert "log" in installs[0]
-    await api.admin.post("/v1/environments", json={"name": "other", "image": "other:image"})
-    asked = await api.developer.post("/v1/harnesses/demo/install", json={"environment": "other"})
-    assert asked.json() == {"name": "demo", "environment": "other", "status": "pending"}
+    await api.admin.patch("/v1/environments/default", json={"harnesses": ["demo"]})
+    default = await api.prepared("default")
+    assert default["image_id"] == "sha256:sandbox:test"
+    [install] = default["installs"]
+    assert (install["harness"], install["status"], "log" in install) == ("demo", "ready", True)
+    assert install["updated_at"]
+    listed = (await api.developer.get("/v1/environments")).json()["data"]
+    assert [[i["status"] for i in e["installs"]] for e in listed] == [["ready"]]
+    assert "log" not in listed[0]["installs"][0]                        # a log is shown for one environment
+
+    await api.admin.post("/v1/environments", json={"name": "other", "image": "other:image", "harnesses": ["demo"]})
+    other = await api.prepared("other")
+    assert (other["image_id"], [i["status"] for i in other["installs"]]) == ("sha256:other:image", ["ready"])
     shown = await api.installed("demo")
-    assert sorted(i["image_id"] for i in shown["installs"]) == ["sha256:other:image", "sha256:sandbox:test"]
+    assert shown["environments"] == [{"name": "default", "status": "ready"}, {"name": "other", "status": "ready"}]
+    assert (await api.developer.post("/v1/harnesses/demo/install", json={"environment": "other"})).status_code == 405
+    assert (await api.developer.get("/v1/harnesses/demo/installs")).status_code == 404
 
     assert [h["name"] for h in (await api.developer.get("/v1/harnesses")).json()["data"]] == ["demo"]
     assert (await api.developer.delete("/v1/harnesses/demo")).json() == {"name": "demo", "deleted": True}
     assert (await api.developer.get("/v1/harnesses/demo")).status_code == 404
+    assert [e["harnesses"] for e in (await api.developer.get("/v1/environments")).json()["data"]] == [[], []]
 
 
 async def test_a_package_that_is_not_valid_is_refused_naming_what_is_wrong(api: Running) -> None:
@@ -141,9 +241,9 @@ async def test_a_package_that_is_not_valid_is_refused_naming_what_is_wrong(api: 
 
 
 async def test_a_package_an_agent_wrote_in_a_session_is_added_from_its_work_folder(api: Running) -> None:
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
+    await add_shell(api)
     manifest = '{"contract": 1, "name": "built", "version": "0.1.0", "apis": []}'
-    built = await api.openai.responses.create(model="shell", input=(
+    built = await api.openai.responses.create(model=SHELL_MODEL, input=(
         f"mkdir -p pkg && cd pkg && echo '{manifest}' > harness.json && printf '#!/bin/sh\\n' > install && "
         "cp $HG_HARNESS/run run && chmod +x install run"))
     assert built.status == "completed"
@@ -153,8 +253,9 @@ async def test_a_package_an_agent_wrote_in_a_session_is_added_from_its_work_fold
     added = await api.developer.post("/v1/harnesses", json={"session": session, "path": "pkg"})
     assert added.status_code == 200, added.text
     assert (added.json()["name"], added.json()["version"]) == ("built", "0.1.0")
-    assert (await api.openai.responses.create(model="built", input="echo from the built one")).output_text == (
-        "from the built one\n")
+    await api.admin.patch("/v1/environments/default", json={"harnesses": ["built", "shell"]})
+    answer = await api.openai.responses.create(model="default/built/none/none", input="echo from the built one")
+    assert answer.output_text == "from the built one\n"
     missing = await api.developer.post("/v1/harnesses", json={"session": session, "path": "nowhere"})
     assert (missing.status_code, "no folder 'nowhere'" in missing.json()["error"]["message"]) == (400, True)
 
@@ -162,11 +263,11 @@ async def test_a_package_an_agent_wrote_in_a_session_is_added_from_its_work_fold
 # ── sessions, turns, traces ─────────────────────────────────────────────────────────────────────────
 
 async def test_sessions_their_turns_their_files_and_a_turn_s_trace(api: Running) -> None:
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
-    first = await api.openai.responses.create(model="shell", input="echo one > a.txt; echo mind > $HOME/.note")
-    second = await api.openai.responses.create(model="shell", input="echo two > b.txt; exit 2",
+    await add_shell(api)
+    first = await api.openai.responses.create(model=SHELL_MODEL, input="echo one > a.txt; echo mind > $HOME/.note")
+    second = await api.openai.responses.create(model=SHELL_MODEL, input="echo two > b.txt; exit 2",
                                                previous_response_id=first.id)
-    other = await api.openai.responses.create(model="shell", input="echo other")
+    other = await api.openai.responses.create(model=SHELL_MODEL, input="echo other")
     assert first.metadata is not None
     assert other.metadata is not None
     session = first.metadata["hg_session"]
@@ -202,8 +303,8 @@ async def test_sessions_their_turns_their_files_and_a_turn_s_trace(api: Running)
 
 
 async def test_deleting_a_session_removes_its_turns_its_snapshots_and_its_volumes(api: Running) -> None:
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
-    turn = await api.openai.responses.create(model="shell", input="echo one > a.txt")
+    await add_shell(api)
+    turn = await api.openai.responses.create(model=SHELL_MODEL, input="echo one > a.txt")
     assert turn.metadata is not None
     session = turn.metadata["hg_session"]
     volume = api.platform.driver.volume(f"hg-work-{session}")  # type: ignore[attr-defined]
@@ -224,8 +325,8 @@ async def test_deleting_a_session_removes_its_turns_its_snapshots_and_its_volume
 
 
 async def test_a_session_with_a_turn_in_progress_is_not_deleted(api: Running) -> None:
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
-    turn = await api.openai.responses.create(model="shell", input="sleep 60", background=True)
+    await add_shell(api)
+    turn = await api.openai.responses.create(model=SHELL_MODEL, input="sleep 60", background=True)
     assert turn.metadata is not None
     refused = await api.developer.delete(f"/v1/sessions/{turn.metadata['hg_session']}")
     assert (refused.status_code, "cancel it first" in refused.json()["error"]["message"]) == (409, True)
@@ -233,11 +334,11 @@ async def test_a_session_with_a_turn_in_progress_is_not_deleted(api: Running) ->
 
 
 async def test_a_turn_not_to_be_stored_takes_its_session_with_it_when_nothing_else_is_in_it(api: Running) -> None:
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
-    await api.openai.responses.create(model="shell", input="echo once", store=False)
+    await add_shell(api)
+    await api.openai.responses.create(model=SHELL_MODEL, input="echo once", store=False)
     assert (await api.developer.get("/v1/sessions")).json()["data"] == []
-    kept = await api.openai.responses.create(model="shell", input="echo kept")
-    await api.openai.responses.create(model="shell", input="echo once", store=False, previous_response_id=kept.id)
+    kept = await api.openai.responses.create(model=SHELL_MODEL, input="echo kept")
+    await api.openai.responses.create(model=SHELL_MODEL, input="echo once", store=False, previous_response_id=kept.id)
     sessions = (await api.developer.get("/v1/sessions")).json()["data"]
     assert [s["turns"] for s in sessions] == [2]                       # the stored turn keeps the session
 
@@ -264,8 +365,17 @@ async def test_a_key_is_made_shown_once_listed_and_revoked(api: Running) -> None
 
 @pytest.mark.parametrize(("role", "method", "path", "allowed"), [
     ("runner", "GET", "/v1/platform", True),
-    ("runner", "GET", "/v1/models", True),
-    ("runner", "GET", "/v1/harnesses", False),
+    ("runner", "GET", "/v1/providers", True),
+    ("runner", "GET", "/v1/environments", True),
+    ("runner", "GET", "/v1/environments/default", True),
+    ("runner", "GET", "/v1/harnesses", True),
+    ("runner", "POST", "/v1/providers", False),
+    ("runner", "POST", "/v1/environments", False),
+    ("runner", "PATCH", "/v1/environments/default", False),
+    ("runner", "DELETE", "/v1/environments/default", False),
+    ("runner", "POST", "/v1/harnesses", False),
+    ("runner", "GET", "/v1/catalog", False),
+    ("runner", "GET", "/v1/drafts", False),
     ("runner", "GET", "/v1/sessions", False),
     ("runner", "GET", "/v1/usage", False),
     ("developer", "GET", "/v1/harnesses", True),
@@ -285,7 +395,7 @@ async def test_a_key_is_made_shown_once_listed_and_revoked(api: Running) -> None
 async def test_each_role_may_do_what_the_specification_says_and_no_more(
     api: Running, role: str, method: str, path: str, allowed: bool
 ) -> None:
-    answer = await getattr(api, role).request(method, path, json={} if method == "POST" else None)
+    answer = await getattr(api, role).request(method, path, json={} if method in ("POST", "PATCH") else None)
     if allowed:
         assert answer.status_code == 200, answer.text
     else:
@@ -293,12 +403,46 @@ async def test_each_role_may_do_what_the_specification_says_and_no_more(
         assert f"this key's role is {role}" in answer.json()["error"]["message"]
 
 
+async def test_a_runner_reads_what_a_model_string_may_name_and_changes_none_of_it(api: Running) -> None:
+    await api.admin.post("/v1/providers", json=DEEPSEEK)
+    await add_shell(api)
+    providers = (await api.runner.get("/v1/providers")).json()["data"]
+    assert [(p["name"], p["models"]) for p in providers] == [("deepseek", ["deepseek-flash"])]
+    assert "the-real-key" not in str(providers)
+    assert (await api.runner.get("/v1/providers/deepseek")).json()["has_key"] is True
+    assert [e["harnesses"] for e in (await api.runner.get("/v1/environments")).json()["data"]] == [["shell"]]
+    shown = (await api.runner.get("/v1/environments/default")).json()
+    assert shown["harnesses"] == ["shell"]
+    assert [sorted(install) for install in shown["installs"]] == [["harness", "status", "updated_at"]]   # no log
+    assert "log" in (await api.developer.get("/v1/environments/default")).json()["installs"][0]
+    assert [h["name"] for h in (await api.runner.get("/v1/harnesses")).json()["data"]] == ["shell"]
+    assert [e["name"] for e in (await api.runner.get("/v1/harnesses/shell")).json()["environments"]] == ["default"]
+
+    for method, path in [
+        ("POST", "/v1/providers"), ("PATCH", "/v1/providers/deepseek"), ("DELETE", "/v1/providers/deepseek"),
+        ("POST", "/v1/environments"), ("PATCH", "/v1/environments/default"), ("DELETE", "/v1/environments/default"),
+        ("POST", "/v1/harnesses"), ("PATCH", "/v1/harnesses/shell"), ("DELETE", "/v1/harnesses/shell"),
+        ("GET", "/v1/catalog"), ("GET", "/v1/harnesses/shell/files"), ("GET", "/v1/harnesses/shell/files/run"),
+    ]:
+        answer = await api.runner.request(method, path, json={} if method in ("POST", "PATCH") else None)
+        assert (answer.status_code, answer.json()["error"]["type"]) == (403, "insufficient_permissions"), path
+    assert (await api.developer.get("/v1/providers/deepseek")).status_code == 200
+    assert (await api.developer.get("/v1/harnesses/shell")).status_code == 200
+    assert (await api.developer.get("/v1/environments/default")).json()["harnesses"] == ["shell"]
+
+
+async def test_models_are_not_listed_since_a_model_string_names_its_parts(api: Running) -> None:
+    await add_shell(api)
+    for path in ("/v1/models", "/v1/models/shell"):
+        assert (await api.runner.get(path)).status_code == 404
+
+
 # ── usage, audit, platform, organization ────────────────────────────────────────────────────────────
 
 async def test_usage_is_summed_by_what_is_asked(api: Running) -> None:
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
+    await add_shell(api)
     for command in ("echo one", "echo two", "exit 1"):
-        await api.openai.responses.create(model="shell", input=command)
+        await api.openai.responses.create(model=SHELL_MODEL, input=command)
     by_harness = (await api.developer.get("/v1/usage")).json()
     assert by_harness["group_by"] == "harness"
     [row] = by_harness["data"]

@@ -134,23 +134,6 @@ def responses_router(platform: Platform, caller: Any) -> APIRouter:
         return {"object": "list", "data": items, "first_id": items[0]["id"] if items else None,
                 "last_id": items[-1]["id"] if items else None, "has_more": False}
 
-    def model(name: str, created: int) -> dict[str, Any]:
-        return {"id": name, "object": "model", "created": created, "owned_by": "harnessgateway"}
-
-    @router.get("/v1/models")
-    async def models(principal: Caller) -> Any:
-        harnesses = await stores.harnesses.all(principal.org_id)
-        return {"object": "list", "data": [
-            model(h.name, int(h.added_at.timestamp()) if h.added_at else 0) for h in harnesses]}
-
-    @router.get("/v1/models/{name}")
-    async def one_model(name: str, principal: Caller) -> Any:
-        try:
-            harness = await stores.harnesses.get(principal.org_id, name)
-        except NotFound:
-            raise NotFound(f"there is no model named {name!r}: a model is an installed harness") from None
-        return model(harness.name, int(harness.added_at.timestamp()) if harness.added_at else 0)
-
     return router
 
 

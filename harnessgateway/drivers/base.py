@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from harnessgateway.domain.plan import SandboxPlan, StepPlan
+from harnessgateway.domain.plan import BuildPlan, SandboxPlan, StepPlan
 
 OnLine = Callable[[str], Awaitable[None]]
 
@@ -18,6 +18,14 @@ class SandboxExit:
     started: bool                      # False: the sandbox never ran; `error` says why
     exit_code: int | None = None
     out_of_memory: bool = False
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    started: bool                      # False: the build never ran; `error` says why
+    exit_code: int | None = None
+    image_id: str | None = None        # what it made, when it ended well
     error: str = ""
 
 
@@ -38,6 +46,13 @@ class Driver(Protocol):
 
     async def describe(self, plan: SandboxPlan) -> str:
         """The plan as this driver will run it, for an operator to read: every token masked."""
+
+    async def build(self, plan: BuildPlan, on_line: OnLine) -> BuildResult:
+        """Run an environment's setup script to its end, handing over each line it prints, and keep what it
+        leaves as an image when it ends well."""
+
+    async def remove_image(self, image_id: str) -> bool:
+        """Remove an image this platform built. False when it is still in use, and so kept."""
 
     async def ensure_volume(self, name: str) -> None: ...
 
