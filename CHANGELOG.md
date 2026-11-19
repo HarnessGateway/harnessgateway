@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.3.1
+
+- A new installation installs the harnesses its `default` environment carries from its first start. The
+  installer now does the first-time setup before it starts the platform. Before, it started the platform first
+  and set up afterwards, in a process the running platform did not hear from: nothing was installed until a
+  turn named a harness (and then only that one) or the platform was started again.
+- The installer's last lines say that the harnesses that ship are being installed, and where to see how far.
+
 ## 4.3.0
 
 This version changes the package contract: a manifest that names hosts to reach is refused.

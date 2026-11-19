@@ -79,16 +79,27 @@ jobs:
             || git clone --depth 1 "$from" /tmp/harness-packages
       - name: Install the platform as a user does, and stand the scripted model beside it
         run: |
-          deploy/install.sh --dir "$RUNNER_TEMP/hg" ${{ matrix.isolation == 'gvisor' && '--with-gvisor' || '' }}
+          set -o pipefail
+          deploy/install.sh --dir "$RUNNER_TEMP/hg" ${{ matrix.isolation == 'gvisor' && '--with-gvisor' || '' }} \
+            | sed -E 's/hg_[A-Za-z0-9_-]{20,}/hg_(the key)/'        # the key it prints is not for a public log
           cd "$RUNNER_TEMP/hg"
+          key=$(docker compose exec -T serve harnessgateway init --new-admin-key </dev/null | awk 'END {print $NF}')
+          echo "::add-mask::$key"
+          echo "HG_TEST_KEY=$key" >> "$GITHUB_ENV"
+          # A new installation installs what its default environment carries without being asked: nothing has
+          # named a harness yet, and the platform has not been started a second time.
+          for _ in $(seq 90); do
+            installed=$(curl -fsS "$HG_TEST_URL/v1/environments/default" -H "Authorization: Bearer $key" \
+              | jq -r '[.installs[].status] | unique | join(" ")')
+            [ "$installed" = ready ] && break
+            sleep 2
+          done
+          test "$installed" = ready
           echo "HG_PRIVATE_HOSTS=hg-stack-model:8000" >> .env       # the model is on this host's own network
           docker compose up --detach serve proxy                    # started again, with that setting
           docker run --detach --name hg-stack-model --network hg-control \
             --volume /tmp/harness-packages/tools:/tools:ro python:3.13 python3 /tools/scripted_model.py 8000
           for _ in $(seq 60); do curl -fsS -o /dev/null "$HG_TEST_URL/readyz" && break; sleep 1; done
-          key=$(docker compose exec -T serve harnessgateway init --new-admin-key </dev/null | awk 'END {print $NF}')
-          echo "::add-mask::$key"
-          echo "HG_TEST_KEY=$key" >> "$GITHUB_ENV"
           isolation=$(curl -fsS "$HG_TEST_URL/v1/platform" -H "Authorization: Bearer $key" | jq -r .isolation)
           test "$isolation" = "${{ matrix.isolation }}"
       - name: Each package runs real turns of its CLI

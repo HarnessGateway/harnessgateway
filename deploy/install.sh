@@ -13,7 +13,7 @@
 # again takes the place of what was kept.
 set -euo pipefail
 
-VERSION=4.3.0
+VERSION=4.3.1
 DIR="$HOME/.harnessgateway"
 PORT=""
 BIND=""
@@ -91,6 +91,13 @@ BIND=$(kept HG_BIND)
 
 docker compose pull --quiet 2>/dev/null || true               # images built on this machine are used as they are
 docker compose up --detach --wait db
+# First-time setup comes before the platform starts: what the platform finds when it starts is what it prepares,
+# so a new installation's harnesses are installed from its first start. Run again, setup changes nothing. For an
+# update, the old version is stopped first, so that it never runs on the new version's database.
+# Piped from the web, this script is bash's standard input: a command that reads it would take the rest.
+docker compose stop serve proxy 2>/dev/null || true
+echo
+docker compose run --rm -T serve harnessgateway init </dev/null
 docker compose up --detach serve proxy
 
 printf 'Waiting for HarnessGateway '
@@ -101,9 +108,6 @@ done
 echo
 [ "${ready:-}" = 1 ] || { docker compose logs --tail 40 serve >&2; fail "it did not become ready; its last log lines are above."; }
 
-echo
-# Piped from the web, this script is bash's standard input: a command that reads it would take the rest.
-docker compose exec -T serve harnessgateway init </dev/null
 isolation=$(docker info --format '{{json .Runtimes}}' | grep -q runsc && echo gvisor || echo none)
 cat <<DONE
 
@@ -112,7 +116,8 @@ HarnessGateway ${VERSION} is running.
   Files:           ${DIR}  (.env holds its secrets; keep it)
   Isolation:       ${isolation}$( [ "$isolation" = none ] && echo "  (sandboxes share this host's kernel: for development and trusted code; --with-gvisor on Linux changes that)" )
 
-Next: open the console, sign in with the admin key above, add a provider and a harness, and chat.
+Next: open the console, sign in with the admin key above, add a provider, and chat. The harnesses that
+ship are being installed in the default environment now: its page shows how far that is.
 Lost the key: cd ${DIR} && docker compose exec serve harnessgateway init --new-admin-key
 To update it: run this installer again.
 To stop it:   cd ${DIR} && docker compose down
