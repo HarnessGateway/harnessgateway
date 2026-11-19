@@ -12,13 +12,23 @@ from openai import AsyncOpenAI
 
 from harnessgateway.api.internal import internal_app
 from harnessgateway.api.public import public_app
-from harnessgateway.extensions import Extensions
+from harnessgateway.extensions import Extension, Extensions
 from harnessgateway.platform import Platform
 from harnessgateway.runner.runner import Runner
 from harnessgateway.stores import Stores
 from tests.conftest import loaded_extensions
 from tests.helpers import SHELL, serving
 from tests.integration.local_driver import LocalDriver
+
+
+class Told(Extension):
+    """An extension that keeps the changes it is told of."""
+
+    def __init__(self) -> None:
+        self.changes: list[dict[str, Any]] = []
+
+    async def audit(self, record: dict[str, Any]) -> None:
+        self.changes.append(record)
 
 
 class Running:

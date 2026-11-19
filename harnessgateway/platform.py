@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from harnessgateway.domain.plan import install_volume, mind_volume, work_volume
@@ -30,10 +31,12 @@ class Platform:
         return cls(stores, driver, extensions or Extensions(), Preparer(stores, driver))
 
     async def audit(self, principal: Principal, action: str, target: str, detail: dict[str, Any] | None = None) -> None:
-        """Record a change, and tell the extensions (spec §22.2)."""
-        record = await self.stores.audit.record(principal, action, target, detail)
-        await self.extensions.audit({"org_id": principal.org_id, "at": record.at.isoformat(), "key_id": record.key_id,
-                                     "action": action, "target": target, "detail": record.detail})
+        """Tell the extensions of a change, as it happens: who made it, what it was, and to which thing (spec
+        §22.2). `detail` says which fields changed, never what a secret was changed to. The core keeps no record
+        of changes: an edition that keeps an audit log keeps it from this."""
+        await self.extensions.audit({"org_id": principal.org_id, "at": datetime.now(UTC).isoformat(),
+                                     "key_id": principal.key_id, "action": action, "target": target,
+                                     "detail": dict(detail or {})})
 
     async def remove_session(self, org_id: str, session_id: str) -> None:
         """Delete a session: its turns, its snapshots and its volumes (spec §6.8)."""

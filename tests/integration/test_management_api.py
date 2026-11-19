@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 
 from harnessgateway import __version__, packaging
+from harnessgateway.extensions import Extensions
 from harnessgateway.store.egress import Connection
 from harnessgateway.stores import Stores
 from tests.helpers import SHELL, SHELL_MODEL, variant
-from tests.integration.api import Running, running
+from tests.integration.api import Running, Told, running
 from tests.integration.local_driver import LocalDriver
 
 DEEPSEEK = {"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"},
@@ -393,9 +394,7 @@ async def test_a_key_is_made_shown_once_listed_and_revoked(api: Running) -> None
     ("developer", "DELETE", "/v1/environments/default", False),
     ("developer", "GET", "/v1/keys", False),
     ("developer", "POST", "/v1/keys", False),
-    ("developer", "GET", "/v1/audit", False),
     ("developer", "GET", "/v1/organization", False),
-    ("admin", "GET", "/v1/audit", True),
     ("admin", "GET", "/v1/organization", True),
 ])
 async def test_each_role_may_do_what_the_specification_says_and_no_more(
@@ -498,31 +497,41 @@ async def test_usage_is_summed_by_what_is_asked(api: Running) -> None:
     assert (await api.developer.get("/v1/usage", params={"start": "yesterday"})).status_code == 400
 
 
-async def test_every_change_is_in_the_audit_record_without_any_secret(api: Running) -> None:
-    await api.admin.post("/v1/providers", json=DEEPSEEK)
-    await api.admin.patch("/v1/providers/deepseek", json={"api_key": "another-key"})
-    await api.admin.post("/v1/environments", json={"name": "e", "secrets": {"T": {"hosts": ["x.com"],
-                                                                                 "value": "the-secret"}}})
-    await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
-    made = (await api.admin.post("/v1/keys", json={"name": "ci", "role": "runner"})).json()
-    await api.admin.delete(f"/v1/keys/{made['id']}")
-    await api.admin.patch("/v1/organization", json={"retention_days": 30})
+async def test_every_change_is_told_to_the_extensions_without_any_secret(
+    stores: Stores, org: str, tmp_path: Path,
+) -> None:
+    """The core keeps no record of changes (spec §22.2): it tells its extensions of each one as it happens, and an
+    edition that keeps an audit log keeps it from that."""
+    told = Told()
+    async with running(stores, org, tmp_path, Extensions([told])) as api:
+        await api.admin.post("/v1/providers", json=DEEPSEEK)
+        await api.admin.patch("/v1/providers/deepseek", json={"api_key": "another-key"})
+        await api.admin.post("/v1/environments", json={"name": "e", "secrets": {"T": {"hosts": ["x.com"],
+                                                                                     "value": "the-secret"}}})
+        await api.developer.post("/v1/harnesses", json={"catalog": "shell"})
+        made = (await api.admin.post("/v1/keys", json={"name": "ci", "role": "runner"})).json()
+        await api.admin.delete(f"/v1/keys/{made['id']}")
+        await api.admin.patch("/v1/organization", json={"retention_days": 30})
 
-    audit = (await api.admin.get("/v1/audit", params={"limit": 100})).json()
-    records = audit["data"][::-1]                                  # oldest first
-    assert [(r["action"], r["target"]) for r in records] == [
+    changes = told.changes
+    assert [(change["action"], change["target"]) for change in changes] == [
         ("provider.create", "deepseek"), ("provider.update", "deepseek"), ("environment.create", "e"),
         ("harness.add", "shell"), ("key.create", made["id"]), ("key.revoke", made["id"]),
-        ("organization.update", api.org)]
-    assert records[1]["detail"] == {"fields": ["api_key"]}
-    assert records[3]["detail"]["source"] == "catalog:shell"
-    assert all(record["key_id"] for record in records)
+        ("organization.update", org)]
+    assert changes[1]["detail"] == {"fields": ["api_key"]}
+    assert changes[3]["detail"]["source"] == "catalog:shell"
+    assert all(change["org_id"] == org and change["key_id"] for change in changes)
+    times = [datetime.fromisoformat(change["at"]) for change in changes]
+    assert times == sorted(times)
+    assert all(at.tzinfo is not None for at in times)
     for secret in ("the-real-key", "another-key", "the-secret", made["key"]):
-        assert secret not in str(audit)
-    page = (await api.admin.get("/v1/audit", params={"limit": 2})).json()
-    assert (len(page["data"]), page["has_more"]) == (2, True)
-    older = (await api.admin.get("/v1/audit", params={"limit": 100, "after": page["last_id"]})).json()
-    assert len(older["data"]) == 5
+        assert secret not in str(changes)
+
+
+async def test_the_core_keeps_no_audit_log(api: Running) -> None:
+    await api.admin.post("/v1/providers", json=DEEPSEEK)
+    assert (await api.admin.get("/v1/audit")).status_code == 404
+    assert not hasattr(api.stores, "audit")
 
 
 async def test_the_platform_says_what_it_is_and_the_organization_keeps_its_retention(api: Running) -> None:

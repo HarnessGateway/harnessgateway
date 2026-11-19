@@ -7,7 +7,6 @@ from harnessgateway.domain.modelpath import ModelPath
 from harnessgateway.domain.resolve import Resolved, resolve
 from harnessgateway.domain.sealing import Sealer, keyed_hash
 from harnessgateway.settings import Settings
-from harnessgateway.store.audit import Audit
 from harnessgateway.store.blobs import BlobStore
 from harnessgateway.store.builds import Builds
 from harnessgateway.store.db import Database
@@ -40,7 +39,6 @@ class Stores:
     files: Files
     turns: Turns
     egress: Egress
-    audit: Audit
     platform: PlatformStore
 
     def image(self, environment: Environment) -> str:
@@ -64,7 +62,6 @@ class Stores:
             files=Files(db, blobs),
             turns=Turns(db),
             egress=Egress(db),
-            audit=Audit(db),
             platform=PlatformStore(db, sealer),
         )
 

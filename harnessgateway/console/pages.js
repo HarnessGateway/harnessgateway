@@ -1,8 +1,8 @@
 // The organization's console: what a developer does (harnesses, the chat and the playground, sessions, usage) and
-// what an admin does for the organization (providers, environments, keys, the audit log). Every call goes to the
+// what an admin does for the organization (providers, environments, keys). Every call goes to the
 // platform as the signed-in person; the platform refuses what the person may not do, so the pages only hide what
 // would be refused.
-import { BUILDER, actorOf, api, bytes, carried, date, duration, esc, fitting, list, loadCatalog, modelString, num, quiet, short, stream, when } from "/lib.js";
+import { BUILDER, api, bytes, carried, date, duration, esc, fitting, list, loadCatalog, modelString, num, quiet, short, stream, when } from "/lib.js";
 import { $, $$, card, confirm, fail, field, input, kv, modal, pill, reveal, select, stat, statusPill, table, rerender, then, toast } from "/views.js";
 import { session } from "/session.js";
 
@@ -16,8 +16,7 @@ export function nav(me) {
   const mods = [
     ...(developer ? [setup, workbench] : [workbench, setup]),
     ...(admin ? [{ mod: "Access", items: [{ id: "keys", label: "API keys", icon: "key" }] }] : []),
-    ...(developer ? [{ mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" },
-                                                     ...(admin ? [{ id: "audit", label: "Audit log", icon: "log" }] : [])] }] : [])];
+    ...(developer ? [{ mod: "Observability", items: [{ id: "sessions", label: "Sessions", icon: "sess" }, { id: "usage", label: "Usage", icon: "usage" }] }] : [])];
   for (const m of mods) for (const it of m.items) it.mod = m.mod;
   return mods;
 }
@@ -580,14 +579,4 @@ const usage = { title: "Usage", async render(el) {
   await show();
 } };
 
-// ── Audit log ─────────────────────────────────────────────────────────────────────────────────────────────────────
-const audit = { title: "Audit log", async render(el) {
-  const [rows, keyList] = await Promise.all([list("/v1/audit?limit=100"), quiet("/v1/keys")]);
-  const who = actorOf(keyList);
-  el.innerHTML = top("Audit log", "Every change of standing in this organization, newest first: keys, providers, environments, harnesses, sessions deleted. No secret is ever part of it.") +
-    `<div class="card">${table([{ h: "When", cell: r => date(r.at) }, { h: "Who", cell: r => esc(who(r.key_id)) }, { h: "Action", cell: r => mono(r.action) },
-      { h: "Target", cell: r => mono(r.target || "") },
-      { h: "Detail", cell: r => `<span class="mono small">${esc(Object.entries(r.detail || {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" "))}</span>` }], rows, "Nothing yet.")}</div>`;
-} };
-
-export const pages = { chat, sessions, playground, harnesses, drafts, providers, environments, keys, usage, audit };
+export const pages = { chat, sessions, playground, harnesses, drafts, providers, environments, keys, usage };

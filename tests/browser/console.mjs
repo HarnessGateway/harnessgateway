@@ -361,15 +361,13 @@ try {
     await page.waitForSelector("#st:has-text('completed')");
   });
 
-  await step("usage and the audit log show what happened", async () => {
+  await step("usage shows what happened, and the core's console has no audit log", async () => {
     await go("usage", "Usage");
     await page.waitForSelector("#out tr:has-text('shell')");
     const meters = await page.locator("#out th").evaluateAll((heads) => heads.slice(1).map((h) => h.textContent).join(", "));
     const wanted = "Turns, Tokens in, Tokens out, Sandbox time, CPU time, Peak memory, Network out, Network in, Storage";
     if (meters !== wanted) throw new Error(`usage is shown as: ${meters}`);
-    await go("audit", "Audit log");
-    await page.waitForSelector("#content tr:has-text('harness.add')");
-    await page.waitForSelector("#content tr:has-text('key.create')");
+    if (await page.locator("#nav .item:has-text('Audit log')").count()) throw new Error("the core's console lists an audit log");
   });
 
   await step("signing out asks for a key again", async () => {

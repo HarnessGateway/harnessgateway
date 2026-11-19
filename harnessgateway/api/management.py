@@ -430,7 +430,7 @@ def sessions_router(platform: Platform, role: Role) -> APIRouter:
     return router
 
 
-# ── keys, usage, audit, platform, organization ──────────────────────────────────────────────────────
+# ── keys, usage, platform, organization ─────────────────────────────────────────────────────────────
 
 def _key(key: Key) -> dict[str, Any]:
     return {"id": key.id, "name": key.name, "role": key.role, "created_at": _time(key.created_at),
@@ -481,16 +481,6 @@ def organization_router(platform: Platform, role: Role) -> APIRouter:
         rows = await stores.turns.usage(principal.org_id, start=since, end=until, group_by=group_by)
         return {"object": "list", "start": _time(since), "end": _time(until), "group_by": group_by, "data": rows,
                 "has_more": False, "last_id": None}
-
-    @router.get("/v1/audit")
-    async def audit(principal: Admin, limit: int = 20, after: int | None = None) -> Any:
-        if not 1 <= limit <= 100:
-            raise Invalid("limit is 1 to 100", param="limit")
-        found = await stores.audit.page(principal.org_id, after=after, limit=limit + 1)
-        shown = [{"id": r.id, "at": _time(r.at), "key_id": r.key_id, "action": r.action, "target": r.target,
-                  "detail": r.detail} for r in found[:limit]]
-        return {"object": "list", "data": shown, "has_more": len(found) > limit,
-                "last_id": shown[-1]["id"] if shown else None}
 
     @router.get("/v1/platform")
     async def about(principal: Anyone) -> Any:

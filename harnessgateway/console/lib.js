@@ -78,8 +78,3 @@ export function duration(s) {
   return `${num(s / 3600)} h`;
 }
 export const short = id => (id || "").length > 14 ? id.slice(0, 13) + "…" : id || "";
-/** Who made a change: a key by its name, or whoever an edition's sign-in says it was. */
-export function actorOf(keys = []) {
-  const byKey = Object.fromEntries(keys.map(k => [k.id, k.name]));
-  return id => !id ? "—" : byKey[id] ? `key · ${byKey[id]}` : id;
-}

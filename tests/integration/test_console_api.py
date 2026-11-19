@@ -11,9 +11,10 @@ import pytest
 
 from harnessgateway.api.views import sign_view
 from harnessgateway.domain.names import container_id
+from harnessgateway.extensions import Extensions
 from harnessgateway.stores import Stores
 from tests.helpers import SHELL_MODEL
-from tests.integration.api import Running, running
+from tests.integration.api import Running, Told, running
 
 
 @pytest.fixture
@@ -104,9 +105,17 @@ async def test_installing_a_draft_makes_it_a_harness_and_the_draft_is_done(api: 
     await api.admin.patch("/v1/environments/default", json={"harnesses": ["mine", "shell"]})
     answer = await api.openai.responses.create(model="default/mine/none/none", input="echo from the draft")
     assert answer.output_text == "from the draft\n"
-    audit = (await api.admin.get("/v1/audit")).json()["data"]
-    assert ("harness.add", "mine", "draft:mine") in [(a["action"], a["target"], a["detail"].get("source"))
-                                                    for a in audit]
+
+
+async def test_installing_a_draft_is_told_to_the_extensions_with_where_it_came_from(
+    stores: Stores, org: str, tmp_path: Path,
+) -> None:
+    told = Told()
+    async with running(stores, org, tmp_path, Extensions([told])) as api:
+        await api.developer.post("/v1/drafts", json={"name": "mine"})
+        assert (await api.developer.post("/v1/drafts/mine/install")).status_code == 200
+    assert ("harness.add", "mine", "draft:mine") in [
+        (change["action"], change["target"], change["detail"].get("source")) for change in told.changes]
 
 
 async def test_a_draft_that_is_not_a_valid_package_is_refused_and_kept(api: Running) -> None:

@@ -41,7 +41,9 @@ class Extension:
         """Called once a turn is final."""
 
     async def audit(self, record: dict[str, Any]) -> None:
-        """Called with each audit record, after it is stored."""
+        """Called with each change to a definition, a key or a secret, and each deleted session, as it happens:
+        `org_id`, `at`, `key_id`, `action`, `target` and `detail`, with no secret in any of them (spec §22.2).
+        The core keeps no record of them: an audit log is an edition's to keep, from these."""
 
     def routers(self, platform: Any) -> list[APIRouter]:
         """Routes added to the public API. `platform` is what the core's own routes are built from."""

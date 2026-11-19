@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.4.0
+
+This version changes the API: the audit log is no longer in the core.
+
+- The core keeps no audit log. `GET /v1/audit`, the console's Audit log page and the `audit` table are gone.
+  An audit log is the enterprise edition's: it keeps the record and serves it.
+- The core still tells its extensions of every change to a definition, a key or a secret, and of every deleted
+  session, as it happens (`audit(record)`: the organization, who, what, to which thing, which fields, when, and
+  never a secret). That is what an edition keeps its audit log from. Before, the record was stored first and
+  the extensions told after.
+
 ## 4.3.1
 
 - A new installation installs the harnesses its `default` environment carries from its first start. The
