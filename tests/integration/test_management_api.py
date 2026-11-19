@@ -528,10 +528,16 @@ async def test_every_change_is_told_to_the_extensions_without_any_secret(
         assert secret not in str(changes)
 
 
-async def test_the_core_keeps_no_audit_log(api: Running) -> None:
-    await api.admin.post("/v1/providers", json=DEEPSEEK)
-    assert (await api.admin.get("/v1/audit")).status_code == 404
-    assert not hasattr(api.stores, "audit")
+async def test_the_core_keeps_no_audit_log(stores: Stores, org: str, tmp_path: Path) -> None:
+    """The core by itself, whatever edition these tests are run with: it serves no audit log and its console
+    lists none. An edition may add both."""
+    import httpx
+
+    async with running(stores, org, tmp_path, Extensions()) as api, httpx.AsyncClient(base_url=api.url) as anyone:
+        await api.admin.post("/v1/providers", json=DEEPSEEK)
+        assert (await api.admin.get("/v1/audit")).status_code == 404
+        assert "audit" not in (await anyone.get("/pages.js")).text.lower()
+    assert not hasattr(stores, "audit")
 
 
 async def test_the_platform_says_what_it_is_and_the_organization_keeps_its_retention(api: Running) -> None:
