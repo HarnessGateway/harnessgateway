@@ -19,7 +19,8 @@ HARNESSES_MAX = 256
 
 class Network(Definition):
     """What a turn's sandbox may reach (spec §9.3). Nothing is reachable unless the mode allows it: `closed` is
-    the turn's provider only, `open` is any public host, and `limited` is what its three rules add to the provider."""
+    the turn's provider only, `open` is any public host, and `limited` is what its rules add to the provider.
+    Whatever a mode allows, a host on the deny list is refused."""
 
     mode: Literal["closed", "limited", "open"] = "limited"
     allow: Annotated[tuple[HostEntry, ...], entries("network.allow"), AS_WRITTEN] = ()
@@ -27,10 +28,11 @@ class Network(Definition):
     package_managers: bool = True
 
     @model_validator(mode="after")
-    def _lists_belong_to_limited(self) -> Self:
-        for name in ("allow", "deny"):
-            if self.mode != "limited" and getattr(self, name):
-                raise ValueError(f"network.{name} is a rule of mode limited; mode {self.mode} takes no list")
+    def _a_list_belongs_to_a_mode_it_changes(self) -> Self:
+        if self.allow and self.mode != "limited":
+            raise ValueError(f"network.allow is a rule of mode limited; mode {self.mode} takes no allow list")
+        if self.deny and self.mode == "closed":
+            raise ValueError("network.deny has nothing to refuse in mode closed, which reaches the provider only")
         return self
 
 

@@ -28,6 +28,7 @@ class Runner:
         self._heartbeat_s = heartbeat_s
         self._silent_for_s = silent_for_s
         self._active: dict[str, asyncio.Task[Turn]] = {}
+        self._freed = asyncio.Event()                          # a running turn ended: there is room for another
 
     async def recover(self) -> list[Turn]:
         """End every turn whose runner has gone silent, so its session can move on (spec §18.5). Their
@@ -41,17 +42,27 @@ class Runner:
         return ended
 
     async def run(self) -> None:
-        """Run turns until cancelled. On the way out, running turns are stopped, saved and ended."""
+        """Run turns until cancelled: whenever one is queued, one of its own ends, or a tick passes, it takes
+        what it has room for. On the way out, running turns are stopped, saved and ended."""
         beat = asyncio.create_task(self._beat())
+        hearing: asyncio.Task[str | None] | None = None
         try:
             async with self._stores.db.listen(CONTROL) as listener:
                 while True:
                     await self._fill()
-                    message = await listener.next(self._heartbeat_s)
-                    if message and message.startswith(CANCEL):
-                        self._turns.stop(message.removeprefix(CANCEL), "cancelled")
+                    hearing = hearing or asyncio.create_task(listener.next(self._heartbeat_s))
+                    freed = asyncio.create_task(self._freed.wait())
+                    await asyncio.wait({hearing, freed}, return_when=asyncio.FIRST_COMPLETED)
+                    freed.cancel()
+                    self._freed.clear()
+                    if hearing.done():                         # else it goes on listening while the room is filled
+                        message, hearing = hearing.result(), None
+                        if message and message.startswith(CANCEL):
+                            self._turns.stop(message.removeprefix(CANCEL), "cancelled")
         finally:
             beat.cancel()
+            if hearing is not None:
+                hearing.cancel()
             for turn_id in self._turns.running():
                 self._turns.stop(turn_id, "shutdown")
             await asyncio.gather(beat, *self._active.values(), return_exceptions=True)
@@ -65,6 +76,7 @@ class Runner:
             if turn is None:
                 return
             self._active[turn.id] = asyncio.create_task(self._run(turn))
+            self._active[turn.id].add_done_callback(lambda _: self._freed.set())
 
     async def _run(self, turn: Turn) -> Turn:
         final = await self._turns.run(turn)

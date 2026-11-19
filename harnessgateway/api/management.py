@@ -94,6 +94,12 @@ def providers_router(platform: Platform, role: Role) -> APIRouter:
 
 # ── environments ────────────────────────────────────────────────────────────────────────────────────
 
+async def _refused(stores: Stores, org_id: str, subject_id: str) -> list[str]:
+    """The hosts an install asked for and was refused: what its environment's `setup.egress` would have to name."""
+    return sorted({c.host if c.port == 443 else f"{c.host}:{c.port}"
+                   for c in await stores.egress.of(org_id, subject_id) if not c.allowed})
+
+
 async def environment_shown(stores: Stores, org_id: str, environment: Environment, prepared: Prepared | None, *,
                             logs: bool) -> dict[str, Any]:
     """An environment as the API shows it: its definition, with no secret value, and how far it is prepared (spec
@@ -115,7 +121,8 @@ async def environment_shown(stores: Stores, org_id: str, environment: Environmen
             "harness": name,
             "status": (install.status if install else "pending") if prepared.image_id else None,
             "updated_at": _time(install.updated_at) if install else None,
-            **({"log": install.log_tail if install else ""} if logs else {}),
+            **({"log": install.log_tail if install else "",
+                "refused": await _refused(stores, org_id, install.id) if install else []} if logs else {}),
         })
     return {**environment.dump(), "image_id": prepared.image_id, "build": build, "installs": installs}
 
@@ -412,6 +419,7 @@ def sessions_router(platform: Platform, role: Role) -> APIRouter:
             "digest": turn.digest, "image_id": turn.image_id, "api": turn.api, "handover": turn.handover,
             "snapshot_id": turn.snapshot_id, "command": turn.command, "log": turn.log_tail,
             "queued_for_s": (turn.started_at - turn.created_at).total_seconds() if turn.started_at else None,
+            "used": await turns.used(principal.org_id, turn.id),
             "steps": [{"name": name, "started_at": _time(start), "ended_at": _time(end)}
                       for name, start, end in steps if start is not None],
             "connections": [{"host": c.host, "port": c.port, "allowed": c.allowed, "reason": c.reason,

@@ -18,6 +18,14 @@ class Terminal:
 
 
 @dataclass(frozen=True)
+class Measured:
+    """What a sandbox used while it ran (spec §22.1), as its driver measured it."""
+
+    cpu_seconds: float                 # processor time, all processors added up
+    memory_peak_bytes: int             # the most memory it held at once
+
+
+@dataclass(frozen=True)
 class Observed:
     """Everything known about a turn once its steps are over."""
 
@@ -33,6 +41,7 @@ class Observed:
     save_failed: bool = False
     exit_code: int | None = None
     terminal: Terminal | None = None
+    measured: Measured | None = None                  # None: the sandbox did not run, or its driver cannot measure
 
 
 @dataclass(frozen=True)

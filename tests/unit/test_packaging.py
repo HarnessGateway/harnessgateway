@@ -98,7 +98,7 @@ def test_a_run_that_breaks_the_contract_fails_the_check(package: Path, run: str,
 def test_a_case_may_bring_a_handover_and_history(package: Path) -> None:
     case = package / "tests" / "handed-over"
     case.mkdir()
-    (case / "request.json").write_text(json.dumps({"model": "shell", "input": (
+    (case / "request.json").write_text(json.dumps({"model": "default/shell/none/none", "input": (
         'echo "$HG_HANDOVER"; cat "$HG_TURN/history.json"; echo; echo "[$HG_PROVIDER_API]"')}))
     (case / "handover.txt").write_text("Handover from pi. Review /mind/.pi.\n")
     (case / "history.json").write_text('[{"id": "resp_1"}]')
@@ -109,7 +109,7 @@ def test_a_case_may_bring_a_handover_and_history(package: Path) -> None:
 def test_a_case_with_a_recording_replays_it_in_place_of_the_cli(package: Path) -> None:
     case = package / "tests" / "replayed"
     case.mkdir()
-    (case / "request.json").write_text(json.dumps({"model": "shell", "input": "exit 9"}))
+    (case / "request.json").write_text(json.dumps({"model": "default/shell/none/none", "input": "exit 9"}))
     (case / "recording").write_text("a recorded line\nanother\n")
     result = next(case for case in packaging.check(package) if case.name == "replayed")
     assert result.terminal.kind == "done"
@@ -119,7 +119,7 @@ def test_a_case_with_a_recording_replays_it_in_place_of_the_cli(package: Path) -
 def test_a_folder_named_from_where_the_check_is_run_is_found(package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     case = package / "tests" / "replayed"
     case.mkdir()
-    (case / "request.json").write_text(json.dumps({"model": "shell", "input": "exit 9"}))
+    (case / "request.json").write_text(json.dumps({"model": "default/shell/none/none", "input": "exit 9"}))
     (case / "recording").write_text("a recorded line\n")
     monkeypatch.chdir(package.parent)
     result = next(case for case in packaging.check(Path(package.name)) if case.name == "replayed")
@@ -156,3 +156,24 @@ def test_the_command_line_tells_its_version(capsys: pytest.CaptureFixture[str]) 
     assert main(["version"]) == 0
     assert capsys.readouterr().out.strip() == __version__
     assert sys.argv                                                        # main never reads the real arguments
+
+
+def test_the_platform_s_own_wheel_is_laid_out_beside_the_kit_where_the_platform_has_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A package that checks packages (the builder) must check them as the platform running it does, so it is
+    # given that platform itself: the wheel the platform image carries, never a version of its own choosing.
+    package = read_archive(packaging.pack(SHELL))
+    packaging.lay_out(package, tmp_path / "without")
+    assert sorted(path.name for path in (tmp_path / "without" / "kit").iterdir()) == ["hgkit.py"]
+
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    (wheels / "harnessgateway-9.9.9-py3-none-any.whl").write_bytes(b"the platform, as a wheel")
+    (wheels / "notes.txt").write_text("not a wheel")
+    monkeypatch.setattr(packaging, "PLATFORM_WHEELS", wheels)
+    packaging.lay_out(package, tmp_path / "with")
+    kit = tmp_path / "with" / "kit"
+    assert sorted(path.name for path in kit.iterdir()) == ["harnessgateway-9.9.9-py3-none-any.whl", "hgkit.py"]
+    assert (kit / "harnessgateway-9.9.9-py3-none-any.whl").read_bytes() == b"the platform, as a wheel"
+

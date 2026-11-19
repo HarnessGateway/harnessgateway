@@ -99,12 +99,24 @@ def _terminal(kind: str, obj: dict[str, Any]) -> Terminal:
     return Terminal(kind="failed", code=code, message=message[:MESSAGE_MAX], usage=usage)
 
 
+def storable(value: Any) -> Any:
+    """The same value with no NUL character in any of its strings: each becomes U+FFFD. An agent that prints a
+    binary file prints them and JSON carries them, but the database holds neither text nor JSON with one."""
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, dict):
+        return {storable(key): storable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [storable(item) for item in value]
+    return value
+
+
 def read_line(text: str) -> Line:
     """What one printed line is; or a refusal that says why it is not allowed."""
     if len(text) > LINE_MAX:
         raise LineError(f"a line is at most {LINE_MAX >> 20} MiB")
     try:
-        obj = json.loads(text)
+        obj = storable(json.loads(text))
     except json.JSONDecodeError:
         raise LineError(f"not JSON: {text[:80]!r}") from None
     if not isinstance(obj, dict) or not isinstance(obj.get("type"), str):
@@ -123,12 +135,21 @@ def read_line(text: str) -> Line:
     return Line("event", event=obj)
 
 
+# An item's text arrives in pieces. The events that carry a piece, and where an item of each type keeps its text.
+_PIECES = frozenset({"response.output_text.delta", "response.reasoning_summary_text.delta"})
+_TEXT_PART: dict[str, tuple[str, dict[str, Any]]] = {
+    "message": ("content", {"type": "output_text", "annotations": []}),
+    "reasoning": ("summary", {"type": "summary_text"}),
+}
+
+
 class OutputEvents:
     """One turn's output events: numbered in order, validated, and gathered into the response's output."""
 
     def __init__(self, first_sequence_number: int) -> None:
         self.next_sequence_number = first_sequence_number
         self._done: list[tuple[int, dict[str, Any]]] = []
+        self._begun: dict[str, tuple[int, dict[str, Any], list[str]]] = {}   # by id: place, item, pieces
 
     def accept(self, event: dict[str, Any]) -> dict[str, Any]:
         """The event with its sequence number, if the OpenAI SDK's type for it accepts it."""
@@ -140,13 +161,28 @@ class OutputEvents:
         except ValidationError as e:
             raise LineError(f"{event['type']}: {describe(e)}") from None
         self.next_sequence_number += 1
-        if event["type"] == "response.output_item.done":
-            self._done.append((event["output_index"], event["item"]))
+        self._gather(event)
         return numbered
 
+    def _gather(self, event: dict[str, Any]) -> None:
+        kind = event["type"]
+        if kind == "response.output_item.added":
+            self._begun[event["item"]["id"]] = (event["output_index"], event["item"], [])
+        elif kind == "response.output_item.done":
+            self._begun.pop(event["item"]["id"], None)
+            self._done.append((event["output_index"], event["item"]))
+        elif kind in _PIECES and event["item_id"] in self._begun:
+            self._begun[event["item_id"]][2].append(event["delta"])
+
     def output(self) -> list[dict[str, Any]]:
-        """The finished items, in the order of their place in the output."""
-        return [item for _, item in sorted(self._done, key=lambda pair: pair[0])]
+        """The finished items, in the order of their place in the output. Text that was cut short (the run was
+        stopped or killed while printing it) is there too, as an item that is incomplete."""
+        cut_short = []
+        for index, item, pieces in self._begun.values():
+            if pieces and item["type"] in _TEXT_PART:
+                parts, part = _TEXT_PART[item["type"]]
+                cut_short.append((index, {**item, "status": "incomplete", parts: [{**part, "text": "".join(pieces)}]}))
+        return [item for _, item in sorted([*self._done, *cut_short], key=lambda pair: pair[0])]
 
 
 class RunOutput:

@@ -212,7 +212,7 @@ try {
     const asked = await dialog().locator("input, select").evaluateAll((fields) => fields.map((f) => f.name).join(", "));
     if (asked !== "name, shape, base_url, api_key") throw new Error(`the provider form asks for: ${asked}`);
     const shapes = await dialog().locator("[name=shape] option").evaluateAll((options) => options.map((o) => o.value).join(", "));
-    if (shapes !== "anthropic, openai-responses, openai-chat") throw new Error(`the API shapes offered are: ${shapes}`);
+    if (shapes !== "anthropic, openai-responses, openai-chat, gemini") throw new Error(`the API shapes offered are: ${shapes}`);
     if ((await baseUrl()) !== "https://api.anthropic.com") throw new Error(`anthropic's base URL is not filled in: ${await baseUrl()}`);
     await dialog().locator("[name=shape]").selectOption("openai-chat");
     if ((await baseUrl()) !== "https://api.openai.com/v1") throw new Error(`the base URL did not follow the shape: ${await baseUrl()}`);
@@ -249,16 +249,17 @@ try {
       `${group.querySelector("h3").textContent}: ${[...new Set([...group.querySelectorAll("[name]")].map((f) => f.name))].join(" ")}`));
     const wanted = ["General: name image", "Setup: script setup_egress setup_timeout_s", "Harnesses: harness",
                     "Resources: cpus memory_mb pids disk_mb tmp_mb turn_timeout_s",
-                    "Network access: mode allow deny package_managers", "Variables and secrets: variables"];
+                    "Network access: mode allow package_managers deny", "Variables and secrets: variables"];
     if (groups.join(" | ") !== wanted.join(" | ")) throw new Error(`the environment form is grouped as: ${groups.join(" | ")}`);
     if (!(await dialog().locator(".group:has-text('Variables and secrets') #secret").count())) throw new Error("secrets are not with the variables");
     const modes = await mode().locator("option").evaluateAll((options) => options.map((o) => o.value).join(", "));
     if (modes !== "closed, limited, open") throw new Error(`the network modes offered are: ${modes}`);
     if ((await mode().inputValue()) !== "limited" || !(await rules().isVisible())) throw new Error("a new environment does not start limited, with its rules shown");
     if (!(await dialog().locator("[name=package_managers]").isChecked())) throw new Error("a new environment does not allow package managers");
-    for (const other of ["closed", "open"]) {
+    for (const [other, denies] of [["closed", false], ["open", true]]) {     // open may still refuse named hosts
       await mode().selectOption(other);
       if (await rules().isVisible()) throw new Error(`a ${other} network is offered an allow list`);
+      if ((await dialog().locator("[name=deny]").isVisible()) !== denies) throw new Error(`a ${other} network ${denies ? "is not" : "is"} offered a deny list`);
     }
     await mode().selectOption("limited");
     await dialog().locator("[name=name]").fill(name);
@@ -363,6 +364,9 @@ try {
   await step("usage and the audit log show what happened", async () => {
     await go("usage", "Usage");
     await page.waitForSelector("#out tr:has-text('shell')");
+    const meters = await page.locator("#out th").evaluateAll((heads) => heads.slice(1).map((h) => h.textContent).join(", "));
+    const wanted = "Turns, Tokens in, Tokens out, Sandbox time, CPU time, Peak memory, Network out, Network in, Storage";
+    if (meters !== wanted) throw new Error(`usage is shown as: ${meters}`);
     await go("audit", "Audit log");
     await page.waitForSelector("#content tr:has-text('harness.add')");
     await page.waitForSelector("#content tr:has-text('key.create')");

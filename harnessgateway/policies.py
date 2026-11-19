@@ -24,12 +24,12 @@ class Policies:
         install = await stores.harnesses.install_of_proxy_token(subject_id, token_hash)
         if install is None:
             return None
-        org_id, environment_name, manifest = install
+        org_id, environment_name = install
         try:
             environment = await stores.environments.get(org_id, environment_name)
         except Refused:
             return None
-        return Policy(org_id, subject_id, environment.name, install_policy(environment, manifest))
+        return Policy(org_id, subject_id, environment.name, install_policy(environment))
 
     async def _of_build(self, build_id: str, org_id: str, environment_name: str,
                         placeholders: dict[str, str]) -> Policy | None:

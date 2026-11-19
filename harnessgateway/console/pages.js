@@ -232,21 +232,24 @@ const harness = { title: "Harness", async render(el, params, me) {
   if (tab === "files") {
     body.innerHTML = `<div class="ribbon">The package as added. <b>Edit</b> opens it as a draft; installing the draft upgrades it in place.</div>` +
       `<div class="editor"><div class="tree" id="tree">${tree(files, files[0]?.path)}</div><div><div class="ribbon" id="fname"></div><pre id="view" class="code">…</pre></div></div>`;
+    let asked;                                   // the file asked for last: an answer for an earlier one is dropped
     const show = async file => {
-      $("#tree", el).innerHTML = tree(files, file);
+      asked = file;
       const f = files.find(x => x.path === file);
-      $("#fname", el).innerHTML = fileLine(f);
       const r = await api("GET", `${at}/files/${filePath(file)}`, undefined, { raw: true });
-      $("#view", el).textContent = isText(r) ? await r.text() : `(binary, ${bytes(f.bytes)})`;
+      const content = isText(r) ? await r.text() : `(binary, ${bytes(f.bytes)})`;
+      if (asked !== file) return;
+      $("#tree", el).innerHTML = tree(files, file);
+      $("#fname", el).innerHTML = fileLine(f);
+      $("#view", el).textContent = content;
     };
     if (files.length) show(files.find(f => f.path === "harness.json")?.path || files[0].path);
     body.addEventListener("click", e => { const f = e.target.closest("[data-file]"); if (f) show(f.dataset.file); });
   } else if (tab === "manifest") {
-    const hosts = entries => (entries || []).map(mono).join(", ") || "—";
     body.innerHTML = `<div class="grid two"><div>` + card("Package", kv([["Version", esc(h.version)], ["Digest", mono(short(h.digest))],
       ["Provider APIs", m.apis.length ? m.apis.map(a => pill(a, "b")).join(" ") : "none (it calls no model: name it with none/none)"],
       ["Its own folder", m.mind ? mono(`$HOME/${m.mind}`) : "—"],
-      ["Run reaches", hosts(m.run?.egress)], ["Install reaches", hosts(m.install?.egress)],
+      ["Reaches", "its provider, and what each environment that carries it allows: a package adds no host"],
       ["Install may take", `${esc(m.install?.timeout_s)} s`], ["Added", date(h.added_at)]])) + `</div><div>` +
       card("harness.json", `<pre>${esc(JSON.stringify(m, null, 2))}</pre>`) + `</div></div>`;
   } else if (tab === "config") {
@@ -255,7 +258,7 @@ const harness = { title: "Harness", async render(el, params, me) {
       card("Settings", settings.length ? `<form id="settings">${settings.map(([k, s]) => field(k + (s.required ? " *" : ""), input(k, h.settings[k] ?? "", `placeholder="${esc(s.default ?? "")}"${off}`), s.description)).join("")}<button class="btn"${off}>Save settings</button></form>` : `<div class="empty">This package declares no settings.</div>`) +
       `</div><div>` + card("Secrets", secrets.length ? `<form id="secrets">${secrets.map(([k, s]) => field(`${k}${s.required ? " *" : ""}`,
         `<div class="row">${h.secrets_set.includes(k) ? pill("set", "ok") : pill("not set", "warn")}${input(k, "", `type="password" autocomplete="off" placeholder="leave empty to keep"${admin ? "" : " disabled"}`)}<button type="button" class="btn2 danger" data-clear="${k}"${h.secrets_set.includes(k) && admin ? "" : " disabled"}>Clear</button></div>`,
-        `${s.description || ""} · put into requests to ${s.hosts.join(", ")}`)).join("")}<button class="btn"${admin ? "" : " disabled"}>Save secrets</button><p class="muted small">Values are sealed: they are never shown again and never enter a sandbox.${admin ? "" : " An admin sets them."}</p></form>` : `<div class="empty">This package declares no secrets.</div>`) + `</div></div>`;
+        `${s.description || ""} · put into requests to ${s.hosts.join(", ")}, where the environment allows that host`)).join("")}<button class="btn"${admin ? "" : " disabled"}>Save secrets</button><p class="muted small">Values are sealed: they are never shown again and never enter a sandbox.${admin ? "" : " An admin sets them."}</p></form>` : `<div class="empty">This package declares no secrets.</div>`) + `</div></div>`;
     $("#settings", el)?.addEventListener("submit", async e => {
       e.preventDefault();
       const d = Object.fromEntries(new FormData(e.target)); for (const k in d) if (d[k] === "") d[k] = null;
@@ -292,7 +295,7 @@ const drafts = { title: "Draft", async render(el, params) {
   if (!name) { location.hash = "#/harnesses"; return; }
   const at = `/v1/drafts/${path(name)}`;
   let doc = await api("GET", at);
-  let open = null, dirty = false;
+  let open = null, asked = null, dirty = false;      // the file shown, and the one asked for last
   el.innerHTML = `<p><a href="#/harnesses">← Harnesses</a></p>` + top(name, doc.based_on ? `Draft · from ${doc.based_on}` : "Draft",
     `<button class="btn2" id="add">Add file</button><button class="btn2" id="del" disabled>Delete file</button><button class="btn2" id="save" disabled>Save</button><button class="btn2 danger" id="discard">Discard</button><button class="btn" id="install">Install</button>`) +
     `<div class="note">Edit the files here; <b>Install</b> packs the draft, adds it as a harness and removes the draft. harness.json's <span class="mono">name</span> is the harness's name, and a harness of that name is upgraded in the environments that carry it; <b>Edit</b> on the harness brings it back here. Then tick it in an environment and try it: pick it in the chat, or send a request over the API, and watch the session under Observability.</div>` +
@@ -300,14 +303,18 @@ const drafts = { title: "Draft", async render(el, params) {
   const ed = $("#ed", el), saveBtn = $("#save", el), delBtn = $("#del", el);
   const drawTree = () => { $("#tree", el).innerHTML = tree(doc.files, open); };
   const reload = async () => { doc = await api("GET", at); drawTree(); };
+  // A file is shown as open once its content is here, and only if no other file was asked for meanwhile:
+  // until then the editor takes no typing, so nothing is written over what is about to arrive.
   const show = async file => {
     if (dirty && !window.confirm("Discard the unsaved changes?")) return;
-    open = file; dirty = false; drawTree();
-    $("#fname", el).innerHTML = fileLine(doc.files.find(x => x.path === file));
+    asked = file; dirty = false; ed.disabled = true; saveBtn.disabled = true;
     const r = await api("GET", `${at}/files/${filePath(file)}`, undefined, { raw: true });
-    const text = isText(r);
-    ed.value = text ? await r.text() : ""; ed.disabled = !text; ed.placeholder = text ? "" : "(binary file)";
-    saveBtn.disabled = true; delBtn.disabled = false;
+    const text = isText(r), content = text ? await r.text() : "";
+    if (asked !== file) return;
+    open = file; drawTree();
+    $("#fname", el).innerHTML = fileLine(doc.files.find(x => x.path === file));
+    ed.value = content; ed.disabled = !text; ed.placeholder = text ? "" : "(binary file)";
+    delBtn.disabled = false;
   };
   const write = (file, text) => api("PUT", `${at}/files/${filePath(file)}`, new Blob([text]));
   const save = async () => {
@@ -324,7 +331,7 @@ const drafts = { title: "Draft", async render(el, params) {
   delBtn.addEventListener("click", async () => {
     if (open && await confirm("Delete file", `Delete ${open} from the draft?`)) {
       await api("DELETE", `${at}/files/${filePath(open)}`);
-      open = null; dirty = false; ed.value = ""; ed.disabled = true; delBtn.disabled = true; saveBtn.disabled = true; $("#fname", el).textContent = "Pick a file";
+      open = asked = null; dirty = false; ed.value = ""; ed.disabled = true; delBtn.disabled = true; saveBtn.disabled = true; $("#fname", el).textContent = "Pick a file";
       await reload();
     }
   });
@@ -345,7 +352,8 @@ const drafts = { title: "Draft", async render(el, params) {
 // A provider is set up as one API shape at one base URL: the API its endpoint speaks (§10.1).
 const SHAPES = [{ id: "anthropic", label: "anthropic (Messages)", url: "https://api.anthropic.com" },
                 { id: "openai-responses", label: "openai (Responses)", url: "https://api.openai.com/v1" },
-                { id: "openai-chat", label: "openai (Chat Completions)", url: "https://api.openai.com/v1" }];
+                { id: "openai-chat", label: "openai (Chat Completions)", url: "https://api.openai.com/v1" },
+                { id: "gemini", label: "gemini (Gemini API)", url: "https://generativelanguage.googleapis.com" }];
 const providers = { title: "Providers", async render(el, params, me) {
   const rows = await list("/v1/providers?limit=100"), admin = me.role === "admin";
   el.innerHTML = top("Providers", "The organization's model endpoints and their keys. A provider is an API shape, a base URL, a key and the models it offers; a request names it, and the model, in model (environment/harness/provider/model). A key is sealed here and put into requests by the egress proxy, toward the provider's host only; a sandbox never holds it." + (admin ? "" : " An admin adds them."),
@@ -405,13 +413,14 @@ const environments = { title: "Environments", async render(el, params, me) {
       { h: "Setup", cell: buildPill },
       { h: "Harnesses", cell: e => e.harnesses.length ? e.installs.map(i => `${esc(i.harness)}${i.status && i.status !== "ready" ? ` ${statusPill(i.status)}` : ""}`).join(", ") : `<span class="muted">none</span>` },
       { h: "Limits", cell: e => `${num(e.cpus)} CPU · ${num(e.memory_mb)} MB · ${num(e.disk_mb)} MB disk · ${duration(e.turn_timeout_s)} a turn` },
-      { h: "Network", cell: e => pill(...NETWORK[e.network.mode]) + (e.network.mode === "limited" ? ` <span class="muted small">${e.network.allow.length} allowed${e.network.package_managers ? " + package managers" : ""}` +
-        `${e.network.deny.length ? ` · ${e.network.deny.length} denied` : ""}</span>` : "") },
+      { h: "Network", cell: e => pill(...NETWORK[e.network.mode]) + ` <span class="muted small">` + [
+        ...(e.network.mode === "limited" ? [`${e.network.allow.length} allowed${e.network.package_managers ? " + package managers" : ""}`] : []),
+        ...(e.network.deny.length ? [`${e.network.deny.length} denied`] : [])].join(" · ") + `</span>` },
       { h: "Variables and secrets", cell: e => `${Object.keys(e.variables).length} variable${Object.keys(e.variables).length === 1 ? "" : "s"} · ${Object.keys(e.secrets).length} secret${Object.keys(e.secrets).length === 1 ? "" : "s"}` },
       ...(admin ? [{ h: "", cls: "acts", cell: e => `<button class="btn2" data-edit="${esc(e.name)}">Edit</button><button class="btn2 danger" data-del="${esc(e.name)}">Delete</button>` }] : [])],
       rows, "No environment yet. A request names one, so nothing runs until there is one.")}</div>` +
     `<div class="grid two" style="margin-top:14px">` + card("Network entries", `<div class="kv"><div>${mono("host")}</div><div>that host, port 443</div><div>${mono("*.domain")}</div><div>any subdomain, never the domain itself</div><div>${mono("host:8443")}</div><div>another port</div></div>` +
-      `<p class="muted small" style="margin-top:10px">Nothing is reachable unless the network's mode allows it. <b>Closed</b>: the turn's provider only. <b>Limited</b>: the provider, what the harness package declares, the hosts its secrets are bound to, the entries allowed here and, when ticked, the package managers; a denied entry wins over all of them. <b>Open</b>: any public host. Whatever the mode, a sandbox reaches the internet only through the egress proxy; the setup script and harness installs always reach the package managers.</p>`) +
+      `<p class="muted small" style="margin-top:10px">Nothing is reachable unless the network's mode allows it. <b>Closed</b>: the turn's provider only. <b>Limited</b>: the provider, the entries allowed here, the hosts this environment's secrets are bound to and, when ticked, the package managers; a denied entry wins over all of them. <b>Open</b>: any public host. A harness package adds nothing to this: a host its CLI needs is reached only where it is allowed here. Whatever the mode, a sandbox reaches the internet only through the egress proxy; the setup script and harness installs reach the package managers and what Setup names.</p>`) +
     card("Setup and secrets", `<p class="muted small">The setup script runs once, as root, on the image, before any harness is installed: install system packages, tools and certificates there. What it leaves is the image every turn of the environment starts from; it runs again only when the script or the image changes. A secret is a variable whose value never enters the sandbox, nor the setup: it holds a placeholder, and the egress proxy puts the real value into requests to the hosts the secret is bound to.</p>`) + `</div>`;
   $("#add", el)?.addEventListener("click", () => environmentDialog(null, carried));
   el.addEventListener("click", async e => {
@@ -438,7 +447,8 @@ const environment = { title: "Environment", async render(el, params, me) {
     `</div><div>` + card("Setup script", e.setup.script ? `<pre class="code" style="min-height:0;max-height:320px">${esc(e.setup.script)}</pre>` +
       `<p class="muted small">Reaches the package managers${e.setup.egress.length ? `, ${e.setup.egress.map(mono).join(", ")}` : ""} and the hosts of the environment's secrets · may take ${duration(e.setup.timeout_s)}</p>` : `<div class="empty">No setup script: turns run on the base image as it is.</div>`) + `</div></div>` +
     `<h2>Harnesses</h2><div class="card">${table([{ h: "Harness", cell: i => `<a href="#/harnesses/${path(i.harness)}">${esc(i.harness)}</a>` },
-      { h: "Install", cell: i => i.status ? statusPill(i.status) : `<span class="muted">waiting for the image</span>` },
+      { h: "Install", cell: i => (i.status ? statusPill(i.status) : `<span class="muted">waiting for the image</span>`) +
+        (i.refused && i.refused.length ? `<div class="small bad" style="margin-top:4px">refused: ${i.refused.map(mono).join(", ")}. An install reaches the package managers and what Setup names: add these under <b>Edit</b>, "Setup and installs may also reach".</div>` : "") },
       { h: "Updated", cell: i => when(i.updated_at) }, { h: "Log", cell: i => logOf(i.log) },
       { h: "Model string", cell: i => { const h = carried.find(x => x.name === i.harness); return mono(`${name}/${i.harness}/${h && !h.manifest.apis.length ? "none/none" : "<provider>/<model>"}`); } }],
       e.installs, "This environment carries no harness, so no request can name it yet." + (admin ? " Tick some under Edit." : ""))}</div>`;
@@ -467,8 +477,8 @@ function environmentDialog(e, harnessList) {
       field("Name", input("name", c.name, `${e ? "readonly" : ""} pattern="[a-z0-9][a-z0-9\\-]*" required placeholder="gpu"`), "requests name it first in model: gpu/claude-code/anthropic/claude-opus-5-5") +
       field("Image", input("image", c.image || "", 'placeholder="the platform\'s sandbox image"'), "any Linux image; empty: the platform's sandbox image, which moves with each version") + `</div>`) +
     group("Setup", "A shell script run once, as root, on the image before any harness is installed; what it leaves is the image every turn starts from. It runs again when the script or the image changes.",
-      field("Script", `<textarea name="script" spellcheck="false" style="min-height:110px;font-family:var(--mono)" placeholder="apt-get update &amp;&amp; apt-get install -y --no-install-recommends ffmpeg">${esc(c.setup.script)}</textarea>`, "run with set -e: the first command that fails stops it, and the environment's turns fail until it succeeds") +
-      `<div class="grid two">` + field("It may also reach", `<textarea name="setup_egress" style="min-height:50px" placeholder="downloads.example.com">${esc(c.setup.egress.join("\n"))}</textarea>`, "one entry a line, besides the package managers and the hosts of the secrets") +
+      field("Script", `<textarea name="script" spellcheck="false" style="min-height:110px;font-family:var(--mono)" placeholder="pip install pandas matplotlib">${esc(c.setup.script)}</textarea>`, "run with set -e: the first command that fails stops it, and the environment's turns fail until it succeeds. The platform's sandbox image has pip and npm and no system package manager: for apt-get, name an image that has it") +
+      `<div class="grid two">` + field("Setup and installs may also reach", `<textarea name="setup_egress" style="min-height:50px" placeholder="downloads.example.com">${esc(c.setup.egress.join("\n"))}</textarea>`, "one entry a line, besides the package managers: where the script, and the installs of the harnesses ticked below, download from") +
       field("It may take (s)", input("setup_timeout_s", c.setup.timeout_s, 'type="number" min="1" max="3600" required')) + `</div>`) +
     group("Harnesses", "The harnesses this environment carries: each is installed on its image, and a request may name it here. A harness it does not carry is refused.", checks) +
     group("Resources", "What one sandbox may use.", `<div class="grid three">` +
@@ -477,10 +487,10 @@ function environmentDialog(e, harnessList) {
       field("Disk (MB)", input("disk_mb", c.disk_mb, 'type="number" min="64" required'), "the session's saved files") + field("/tmp (MB)", input("tmp_mb", c.tmp_mb, 'type="number" min="64" required'), "counts against memory") +
       field("A turn may take (s)", input("turn_timeout_s", c.turn_timeout_s, 'type="number" min="1" required')) + `</div>`) +
     group("Network access", "What a sandbox may reach. Nothing is reachable unless the mode allows it.",
-      field("Mode", select("mode", [["closed", "Closed: the turn's provider only"], ["limited", "Limited: the provider, and what is allowed below"], ["open", "Open: any public host"]], c.network.mode)) +
-      `<div id="limited" class="inset"><div class="grid two">` + field("Allowed", `<textarea name="allow" style="min-height:70px" placeholder="api.github.com&#10;*.example.com">${esc((c.network.allow || []).join("\n"))}</textarea>`, "one entry a line") +
-      field("Denied", `<textarea name="deny" style="min-height:70px" placeholder="bad.example.com">${esc((c.network.deny || []).join("\n"))}</textarea>`, "one entry a line; wins over everything allowed, setup included") + `</div>` +
-      `<div class="field"><label class="check"><input type="checkbox" name="package_managers"${c.network.package_managers ? " checked" : ""}> Allow package managers</label><div class="help">npm, PyPI, GitHub, apt and the like</div></div></div>`) +
+      field("Mode", select("mode", [["closed", "Closed: the turn's provider only"], ["limited", "Limited: the provider, and what is allowed below"], ["open", "Open: any public host not denied below"]], c.network.mode)) +
+      `<div id="limited" class="inset">` + field("Allowed", `<textarea name="allow" style="min-height:70px" placeholder="api.github.com&#10;*.example.com">${esc((c.network.allow || []).join("\n"))}</textarea>`, "one entry a line") +
+      `<div class="field"><label class="check"><input type="checkbox" name="package_managers"${c.network.package_managers ? " checked" : ""}> Allow package managers</label><div class="help">npm, PyPI, GitHub, apt and the like</div></div></div>` +
+      `<div id="denied">` + field("Denied", `<textarea name="deny" style="min-height:70px" placeholder="bad.example.com">${esc((c.network.deny || []).join("\n"))}</textarea>`, "one entry a line; refused whatever else allows it, setup included") + `</div>`) +
     group("Variables and secrets", "What the agent is given. A variable is visible inside the sandbox; a secret's value never enters it.",
       field("Variables", `<textarea name="variables" style="min-height:70px" placeholder="NAME=value">${esc(Object.entries(c.variables).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`, "one NAME=value a line") +
       `<div class="field"><label>Secrets</label><div id="secrets">${Object.entries(c.secrets).map(([k, s]) => secretRow(k, s)).join("")}</div>` +
@@ -500,7 +510,8 @@ function environmentDialog(e, harnessList) {
                                ...($("[data-s=value]", row).value ? { value: $("[data-s=value]", row).value } : {}) };
       }
       const doc = { cpus: +d.cpus, memory_mb: +d.memory_mb, pids: +d.pids, tmp_mb: +d.tmp_mb, disk_mb: +d.disk_mb, turn_timeout_s: +d.turn_timeout_s,
-                    network: d.mode === "limited" ? { mode: d.mode, allow: lines(d.allow), deny: lines(d.deny), package_managers: !!d.package_managers } : { mode: d.mode },
+                    network: { mode: d.mode, ...(d.mode === "limited" ? { allow: lines(d.allow), package_managers: !!d.package_managers } : {}),
+                               ...(d.mode === "closed" ? {} : { deny: lines(d.deny) }) },
                     variables, secrets, image: d.image.trim() || null,
                     setup: { script: d.script, egress: lines(d.setup_egress), timeout_s: +d.setup_timeout_s },
                     harnesses: $$("[name=harness]:checked", form).map(x => x.value) };
@@ -510,7 +521,10 @@ function environmentDialog(e, harnessList) {
       if (location.hash === to) rerender(); else location.hash = to;
     } });
   const form = $(".backdrop form"), mode = $("[name=mode]", form);
-  const rules = () => { $("#limited", form).hidden = mode.value !== "limited"; };      // the rules are limited's
+  const rules = () => {                         // what is allowed is limited's to say; closed has nothing to deny
+    $("#limited", form).hidden = mode.value !== "limited";
+    $("#denied", form).hidden = mode.value === "closed";
+  };
   mode.addEventListener("change", rules); rules();
   form.addEventListener("click", ev => {
     if (ev.target.id === "secret") $("#secrets", form).insertAdjacentHTML("beforeend", secretRow());
@@ -544,19 +558,22 @@ const keys = { title: "API keys", async render(el) {
 } };
 
 // ── Usage ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-const METERS = [["turns", "Turns", num], ["input_tokens", "Tokens in", num], ["output_tokens", "Tokens out", num], ["sandbox_seconds", "Sandbox time", duration],
-                ["network", "Network", bytes], ["snapshot_bytes", "Saved", bytes]];
+// What is shown of usage: the field, its name, how it reads, and how rows combine (added up, unless said otherwise).
+const METERS = [["turns", "Turns", num], ["input_tokens", "Tokens in", num], ["output_tokens", "Tokens out", num],
+                ["sandbox_seconds", "Sandbox time", duration], ["cpu_seconds", "CPU time", duration],
+                ["memory_peak_bytes", "Peak memory", bytes, Math.max], ["bytes_up", "Network out", bytes],
+                ["bytes_down", "Network in", bytes], ["snapshot_bytes", "Storage", bytes]];
 const usage = { title: "Usage", async render(el) {
   const now = new Date(), first = new Date(now.getFullYear(), now.getMonth(), 1);
   const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  el.innerHTML = top("Usage", "What this organization's turns used: the tokens their harnesses reported, the time their sandboxes ran, the bytes through the egress proxy, and what their snapshots hold.") +
+  el.innerHTML = top("Usage", "What this organization's turns used: the tokens their harnesses reported; the time their sandboxes ran, the processor time and the most memory they took; the bytes sent and received through the egress proxy; and what their snapshots hold.") +
     `<form class="row card" id="f" style="margin-bottom:14px">${field("From", input("start", iso(first), 'type="date"'))}${field("To", input("end", iso(now), 'type="date"'))}${field("Group by", select("group_by", ["harness", "provider", "model", "environment", "day"]))}<button class="btn">Show</button></form><div id="out"></div>`;
   const show = async () => {
     const f = $("#f", el), start = new Date(`${f.start.value}T00:00:00`), end = new Date(new Date(`${f.end.value}T00:00:00`).getTime() + 86400000);
     const u = await api("GET", `/v1/usage?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}&group_by=${f.group_by.value}`);
-    const rows = u.data.map(r => ({ ...r, network: (r.bytes_up || 0) + (r.bytes_down || 0) })), totals = {};
-    for (const r of rows) for (const [k] of METERS) totals[k] = (totals[k] || 0) + (r[k] || 0);
-    $("#out", el).innerHTML = `<div class="grid" style="grid-template-columns:repeat(6,1fr)">${METERS.map(([k, label, show]) => stat(label, show(totals[k] || 0))).join("")}</div>` +
+    const rows = u.data, totals = {};
+    for (const r of rows) for (const [k, , , combine = (a, b) => a + b] of METERS) totals[k] = combine(totals[k] || 0, r[k] || 0);
+    $("#out", el).innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">${METERS.map(([k, label, show]) => stat(label, show(totals[k] || 0))).join("")}</div>` +
       `<div class="card">${table([{ h: f.group_by.value, cell: r => mono(r.group ?? "—") }, ...METERS.map(([k, label, show]) => ({ h: label, cell: r => show(r[k] || 0) }))], rows, "No usage in this range.")}</div>`;
   };
   $("#f", el).addEventListener("submit", e => { e.preventDefault(); show().catch(fail); });

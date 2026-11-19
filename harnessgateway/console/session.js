@@ -1,7 +1,7 @@
 // One session: its responses as a conversation trace (live while a turn runs), what the platform measured about each
 // turn, and the session's files beside it (the chat's file panel, embedded). Everything here is read from the API:
 // the session's turns, each one's response, input items and event stream, and each turn's trace.
-import { BUILDER, api, bytes, esc, seconds, short, stream, when } from "/lib.js";
+import { BUILDER, api, bytes, duration, esc, seconds, short, stream, when } from "/lib.js";
 import { $, confirm, fail, field, input, modal, pre, statusPill, toast } from "/views.js";
 import { ensureView, wsUrl } from "/chat/backend.js";
 import { markdown } from "/chat/markdown.js";
@@ -148,6 +148,7 @@ function renderFooter(turn) {
   if (trace) {
     const c = trace.connections || [], denied = c.filter(x => !x.allowed).length;
     if (c.length) cell("network", `${c.length - denied} allowed · ${bytes(c.reduce((n, x) => n + x.bytes_up + x.bytes_down, 0))}${denied ? ` · <span class="bad">${denied} refused</span>` : ""}`);
+    if (trace.used && trace.used.cpu_seconds) cell("used", `${esc(duration(trace.used.cpu_seconds))} CPU · ${bytes(trace.used.memory_peak_bytes)} peak`);
     if (trace.code) cell("code", `<span class="mono">${esc(trace.code)}</span>`);
   }
   return cells.join("") + `<a href="#" data-raw="${esc(r.id)}" style="margin-left:auto">Trace</a>`;
@@ -161,8 +162,12 @@ function renderTrace(turn) {
   const steps = (t.steps || []).map(s => `<div>${esc(s.name)}</div><div>${esc(elapsed(s.started_at, s.ended_at) || "…")}</div>`).join("");
   const hosts = (t.connections || []).map(c => `<div class="${c.allowed ? "" : "bad"}"><span class="mono">${esc(c.host)}:${esc(c.port)}</span> · ` +
     (c.allowed ? `${bytes(c.bytes_up)} up, ${bytes(c.bytes_down)} down` : `refused: ${esc(c.reason)}`) + `</div>`).join("");
+  const u = t.used, used = !u ? "" : `<h2 style="margin-top:10px">Used</h2><div class="kv" style="margin-bottom:10px">` +
+    [["sandbox time", duration(u.sandbox_seconds)], ["CPU time", duration(u.cpu_seconds)], ["peak memory", bytes(u.memory_peak_bytes)],
+     ["network out", bytes(u.bytes_up)], ["network in", bytes(u.bytes_down)], ["storage", bytes(u.snapshot_bytes)]]
+      .map(([name, value]) => `<div>${name}</div><div>${esc(value)}</div>`).join("") + `</div>`;
   return `<div class="kv" style="margin-bottom:10px">${steps}<div>waited</div><div>${esc(t.queued_for_s == null ? "…" : `${Math.round(t.queued_for_s * 100) / 100} s`)}</div>` +
-    (t.handover ? `<div>handover</div><div>${esc(t.handover)}</div>` : "") + `</div>` +
+    (t.handover ? `<div>handover</div><div>${esc(t.handover)}</div>` : "") + `</div>` + used +
     (t.command ? `<h2>Sandbox command</h2>${pre(t.command)}` : "") +
     (hosts ? `<h2 style="margin-top:10px">Network</h2><div class="small" style="margin-bottom:10px">${hosts}</div>` : "") +
     (t.log ? `<h2 style="margin-top:10px">Log</h2>${pre(t.log)}` : "") +
@@ -188,14 +193,17 @@ export const session = { title: "Session", async render(el, params) {
   let builder = summary.harness === BUILDER;          // whether the harness package builder worked in this session
 
   el.innerHTML = `<p><a href="#/sessions">← Sessions</a></p>` +
-    `<div class="card shead" id="shead"></div>` +
+    `<div class="card shead" id="shead"><div id="sfacts" style="display:contents"></div><div class="acts" id="sacts" style="margin-left:auto"></div></div>` +
     `<div class="sess"><section class="scol"><div class="row" style="margin-bottom:10px"><h2 style="margin:0">Transcript</h2><span class="muted small">every response of this session, live while a turn runs</span></div><div id="turns"><div class="muted">Loading…</div></div></section>` +
     `<aside class="card spanel"><iframe src="/chat/index.html?panel=${encodeURIComponent(sid)}" title="Files"></iframe></aside></div>`;
   const panel = () => $(".spanel iframe", el).contentWindow;
 
+  // The facts are redrawn at every poll. The buttons only when what they offer changes: a button replaced
+  // between a press and its release takes no click.
+  let offered = "";
   const header = () => {
     const running = LIVE.has(summary.status);
-    $("#shead", el).innerHTML =
+    $("#sfacts", el).innerHTML =
       `<div class="kv"><span class="k">Harness</span><span class="v">${esc(summary.harness || "—")}</span></div>` +
       `<div class="kv"><span class="k">Model</span><span class="v">${esc([summary.provider, summary.model].filter(Boolean).join(" / ") || "—")}</span></div>` +
       `<div class="kv"><span class="k">Environment</span><span class="v">${esc(summary.environment || "—")}</span></div>` +
@@ -204,11 +212,12 @@ export const session = { title: "Session", async render(el, params) {
       `<div class="kv"><span class="k">Saved</span><span class="v">${bytes(summary.bytes)}</span></div>` +
       `<div class="kv"><span class="k">Last active</span><span class="v">${esc(when(summary.last_active_at))}</span></div>` +
       `<div class="kv"><span class="k">Session</span><span class="v mono">${esc(sid)}</span></div>` +
-      (summary.forked_from_response_id ? `<div class="kv"><span class="k">Forked from</span><span class="v mono">${esc(summary.forked_from_response_id)}</span></div>` : "") +
-      `<div class="acts" style="margin-left:auto">` +
+      (summary.forked_from_response_id ? `<div class="kv"><span class="k">Forked from</span><span class="v mono">${esc(summary.forked_from_response_id)}</span></div>` : "");
+    const buttons =
       (running ? `<button class="btn2 danger" id="cancel">Cancel turn</button>` : `<a class="btn2" href="#/chat/${encodeURIComponent(sid)}">Continue in chat</a>`) +
       (builder ? `<button class="btn2" id="mk" title="Copy a harness package the builder wrote in this session's work folder into a draft">New harness from workspace</button>` : "") +
-      `<button class="btn2 danger" id="del">Delete</button></div>`;
+      `<button class="btn2 danger" id="del">Delete</button>`;
+    if (buttons !== offered) $("#sacts", el).innerHTML = offered = buttons;
   };
 
   const draw = () => {

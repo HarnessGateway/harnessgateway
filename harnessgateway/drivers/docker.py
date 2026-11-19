@@ -10,6 +10,7 @@ from harnessgateway.domain.events import LINE_MAX
 from harnessgateway.domain.masking import mask
 from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
 from harnessgateway.drivers.base import BuildResult, DriverError, OnLine, SandboxExit, StepResult
+from harnessgateway.drivers.meter import Meter
 
 LABEL = "hg.org"                       # every container of this platform carries it
 OUTPUT_TAIL = 64 * 1024
@@ -230,14 +231,16 @@ class DockerDriver:
             await on_stderr(line)
 
         try:
-            await asyncio.gather(_pump(process.stdout, on_stdout), _pump(process.stderr, keep_and_pass))
-            await process.wait()
+            async with Meter(plan.name) as meter:
+                await asyncio.gather(_pump(process.stdout, on_stdout), _pump(process.stderr, keep_and_pass))
+                await process.wait()
             code, state = await self._docker(
                 "inspect", "--format", "{{.State.StartedAt}} {{.State.OOMKilled}} {{.State.ExitCode}}", plan.name)
             if code != 0 or state.startswith(_NEVER_STARTED):
                 return SandboxExit(started=False, error="\n".join(client_errors)[-2000:] or state)
             _, oom, exit_code = state.split()
-            return SandboxExit(started=True, exit_code=int(exit_code), out_of_memory=oom == "true")
+            return SandboxExit(started=True, exit_code=int(exit_code), out_of_memory=oom == "true",
+                               measured=meter.measured)
         finally:
             if process.returncode is None:
                 process.kill()

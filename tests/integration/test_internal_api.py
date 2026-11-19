@@ -14,6 +14,7 @@ from harnessgateway.domain.resolve import resolve
 from harnessgateway.domain.sealing import new_token
 from harnessgateway.errors import Refused
 from harnessgateway.kit import hgkit
+from harnessgateway.steps.client import SavePlan
 from harnessgateway.steps.errors import StepError
 from harnessgateway.steps.http import HttpStepClient
 from harnessgateway.steps.restore import restore
@@ -21,7 +22,7 @@ from harnessgateway.steps.save import save
 from harnessgateway.steps.unpack import unpack
 from harnessgateway.store.turns import Turn
 from harnessgateway.stores import Stores
-from tests.helpers import SHELL_MODEL, add
+from tests.helpers import SHELL_MODEL, add, variant
 from tests.integration.test_harness_store import SHELL, demo_archive
 from tests.integration.test_steps import picture, populate, volumes
 
@@ -100,7 +101,20 @@ async def test_a_first_turn_s_plan_starts_from_nothing(stores: Stores, org: str,
     plan = await client.restore_plan(turn.id)
     assert (plan.manifest_key, plan.warm, plan.history, plan.handover, plan.files) == (None, False, [], "", ())
     assert plan.request == {"model": SHELL_MODEL, "input": "echo hello"}
-    assert await client.save_plan(turn.id) is None
+    assert await client.save_plan(turn.id) == SavePlan(manifest_key=None, unsaved=())
+    await client.close()
+
+
+async def test_a_save_leaves_out_the_caches_of_every_harness_its_environment_carries(
+    stores: Stores, org: str, shell: None, tmp_path: Path
+) -> None:
+    # A session's mind holds the folders of every harness that worked on it, so the caches of all of them are
+    # left out, whichever harness the turn being saved ran.
+    await add(stores, org, variant(tmp_path, "other", mind=".other", cache=[".other/cache", ".cache/other"]))
+    await add(stores, org, variant(tmp_path, "third", mind=".third", cache=[".third/tmp"]))
+    turn, token = await running(stores, org)
+    client = client_for(stores, token)
+    assert (await client.save_plan(turn.id)).unsaved == ("mind/.cache/other", "mind/.other/cache", "mind/.third/tmp")
     await client.close()
 
 

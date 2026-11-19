@@ -90,6 +90,16 @@ async def test_what_a_setup_script_leaves_as_root_is_in_the_image_the_environmen
             await platform.driver.remove_image(prepared.image_id)
 
 
+async def test_a_turn_s_usage_holds_the_processor_time_and_memory_its_sandbox_took(platform: Platform) -> None:
+    busy = "import time; held = bytearray(32 << 20); began = time.time()\nwhile time.time() - began < 3: pass"
+    turn = await platform.run(f"python3 -c '{busy}'; sleep 1.5; echo done")
+    assert turn.status == "completed"
+    used = await platform.stores.turns.used(platform.org, turn.id)
+    assert used is not None
+    assert 2.0 < used["cpu_seconds"] < used["sandbox_seconds"] + 1
+    assert used["memory_peak_bytes"] > 32 << 20
+
+
 async def test_a_stopped_turn_is_cancelled_and_what_it_wrote_is_kept(platform: Platform) -> None:
     turn = await platform.ask("echo partial > kept.txt; echo started; sleep 300")
     await platform.started(turn)

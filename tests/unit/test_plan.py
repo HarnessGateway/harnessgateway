@@ -26,18 +26,19 @@ from harnessgateway.domain.resolve import Resolved, resolve
 SESSION, TURN, INSTALL = "sess_" + "S" * 26, "resp_" + "T" * 26, "inst_" + "J" * 26
 ENVIRONMENT = Environment.load({
     "name": "secure", "image": "acme/agents:1", "cpus": 1.5, "memory_mb": 2048, "pids": 256, "tmp_mb": 512,
-    "network": {"allow": ["api.example.com"], "deny": ["bad.example.com"]},
+    "network": {"allow": ["allowed.example.com"], "deny": ["bad.example.com"]},
     "variables": {"TZ": "UTC"},
     "secrets": {"EXAMPLE_TOKEN": {"hosts": ["api.example.com"], "header": "Authorization", "prefix": "Bearer "}},
+    "setup": {"egress": ["downloads.example.net"]},
 })
 MANIFEST = Manifest.load({
     "contract": 1, "name": "claude-code", "version": "2.1.323-1", "mind": ".claude", "apis": ["anthropic"],
-    "install": {"egress": ["downloads.example.net"], "timeout_s": 300},
-    "run": {"egress": ["telemetry.example.net"], "stop_grace_s": 7},
+    "install": {"timeout_s": 300},
+    "run": {"stop_grace_s": 7},
     "settings": {"EFFORT": {"default": "medium"}},
-    "secrets": {"GITHUB_TOKEN": {"hosts": ["api.github.com"]}},
+    "secrets": {"CRM_TOKEN": {"hosts": ["crm.example.com"]}},
 })
-HARNESS = Harness(manifest=MANIFEST, digest="d" * 64, secrets_set=frozenset({"GITHUB_TOKEN"}))
+HARNESS = Harness(manifest=MANIFEST, digest="d" * 64, secrets_set=frozenset({"CRM_TOKEN"}))
 PROVIDER = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"}})
 
 
@@ -58,7 +59,7 @@ def facts(**changes: Any) -> TurnFacts:
         "org_id": "org_default", "session_id": SESSION, "turn_id": TURN, "install_id": INSTALL,
         "image_id": "sha256:abc", "resolved": RESOLVED, "handover": "Handover from codex. Review /mind/.codex.",
         "proxy_token": "ptok", "provider_key_placeholder": "hgs_" + "1" * 32,
-        "secret_placeholders": {"EXAMPLE_TOKEN": "hgs_" + "2" * 32, "GITHUB_TOKEN": "hgs_" + "3" * 32},
+        "secret_placeholders": {"EXAMPLE_TOKEN": "hgs_" + "2" * 32, "CRM_TOKEN": "hgs_" + "3" * 32},
     }
     return TurnFacts(**{**base, **changes})
 
@@ -110,7 +111,7 @@ def test_the_sandbox_s_variables_are_the_contract_then_the_environment_then_sett
         "TZ": "UTC",
         "EFFORT": "medium",
         "EXAMPLE_TOKEN": "hgs_" + "2" * 32,
-        "GITHUB_TOKEN": "hgs_" + "3" * 32,
+        "CRM_TOKEN": "hgs_" + "3" * 32,
     }
     assert list(sandbox_plan(facts()).env)[:2] == ["HOME", "HG_CONTRACT"]
 
@@ -142,8 +143,8 @@ def test_in_a_closed_environment_a_turn_reaches_its_provider_and_nothing_else() 
     policy = turn_policy(resolved)
     assert policy.mode == "closed"
     assert policy.decide("api.deepseek.com", 443).allowed
-    for host in ("telemetry.example.net", "api.github.com", "api.example.com", "registry.npmjs.org", "example.com"):
-        assert not policy.decide(host, 443).allowed, host      # what the package declares, secrets, registries
+    for host in ("crm.example.com", "api.example.com", "registry.npmjs.org", "example.com"):
+        assert not policy.decide(host, 443).allowed, host      # the hosts of secrets, registries, anything else
 
 
 def test_in_an_open_environment_a_turn_reaches_any_public_host() -> None:
@@ -154,22 +155,29 @@ def test_in_an_open_environment_a_turn_reaches_any_public_host() -> None:
     assert policy.decide("api.deepseek.com", 443).allowed
 
 
-def test_the_turn_s_policy_is_everything_it_is_entitled_to_and_nothing_else() -> None:
+def test_an_open_environment_still_refuses_the_hosts_it_denies() -> None:
+    wide = Environment.load({"name": "wide", "network": {"mode": "open", "deny": ["api.example.net"]}})
+    policy = turn_policy(resolved_in(wide, HARNESS))
+    assert policy.decide("anything.example.net", 443).allowed
+    assert not policy.decide("api.example.net", 443).allowed
+
+
+def test_a_limited_turn_reaches_its_provider_and_what_its_environment_allows_and_nothing_else() -> None:
     policy = turn_policy(RESOLVED)
     assert policy.mode == "limited"
-    for host in ("api.deepseek.com", "api.example.com", "telemetry.example.net", "api.github.com",
-                 "registry.npmjs.org"):
-        assert policy.decide(host, 443).allowed, host
-    for host in ("downloads.example.net", "bad.example.com", "anything.else"):   # install-only, denied, unlisted
+    for host in ("api.deepseek.com", "allowed.example.com", "api.example.com", "registry.npmjs.org"):
+        assert policy.decide(host, 443).allowed, host          # provider, allow list, its own secret, registries
+    for host in ("downloads.example.net", "bad.example.com", "anything.else"):   # setup-only, denied, unlisted
         assert not policy.decide(host, 443).allowed, host
 
 
-def test_a_harness_secret_with_no_value_opens_no_host() -> None:
-    harness = Harness(manifest=MANIFEST, digest="d" * 64)                     # GITHUB_TOKEN not set
-    bare = Environment.load({"name": "c", "network": {"package_managers": False}})
-    without, with_it = (resolved_in(bare, h) for h in (harness, HARNESS))
-    assert not turn_policy(without).decide("api.github.com", 443).allowed
-    assert turn_policy(with_it).decide("api.github.com", 443).allowed
+def test_a_package_never_widens_its_environment() -> None:
+    """The environment constrains the agent (spec §3, principle 7): the host a harness secret is bound to is
+    reached only where the environment allows it, set or not."""
+    assert HARNESS.secrets_set == {"CRM_TOKEN"}
+    assert not turn_policy(RESOLVED).decide("crm.example.com", 443).allowed
+    allowing = Environment.load({**ENVIRONMENT.dump(), "network": {"allow": ["crm.example.com"]}})
+    assert turn_policy(resolved_in(allowing, HARNESS)).decide("crm.example.com", 443).allowed
 
 
 def test_without_the_package_manager_set_the_registries_are_closed() -> None:
@@ -178,17 +186,20 @@ def test_without_the_package_manager_set_the_registries_are_closed() -> None:
     assert not turn_policy(resolved).decide("registry.npmjs.org", 443).allowed
 
 
-def test_an_install_reaches_the_registries_and_what_the_package_names_whatever_the_environment_s_mode() -> None:
-    for environment in (CLOSED, Environment.load({"name": "c", "network": {"package_managers": False}})):
-        assert install_policy(environment, MANIFEST).decide("registry.npmjs.org", 443).allowed
-        assert install_policy(environment, MANIFEST).decide("downloads.example.net", 443).allowed
-    policy = install_policy(ENVIRONMENT, MANIFEST)
+def test_an_install_reaches_the_registries_and_what_its_environment_s_setup_names_whatever_the_mode() -> None:
+    for network in ({"mode": "closed"}, {"package_managers": False}, {"mode": "open"}):
+        environment = Environment.load({"name": "c", "network": network,
+                                        "setup": {"egress": ["downloads.example.net"]}})
+        assert install_policy(environment).decide("registry.npmjs.org", 443).allowed
+        assert install_policy(environment).decide("downloads.example.net", 443).allowed
+        assert not install_policy(environment).decide("anything.else", 443).allowed
+    policy = install_policy(ENVIRONMENT)
     assert policy.decide("registry.npmjs.org", 443).allowed
     assert policy.decide("downloads.example.net", 443).allowed
-    assert not policy.decide("api.deepseek.com", 443).allowed
-    assert not policy.decide("api.example.com", 443).allowed
-    assert not policy.decide("bad.example.com", 443).allowed
-    assert policy.decide("api.example.com", 443).reason.endswith("add api.example.com to the package's install.egress")
+    for host in ("api.deepseek.com", "api.example.com", "allowed.example.com", "bad.example.com"):
+        assert not policy.decide(host, 443).allowed, host      # a provider, a secret's host, a turn's, a denied one
+    assert policy.decide("api.example.com", 443).reason.endswith(
+        "add api.example.com to the environment's setup.egress")
 
 
 def test_the_install_plan() -> None:

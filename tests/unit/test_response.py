@@ -9,6 +9,7 @@ from harnessgateway.domain.outcome import Outcome
 from harnessgateway.domain.response import TurnView, envelope_event, response_object, terminal_event_type
 
 SESSION, TURN = "sess_" + "S" * 26, "resp_" + "T" * 26
+MODEL = "default/codex/deepseek/deepseek-flash"
 MESSAGE = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed",
            "content": [{"type": "output_text", "text": "Hi", "annotations": []}]}
 USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
@@ -19,8 +20,8 @@ USAGE = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
 def view(**changes: Any) -> TurnView:
     base: dict[str, Any] = {
         "id": TURN, "session_id": SESSION, "created_at": 1_794_522_753, "status": "in_progress",
-        "model": "default:codex/deepseek/deepseek-flash",
-        "request": {"model": "codex", "input": "Hello"},
+        "model": MODEL,
+        "request": {"model": MODEL, "input": "Hello"},
     }
     return TurnView(**{**base, **changes})
 
@@ -30,7 +31,7 @@ def test_a_turn_in_progress() -> None:
     Response.model_validate(body)
     assert (body["id"], body["object"], body["status"], body["created_at"]) == (TURN, "response", "in_progress",
                                                                               1_794_522_753)
-    assert body["model"] == "default:codex/deepseek/deepseek-flash"
+    assert body["model"] == MODEL
     assert (body["output"], body["usage"], body["error"], body["incomplete_details"]) == ([], None, None, None)
     assert body["metadata"] == {"hg_session": SESSION}
 
@@ -75,7 +76,7 @@ def test_a_cancelled_turn() -> None:
 
 def test_what_the_caller_sent_is_echoed_and_their_metadata_kept() -> None:
     request = {
-        "model": "codex", "input": "Hello", "instructions": "Be brief.", "previous_response_id": "resp_" + "P" * 26,
+        "model": MODEL, "input": "Hello", "instructions": "Be brief.", "previous_response_id": "resp_" + "P" * 26,
         "metadata": {"ticket": "OPS-1"}, "background": True, "temperature": 0.2, "max_output_tokens": 500,
         "store": False,
     }

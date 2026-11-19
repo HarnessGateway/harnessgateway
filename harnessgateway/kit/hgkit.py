@@ -5,7 +5,8 @@ standard output as the CLI works, prints one terminal line, and exits 0. This fi
 
     Request     the turn's inputs
     State       small named values that stay with the session
-    seed_mind   copy the package's seed files into the mind, once
+    seed        copy the package's seed files into the mind and the work folder, once
+    outbound    the variables a process the CLI starts needs to reach out (an MCP server's, say)
     Cli         run the CLI and read its output line by line (or replay a recording of it)
     Emitter     print lines the platform accepts
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import ctypes
 import filecmp
 import functools
 import json
@@ -28,11 +30,12 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from typing import IO, Any, Callable
 
-__all__ = ["Cli", "Emitter", "InputFile", "Provider", "Request", "State", "seed_mind"]
+__all__ = ["Cli", "Emitter", "InputFile", "Provider", "Request", "State", "outbound", "seed"]
 
 _STATE_NAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*")
 
@@ -239,26 +242,77 @@ class State:
             os.unlink(self._path(name))
 
 
-def seed_mind(env: Mapping[str, str] | None = None) -> None:
-    """Copy the package's `seeds/mind` into the mind. Nothing that is already there is touched."""
+def seed(env: Mapping[str, str] | None = None) -> None:
+    """Copy the package's seeds into the session: `seeds/mind` into the mind, `seeds/work` into the work folder.
+    Nothing that is already there is touched.
+
+    The mind is this harness's own. The work folder is the session's: the agent can change what is put there,
+    the caller sees it among the session's files, and another harness that works on the session finds it.
+    Seed the work folder only with what the CLI reads from nowhere else."""
     variables = _env(env)
-    seeds, mind = os.path.join(variables["HG_HARNESS"], "seeds", "mind"), variables["HG_MIND"]
-    for folder, _, names in os.walk(seeds):
-        target = os.path.join(mind, os.path.relpath(folder, seeds))
-        os.makedirs(target, exist_ok=True)
-        for name in names:
-            if not os.path.lexists(os.path.join(target, name)):
-                shutil.copy2(os.path.join(folder, name), os.path.join(target, name))
+    for name, place in (("mind", variables["HG_MIND"]), ("work", variables["HG_WORK"])):
+        seeds = os.path.join(variables["HG_HARNESS"], "seeds", name)
+        for folder, _, names in os.walk(seeds):
+            target = os.path.join(place, os.path.relpath(folder, seeds))
+            os.makedirs(target, exist_ok=True)
+            for file in names:
+                if not os.path.lexists(os.path.join(target, file)):
+                    shutil.copy2(os.path.join(folder, file), os.path.join(target, file))
+
+
+# What the platform sets so that a process reaches out: the proxy's address, and its certificate authority.
+_OUTBOUND = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "NODE_USE_ENV_PROXY",
+             "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "NODE_EXTRA_CA_CERTS",
+             "PIP_CERT")
+
+
+def outbound(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The variables a process needs to reach anything from the sandbox, as this turn has them.
+
+    The CLI has them already. A process the CLI starts with an environment of its own choosing does not: a
+    stdio MCP server is given what its configuration block names and little else. Write these into that
+    configuration at the start of every turn, never into the package: the proxy's address is this turn's own."""
+    variables = _env(env)
+    return {name: variables[name] for name in _OUTBOUND if name in variables}
 
 
 # ── the CLI ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+_PR_SET_CHILD_SUBREAPER = 36          # <linux/prctl.h>
+
+
+def _keep_what_the_cli_starts() -> None:
+    """Have every process the CLI leaves running apart from itself (a daemon it starts for its own use) stay
+    below `run`, where a stop can find it. On Linux; elsewhere a stop reaches the CLI's own process group."""
+    with contextlib.suppress(OSError, AttributeError):
+        ctypes.CDLL(None).prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)
+
+
+def _started_by_run() -> list[int]:
+    """The processes below this one that are still running, read from /proc. None where there is no /proc."""
+    parents = {}
+    with contextlib.suppress(OSError):
+        for entry in filter(str.isdigit, os.listdir("/proc")):
+            with contextlib.suppress(OSError), open(f"/proc/{entry}/stat", encoding="utf-8") as file:
+                state, parent = file.read().rpartition(")")[2].split()[:2]
+                if state != "Z":                            # one that has ended and is not yet collected
+                    parents[int(entry)] = int(parent)
+    found: list[int] = []
+    above = {os.getpid()}
+    while above:
+        above = {pid for pid, parent in parents.items() if parent in above}
+        found.extend(above)
+    return found
+
+
 class Cli:
     """The harness's CLI as a process: its standard output, one line at a time.
 
-    When the platform stops the turn, `run` is sent a termination signal; the CLI is stopped with it, `lines()`
-    ends, and `stopped` is true.
+    When the platform stops the turn, `run` is sent a termination signal. The CLI is sent it too, with every
+    process it started, wherever that put itself; when they have ended `run` ends there, with exit code 0.
+    Nothing after `lines()` is reached, so a stopped turn prints no terminal line and starts no other CLI.
+    What the package must keep for the next turn (the CLI's session id), it saves the moment it has it.
 
     When HG_REPLAY names a file, the CLI is not started and the file's lines are given instead. That is how a
     package's translation is tested against a recording of its CLI's real output.
@@ -274,13 +328,18 @@ class Cli:
         self._cwd = cwd
         self._stdin = stdin
         self._process: subprocess.Popen[str] | None = None
+        self._stopped = False
         self.exit_code: int | None = None
-        self.stopped = False
 
-    def stop(self, *_: Any) -> None:
-        self.stopped = True
-        if self._process is not None and self._process.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
+    def _stop(self, *_: Any) -> None:
+        self._stopped = True
+        assert self._process is not None
+        started = _started_by_run()
+        with contextlib.suppress(ProcessLookupError):
+            if started:
+                for pid in started:
+                    os.kill(pid, signal.SIGTERM)
+            elif self._process.poll() is None:
                 os.killpg(self._process.pid, signal.SIGTERM)
 
     def lines(self) -> Iterator[str]:
@@ -291,14 +350,16 @@ class Cli:
                     yield line.rstrip("\n")
             self.exit_code = 0
             return
+        _keep_what_the_cli_starts()
         # The command is the package's own. Its standard error is ours: the turn's log.
         self._process = subprocess.Popen(  # noqa: S603
             self._command, env=dict(self._env), cwd=self._cwd, stdout=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace",
             stdin=subprocess.PIPE if self._stdin is not None else subprocess.DEVNULL, start_new_session=True,
         )
-        if threading.current_thread() is threading.main_thread():
-            signal.signal(signal.SIGTERM, self.stop)
+        # Signals are handled in the main thread only, which is where a `run` reads its CLI.
+        handled = threading.current_thread() is threading.main_thread()
+        before = signal.signal(signal.SIGTERM, self._stop) if handled else None
         if self._stdin is not None and self._process.stdin is not None:
             self._process.stdin.write(self._stdin)
             self._process.stdin.close()
@@ -315,6 +376,12 @@ class Cli:
             if record is not None:
                 record.close()
         self.exit_code = self._process.wait()
+        if handled:
+            signal.signal(signal.SIGTERM, before)       # between CLIs a stop ends `run` by itself
+        if self._stopped:
+            while _started_by_run():                    # what the CLI started is ending; the platform's grace
+                time.sleep(0.1)                         # is the limit on how long that may take
+            raise SystemExit(0)
 
 
 # ── the lines the platform accepts ─────────────────────────────────────────────────────────────────────────

@@ -69,10 +69,11 @@ class _Reader:
 
 async def save(client: StepClient, turn_id: str, roots: Mapping[str, Path]) -> Saved:
     try:
-        key = await client.save_plan(turn_id)
-        parent = SnapshotManifest.loads((await read_object(client, key)).decode()) if key else SnapshotManifest([])
+        plan = await client.save_plan(turn_id)
+        parent = (SnapshotManifest.loads((await read_object(client, plan.manifest_key)).decode())
+                  if plan.manifest_key else SnapshotManifest([]))
         reader = _Reader(parent)
-        manifest = SnapshotManifest(reader.entries(walk(roots)))
+        manifest = SnapshotManifest(reader.entries(walk(roots, frozenset(plan.unsaved))))
         uploaded = 0
         for batch in batched(reader.sources, _BATCH):
             for digest in await client.missing(list(batch)):

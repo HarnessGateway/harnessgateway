@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
+from harnessgateway.domain.outcome import Measured
 from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
 from harnessgateway.drivers.base import BuildResult, OnLine, SandboxExit, StepResult
 from harnessgateway.drivers.docker import LineSplitter
@@ -52,6 +53,7 @@ class LocalDriver:
         self.builds: list[BuildPlan] = []                      # every build that was run, in order
         self.removed_images: list[str] = []
         self.in_use: set[str] = set()                          # images a test says a container still uses
+        self.measured: Measured | None = None                  # what a test says each sandbox used
 
     def volume(self, name: str) -> Path:
         return self._base / name
@@ -156,7 +158,7 @@ class LocalDriver:
             assert process.stdout is not None
             assert process.stderr is not None
             await asyncio.gather(_pump(process.stdout, on_stdout), _pump(process.stderr, on_stderr))
-            return SandboxExit(started=True, exit_code=await process.wait())
+            return SandboxExit(started=True, exit_code=await process.wait(), measured=self.measured)
         finally:
             del self._processes[plan.name]
 

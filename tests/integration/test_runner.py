@@ -10,12 +10,14 @@ import dataclasses
 import json
 import shutil
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from harnessgateway import packaging
 from harnessgateway.api.internal import internal_app
+from harnessgateway.domain.outcome import Measured
 from harnessgateway.domain.plan import install_volume, mind_volume, turn_volume, work_volume
 from harnessgateway.errors import Conflict, Invalid
 from harnessgateway.runner.prepare import Preparer
@@ -233,6 +235,12 @@ async def test_a_command_that_fails_ends_the_turn_as_failed_and_its_state_is_sti
     assert text_of(after) == "before\n"
 
 
+async def test_output_that_holds_nul_characters_is_kept_with_them_replaced(platform: Platform) -> None:
+    turn = await platform.run("printf 'a\\000b\\n'; printf 'err\\000\\n' >&2; echo kept > f.txt")
+    assert (turn.status, text_of(turn)) == ("completed", "a\ufffdb\nerr\ufffd\n")
+    assert turn.snapshot_id is not None
+
+
 async def test_a_stopped_turn_is_cancelled_saved_and_can_be_continued(platform: Platform) -> None:
     turn = await platform.ask("echo partial > kept.txt; echo started; sleep 60; echo never")
     await platform.started(turn)
@@ -316,6 +324,35 @@ async def test_a_package_whose_install_fails_fails_the_turn_and_is_tried_again_n
     assert sum(1 for plan in platform.driver.sandboxes if plan.command == ["/harness/install"]) == 2
 
 
+async def test_what_the_driver_measured_is_kept_with_each_turn_and_added_up(platform: Platform) -> None:
+    mib, driver = 1024 * 1024, platform.driver
+    driver.measured = Measured(cpu_seconds=1.5, memory_peak_bytes=64 * mib)
+    first = await platform.run("echo one")
+    driver.measured = Measured(cpu_seconds=0.5, memory_peak_bytes=128 * mib)
+    await platform.run("echo two")
+    driver.measured = None                                  # a driver that cannot measure: nothing is claimed
+    third = await platform.run("echo three")
+
+    turns, now = platform.stores.turns, datetime.now(UTC)
+    used = await turns.used(platform.org, first.id)
+    assert (used["cpu_seconds"], used["memory_peak_bytes"]) == (1.5, 64 * mib)
+    assert used["sandbox_seconds"] > 0
+    assert {"bytes_up", "bytes_down", "snapshot_bytes"} <= set(used)
+    unmeasured = await turns.used(platform.org, third.id)
+    assert (unmeasured["cpu_seconds"], unmeasured["memory_peak_bytes"]) == (0, 0)
+    [row] = await turns.usage(platform.org, start=now - timedelta(hours=1), end=now + timedelta(hours=1),
+                              group_by="harness")
+    assert (row["turns"], row["cpu_seconds"], row["memory_peak_bytes"]) == (3, 2.0, 128 * mib)
+
+
+async def test_a_turn_that_has_not_ended_has_used_nothing_yet(platform: Platform) -> None:
+    turn = await platform.ask("echo started; sleep 30")
+    await platform.started(turn)
+    assert await platform.stores.turns.used(platform.org, turn.id) is None
+    await platform.stores.turns.cancel(platform.org, turn.id)
+    await platform.final(turn)
+
+
 async def test_usage_the_package_reports_is_kept_on_the_turn(platform: Platform, tmp_path: Path) -> None:
     folder = tmp_path / "counted"
     shutil.copytree(SHELL, folder)
@@ -355,6 +392,23 @@ async def test_no_more_turns_run_at_once_than_the_setting_allows(idle: Platform,
         assert earlier.completed_at is not None
         assert done.started_at is not None
         assert earlier.completed_at <= done.started_at
+    finally:
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+
+async def test_a_slot_freed_by_a_turn_that_ended_is_filled_at_once(idle: Platform, settings: Settings) -> None:
+    """A waiting turn starts when a running one ends, not at the runner's next tick (spec §5.3)."""
+    stores = dataclasses.replace(idle.stores, settings=dataclasses.replace(settings, max_turns=1))
+    runner = asyncio.create_task(Runner(stores, idle.driver, heartbeat_s=60).run())
+    try:
+        first = await idle.ask("echo started; sleep 1")
+        second = await idle.ask("echo second")
+        await idle.started(first)
+        assert (await idle.stores.turns.get(idle.org, second.id)).status == "queued"
+        done = await idle.final(second, timeout=20)             # far sooner than the runner's tick
+        assert done.status == "completed"
     finally:
         runner.cancel()
         with contextlib.suppress(asyncio.CancelledError):

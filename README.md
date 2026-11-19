@@ -51,7 +51,8 @@ curl -fsSL https://raw.githubusercontent.com/HarnessGateway/harnessgateway/main/
 
 It prints the address of the console and API, and the first admin key. The harness packages that ship
 with the platform are added, and the `default` environment carries them all: their installs start when the
-platform does. Run again, it updates the
+platform does, one after another, and take about 12 GB of disk between them; a turn that names a harness
+not yet installed installs it first. Untick in the `default` environment the harnesses you will not use. Run again, it updates the
 installation to the current version and keeps its data and settings. On a Linux host, add
 `--with-gvisor` (`... | bash -s -- --with-gvisor`) so sandboxes do not share the host's kernel. Without it,
 isolation is an ordinary container: fine for development and code you trust.
@@ -70,13 +71,15 @@ curl -s $HG/v1/providers -H "Authorization: Bearer $KEY" -H 'Content-Type: appli
 
 # An environment of your own: an image set up by a script, carrying the harnesses you choose.
 curl -s $HG/v1/environments -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{
-  "name": "media", "harnesses": ["claude-code", "codex"],
-  "setup": {"script": "apt-get update && apt-get install -y ffmpeg"}}'
+  "name": "data", "harnesses": ["claude-code", "codex"],
+  "setup": {"script": "pip install pandas matplotlib"}}'
 ```
 
 An environment's setup script runs once, as root, on its image, before any harness is installed; what it
-leaves is the image its turns start from. Then each harness it carries is installed on that image. Any key,
-a runner's too, can list the providers, environments and harnesses there are, to know what to name.
+leaves is the image its turns start from. Then each harness it carries is installed on that image. The
+platform's sandbox image has Python with pip and Node with npm, and no system package manager: a script that
+needs `apt-get` belongs to an environment whose `image` has it (`"image": "python:3.13"`, say). Any key, a
+runner's too, can list the providers, environments and harnesses there are, to know what to name.
 
 ## The `model` string
 
@@ -114,9 +117,9 @@ Every part is named, always: nothing is filled in for you. The model is everythi
 
 ## Harness packages
 
-`packages/shell` is the smallest package and the template. The packages for Claude Code, Codex, pi and
-Hermes, and the harness package builder (an agent that writes packages), are in
-[harness-packages](https://github.com/HarnessGateway/harness-packages).
+`packages/shell` is the smallest package and the template. The packages for 26 agent CLIs, each unmodified
+(Claude Code, Codex, pi, Hermes, OpenCode, goose, Aider and the rest), and the harness package builder (an agent
+that writes packages), are in [harness-packages](https://github.com/HarnessGateway/harness-packages).
 
 ```sh
 harnessgateway package check packages/shell     # validates a package and replays its recorded cases

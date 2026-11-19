@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from harnessgateway.api import errors
 from harnessgateway.api.auth import Authenticator
 from harnessgateway.api.views import SANDBOX
+from harnessgateway.domain.events import storable
 from harnessgateway.domain.names import check_id
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.request import validate
@@ -46,9 +47,12 @@ async def read_json(request: Request) -> Any:
         if len(body) > BODY_MAX:
             raise TooLarge(f"a request body is at most {BODY_MAX >> 20} MiB")
     try:
-        return json.loads(body)
+        parsed = json.loads(body)
     except ValueError:
         raise Invalid("the request body is not JSON") from None
+    if storable(parsed) != parsed:
+        raise Invalid("the request body holds a NUL character (\\u0000), which cannot be stored: leave it out")
+    return parsed
 
 
 def _turn_id(value: str) -> str:

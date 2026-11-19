@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 import pytest
-from openai.types.responses import ResponseUsage
+from openai.types.responses import ResponseOutputMessage, ResponseReasoningItem, ResponseUsage
 
 from harnessgateway.domain.events import LINE_MAX, LineError, OutputEvents, RunOutput, read_line
 
@@ -83,6 +83,18 @@ def test_a_line_that_is_not_allowed_is_refused(text: str) -> None:
         read_line(text)
 
 
+def test_a_nul_character_in_a_line_is_replaced_because_the_database_cannot_hold_one() -> None:
+    # An agent that prints a binary file prints NUL characters. They are valid JSON and not valid stored text.
+    event = read_line(line({**DELTA, "delta": "a\x00b"})).event
+    assert event is not None
+    assert event["delta"] == "a\ufffdb"
+    log = read_line(line({"type": "hg.log", "text": "x\x00"}))
+    assert log.text == "x\ufffd"
+    failed = read_line(line({"type": "hg.failed", "code": "cli_error", "message": "bad\x00"})).terminal
+    assert failed is not None
+    assert failed.message == "bad\ufffd"
+
+
 def test_a_line_over_the_limit_is_refused_without_being_parsed() -> None:
     with pytest.raises(LineError, match="16 MiB"):
         read_line("x" * (LINE_MAX + 1))
@@ -121,10 +133,37 @@ def test_the_output_is_the_finished_items_in_order() -> None:
     assert events.output()[1] == MESSAGE_DONE
 
 
-def test_an_item_that_was_started_but_never_finished_is_not_output() -> None:
+def test_an_item_that_was_started_and_holds_nothing_is_not_output() -> None:
     events = OutputEvents(first_sequence_number=0)
     events.accept(dict(ADDED))
     assert events.output() == []
+
+
+def test_text_cut_short_is_output_as_an_incomplete_item_in_its_place() -> None:
+    # A turn that was stopped or killed never finishes the text it was printing. What was said is still output.
+    events = OutputEvents(first_sequence_number=0)
+    thought = {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 1,
+               "summary_index": 0, "delta": "thinking"}
+    events.accept({**ADDED, "output_index": 2})
+    events.accept({**DELTA, "output_index": 2})
+    events.accept({**DELTA, "output_index": 2})
+    events.accept({"type": "response.output_item.added", "output_index": 1,
+                   "item": {"id": "rs_1", "type": "reasoning", "summary": []}})
+    events.accept(thought)
+    events.accept({"type": "response.output_item.added", "output_index": 0,
+                   "item": {"id": "rs_0", "type": "reasoning", "summary": []}})
+    events.accept({"type": "response.output_item.done", "output_index": 0,
+                   "item": {"id": "rs_0", "type": "reasoning", "summary": []}})
+    said = DELTA["delta"] * 2
+    assert events.output() == [
+        {"id": "rs_0", "type": "reasoning", "summary": []},
+        {"id": "rs_1", "type": "reasoning", "status": "incomplete",
+         "summary": [{"type": "summary_text", "text": "thinking"}]},
+        {**MESSAGE_DONE, "status": "incomplete",
+         "content": [{"type": "output_text", "text": said, "annotations": []}]},
+    ]
+    ResponseReasoningItem.model_validate(events.output()[1])    # the SDK accepts both as output items
+    ResponseOutputMessage.model_validate(events.output()[2])
 
 
 def test_a_run_s_output_is_read_line_by_line_until_its_terminal_line() -> None:

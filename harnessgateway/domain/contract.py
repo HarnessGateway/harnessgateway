@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-ApiName = Literal["anthropic", "openai-responses", "openai-chat"]
+ApiName = Literal["anthropic", "openai-responses", "openai-chat", "gemini"]
 
 CONTRACT_VERSION = 1
 SANDBOX_UID = 10000

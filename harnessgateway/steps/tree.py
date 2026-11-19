@@ -35,8 +35,9 @@ def _listing(prefix: str, folder: Path) -> Iterator[tuple[str, os.DirEntry[str]]
         yield f"{prefix}/{entry.name}", entry
 
 
-def walk(roots: Mapping[str, Path]) -> Iterator[Found]:
-    """Everything under each root: a directory before what it holds, names in order.
+def walk(roots: Mapping[str, Path], leave_out: frozenset[str] = frozenset()) -> Iterator[Found]:
+    """Everything under each root: a directory before what it holds, names in order. A path named in
+    `leave_out` is passed over, with all it holds.
 
     A tree may be changing while it is walked (the watcher's case); what vanishes is left out.
     """
@@ -44,6 +45,8 @@ def walk(roots: Mapping[str, Path]) -> Iterator[Found]:
         pending = [_listing(name, root)]       # a stack, not recursion: a tree may be deeper than Python allows
         while pending:
             for path, entry in pending[-1]:
+                if path in leave_out:
+                    continue
                 try:
                     status = entry.stat(follow_symlinks=False)
                 except FileNotFoundError:
@@ -59,5 +62,5 @@ def walk(roots: Mapping[str, Path]) -> Iterator[Found]:
 
 
 def measure(roots: Mapping[str, Path]) -> int:
-    """The bytes a snapshot of these folders would hold: the sum of their files' sizes."""
+    """The bytes these folders hold: the sum of their files' sizes, a harness's cache included."""
     return sum(found.size for found in walk(roots) if found.kind == "f")

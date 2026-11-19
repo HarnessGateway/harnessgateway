@@ -1,7 +1,7 @@
 """Sessions, turns and their events: the queue, the stream, and the record of what happened (spec §5, §6, §17)."""
 
 import contextlib
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Any
@@ -10,7 +10,7 @@ from psycopg.types.json import Jsonb
 
 from harnessgateway.domain.handover import PastTurn
 from harnessgateway.domain.modelpath import NONE, ModelPath
-from harnessgateway.domain.outcome import Outcome
+from harnessgateway.domain.outcome import Measured, Outcome
 from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.response import TurnView, envelope_event, response_object, terminal_event_type
 from harnessgateway.errors import Conflict, Invalid, NotFound
@@ -144,6 +144,9 @@ _SUMMARY = (
     "FROM sessions s LEFT JOIN turns h ON h.id = s.head_turn_id"
 )
 USAGE_GROUPS = ("harness", "provider", "model", "environment", "day")
+# A turn's bytes through the proxy are kept once, with its connections (spec §11), and joined to its usage.
+_THROUGH_THE_PROXY = ("LEFT JOIN (SELECT subject_id, sum(bytes_up) AS bytes_up, sum(bytes_down) AS bytes_down "
+                      "FROM egress WHERE org_id = %s GROUP BY subject_id) e ON e.subject_id = u.turn_id")
 
 
 def _turn(row: Mapping[str, Any]) -> Turn:
@@ -327,23 +330,25 @@ class Turns:
 
     # ending
 
-    async def conclude(self, turn: Turn, outcome: Outcome, *, output: list[dict[str, Any]] | None = None,
+    async def conclude(self, turn: Turn, outcome: Outcome, *, output: Sequence[dict[str, Any]] = (),
                        usage: dict[str, Any] | None = None, snapshot_id: str | None = None, log: str = "",
-                       snapshot_bytes: int = 0) -> Turn:
+                       snapshot_bytes: int = 0, measured: Measured | None = None) -> Turn:
         """Make a turn final: its status and reason, its output, its last event, and its usage record."""
         async with self._db.org(turn.org_id) as conn:
-            return await self._conclude(conn, turn.id, outcome, output or [], usage, snapshot_id, log, snapshot_bytes)
+            return await self._conclude(conn, turn.id, outcome, output=output, usage=usage, snapshot_id=snapshot_id,
+                                        log=log, snapshot_bytes=snapshot_bytes, measured=measured)
 
-    async def _conclude(self, conn: Connection, turn_id: str, outcome: Outcome, output: list[dict[str, Any]],
-                        usage: dict[str, Any] | None, snapshot_id: str | None, log: str,
-                        snapshot_bytes: int) -> Turn:
+    async def _conclude(self, conn: Connection, turn_id: str, outcome: Outcome, *,
+                        output: Sequence[dict[str, Any]] = (), usage: dict[str, Any] | None = None,
+                        snapshot_id: str | None = None, log: str = "", snapshot_bytes: int = 0,
+                        measured: Measured | None = None) -> Turn:
         row = await (await conn.execute(
             "UPDATE turns SET status = %s, reason = %s, code = %s, message = %s, incomplete_reason = %s, "
             "output = %s, usage = %s, snapshot_id = %s, log_tail = %s, completed_at = now(), "
             "step_token_hash = NULL, proxy_token_hash = NULL, placeholders = '{}', runner_id = NULL "
             f"WHERE id = %s AND status IN ('queued', 'in_progress') RETURNING {_COLUMNS}",
             [outcome.status, outcome.reason, outcome.code, outcome.message, outcome.incomplete_reason,
-             Jsonb(output), Jsonb(usage) if usage is not None else None, snapshot_id, log[-LOG_TAIL:],
+             Jsonb(list(output)), Jsonb(usage) if usage is not None else None, snapshot_id, log[-LOG_TAIL:],
              turn_id])).fetchone()
         if row is None:
             raise Conflict(f"response {turn_id} is already final")
@@ -359,9 +364,11 @@ class Turns:
         tokens = usage or {}
         await conn.execute(
             "INSERT INTO usage (turn_id, org_id, status, harness, provider, model, environment, input_tokens, "
-            "output_tokens, sandbox_seconds, snapshot_bytes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "output_tokens, sandbox_seconds, snapshot_bytes, cpu_seconds, memory_peak_bytes) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [turn.id, turn.org_id, turn.status, turn.harness, turn.provider, turn.model, turn.environment,
-             tokens.get("input_tokens", 0), tokens.get("output_tokens", 0), ran, snapshot_bytes])
+             tokens.get("input_tokens", 0), tokens.get("output_tokens", 0), ran, snapshot_bytes,
+             measured.cpu_seconds if measured else 0, measured.memory_peak_bytes if measured else 0])
         return turn
 
     async def cancel(self, org_id: str, turn_id: str) -> Turn:
@@ -374,8 +381,7 @@ class Turns:
             if row is None:
                 raise NotFound(f"there is no response {turn_id}")
             if row["status"] == "queued":
-                return await self._conclude(conn, turn_id, Outcome("cancelled", "cancelled", "the turn was cancelled"),
-                                            [], None, None, "", 0)
+                return await self._conclude(conn, turn_id, Outcome("cancelled", "cancelled", "the turn was cancelled"))
             if row["status"] == "in_progress":
                 await conn.execute("UPDATE turns SET cancel_requested = true WHERE id = %s", [turn_id])
                 await conn.execute("SELECT pg_notify(%s, %s)", [CONTROL, CANCEL + turn_id])
@@ -496,7 +502,8 @@ class Turns:
         return [(row["org_id"], row["id"]) for row in rows]
 
     async def usage(self, org_id: str, *, start: datetime, end: datetime, group_by: str) -> list[dict[str, Any]]:
-        """Usage between two times, summed by harness, provider, model, environment or day (spec §22.1)."""
+        """Usage between two times, by harness, provider, model, environment or day (spec §22.1): everything
+        added up, except memory, which is the highest peak of any turn."""
         if group_by not in USAGE_GROUPS:
             raise Invalid(f"group_by is one of {', '.join(USAGE_GROUPS)}", param="group_by")
         key = "to_char(date_trunc('day', u.at), 'YYYY-MM-DD')" if group_by == "day" else f"u.{group_by}"
@@ -504,12 +511,20 @@ class Turns:
             rows = await (await conn.execute(
                 f"SELECT {key} AS \"group\", count(*) AS turns, sum(u.input_tokens)::bigint AS input_tokens, "
                 "sum(u.output_tokens)::bigint AS output_tokens, sum(u.sandbox_seconds)::float AS sandbox_seconds, "
+                "sum(u.cpu_seconds)::float AS cpu_seconds, max(u.memory_peak_bytes)::bigint AS memory_peak_bytes, "
                 "sum(u.snapshot_bytes)::bigint AS snapshot_bytes, "
                 "COALESCE(sum(e.bytes_up), 0)::bigint AS bytes_up, "
-                "COALESCE(sum(e.bytes_down), 0)::bigint AS bytes_down "
-                "FROM usage u LEFT JOIN ("
-                "  SELECT subject_id, sum(bytes_up) AS bytes_up, sum(bytes_down) AS bytes_down "
-                "  FROM egress WHERE org_id = %s GROUP BY subject_id) e ON e.subject_id = u.turn_id "
+                f"COALESCE(sum(e.bytes_down), 0)::bigint AS bytes_down FROM usage u {_THROUGH_THE_PROXY} "
                 "WHERE u.org_id = %s AND u.at >= %s AND u.at < %s GROUP BY 1 ORDER BY 1 NULLS LAST",
                 [org_id, org_id, start, end])).fetchall()
         return [dict(row) for row in rows]
+
+    async def used(self, org_id: str, turn_id: str) -> dict[str, Any] | None:
+        """What one turn used (spec §22.1), once it has ended."""
+        async with self._db.org(org_id) as conn:
+            row = await (await conn.execute(
+                "SELECT u.sandbox_seconds, u.cpu_seconds, u.memory_peak_bytes, u.snapshot_bytes, "
+                "COALESCE(e.bytes_up, 0)::bigint AS bytes_up, COALESCE(e.bytes_down, 0)::bigint AS bytes_down "
+                f"FROM usage u {_THROUGH_THE_PROXY} WHERE u.org_id = %s AND u.turn_id = %s",
+                [org_id, org_id, turn_id])).fetchone()
+        return dict(row) if row else None

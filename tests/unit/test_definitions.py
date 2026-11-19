@@ -21,8 +21,7 @@ def manifest(**changes: Any) -> dict[str, Any]:
 def test_the_smallest_manifest_gets_its_defaults() -> None:
     m = Manifest.load(manifest())
     assert (m.name, m.version, m.mind, m.apis) == ("claude-code", "2.1.323-1", None, ("anthropic",))
-    assert (m.install.timeout_s, m.install.egress) == (900, ())
-    assert (m.run.stop_grace_s, m.run.egress) == (10, ())
+    assert (m.install.timeout_s, m.run.stop_grace_s) == (900, 10)
     assert m.settings == {}
     assert m.secrets == {}
 
@@ -31,15 +30,16 @@ def test_a_full_manifest_is_read() -> None:
     m = Manifest.load(manifest(
         description="Claude Code, unmodified.",
         mind=".claude",
+        cache=[".claude/cache", ".cache/pkg"],
         apis=["anthropic", "openai-chat"],
-        install={"egress": ["registry.npmjs.org"], "timeout_s": 60},
-        run={"egress": ["telemetry.example.com:8443"], "stop_grace_s": 5},
+        install={"timeout_s": 60},
+        run={"stop_grace_s": 5},
         settings={"EFFORT": {"description": "effort", "default": "medium"}},
         secrets={"GITHUB_TOKEN": {"description": "github", "hosts": ["api.github.com"], "required": True}},
     ))
     assert m.mind == ".claude"
-    assert m.install.egress[0].host == "registry.npmjs.org"
-    assert m.run.egress[0].port == 8443
+    assert m.cache == (".claude/cache", ".cache/pkg")
+    assert (m.install.timeout_s, m.run.stop_grace_s) == (60, 5)
     assert m.settings["EFFORT"].default == "medium"
     assert m.secrets["GITHUB_TOKEN"].hosts[0].host == "api.github.com"
     assert m.secrets["GITHUB_TOKEN"].required is True
@@ -63,10 +63,17 @@ def test_a_harness_that_needs_no_provider_lists_no_apis() -> None:
         ({"mind": "a//b"}, "mind"),
         ({"mind": ""}, "mind"),
         ({"mind": ".harnessgateway"}, "mind"),
+        ({"cache": ["/abs"]}, "cache"),
+        ({"cache": ["../up"]}, "cache"),
+        ({"cache": [".harnessgateway/x"]}, "cache"),
+        ({"cache": [".a", ".a"]}, "cache"),
+        ({"cache": [f".c{n}" for n in range(17)]}, "cache"),
+        ({"cache": ".one"}, "cache"),
         ({"mind": ".harnessgateway/x"}, "mind"),
         ({"install": {"timeout_s": 0}}, "install"),
         ({"install": {"timeout_s": 3601}}, "install"),
-        ({"install": {"egress": ["https://x"]}}, "install"),
+        ({"install": {"egress": ["downloads.example.com"]}}, "install.egress"),     # a package names no host to reach:
+        ({"run": {"egress": ["api.example.com"]}}, "run.egress"),                   # its environment says what is
         ({"run": {"stop_grace_s": 301}}, "run"),
         ({"settings": {"lower": {}}}, "settings"),
         ({"settings": {"HG_MODEL": {}}}, "settings"),
@@ -165,6 +172,7 @@ def test_a_full_environment_is_read() -> None:
         ({"network": {"mode": "wide"}}, "network"),
         ({"network": {"mode": "open", "allow": ["a.com"]}}, "network.allow"),
         ({"network": {"mode": "closed", "deny": ["a.com"]}}, "network.deny"),
+        ({"network": {"mode": "closed", "package_managers": False, "allow": ["a.com"]}}, "network.allow"),
         ({"network": {"allow": ["*"]}}, "network.allow"),
         ({"variables": {"HG_X": "1"}}, "HG_X"),
         ({"variables": {"1BAD": "1"}}, "variables"),
@@ -196,6 +204,11 @@ def test_a_network_is_closed_limited_or_open(mode: str) -> None:
     assert (e.network.mode, e.network.allow, e.network.deny) == (mode, (), ())
 
 
+def test_an_open_network_may_still_refuse_named_hosts() -> None:
+    e = Environment.load({"name": "x", "network": {"mode": "open", "deny": ["api.example.com"]}})
+    assert [str(host) for host in e.network.deny] == ["api.example.com"]
+
+
 def test_tmp_must_fit_in_memory() -> None:
     with pytest.raises(Invalid) as e:
         Environment.load({"name": "x", "memory_mb": 512, "tmp_mb": 1024})
@@ -214,6 +227,11 @@ def test_a_provider_is_read() -> None:
     assert p.models == ("deepseek-flash", "deepseek-v4-pro")
     assert p.host("openai-chat").host == "api.deepseek.com"
     assert p.host("openai-chat").port is None
+
+
+def test_a_provider_may_speak_the_gemini_api() -> None:
+    p = Provider.load({"name": "google", "apis": {"gemini": "https://generativelanguage.googleapis.com"}})
+    assert p.host("gemini").host == "generativelanguage.googleapis.com"
 
 
 def test_a_provider_on_the_local_network_may_use_http_and_a_port() -> None:
@@ -250,15 +268,16 @@ def test_the_provider_refuses_what_is_not_allowed_and_names_it(changes: dict[str
 
 def test_every_definition_dumps_as_it_is_written_and_loads_back() -> None:
     full_manifest = Manifest.load(manifest(
-        mind=".claude", install={"egress": ["registry.npmjs.org", "*.example.org:8443"]},
-        settings={"EFFORT": {"default": "medium"}}, secrets={"GITHUB_TOKEN": {"hosts": ["api.github.com"]}}))
+        mind=".claude", install={"timeout_s": 60}, settings={"EFFORT": {"default": "medium"}},
+        secrets={"GITHUB_TOKEN": {"hosts": ["api.github.com", "*.example.org:8443"]}}))
     environment = Environment.load({
         "name": "secure", "network": {"mode": "limited", "allow": ["api.example.com:8443"], "deny": ["*.bad.example"]},
         "variables": {"TZ": "UTC"}, "secrets": {"TOKEN": {"hosts": ["api.example.com"], "header": "Authorization"}},
     })
     provider = Provider.load({"name": "deepseek", "apis": {"anthropic": "https://api.deepseek.com/anthropic"}})
 
-    assert full_manifest.dump()["install"]["egress"] == ["registry.npmjs.org", "*.example.org:8443"]
+    assert full_manifest.dump()["install"] == {"timeout_s": 60}
+    assert full_manifest.dump()["secrets"]["GITHUB_TOKEN"]["hosts"] == ["api.github.com", "*.example.org:8443"]
     assert environment.dump()["network"]["allow"] == ["api.example.com:8443"]
     assert environment.dump()["secrets"]["TOKEN"]["hosts"] == ["api.example.com"]
     assert Manifest.load(full_manifest.dump()) == full_manifest

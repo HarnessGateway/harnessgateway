@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from harnessgateway.domain import contract
 from harnessgateway.domain.environment import Environment
-from harnessgateway.domain.hosts import PACKAGE_MANAGER_HOSTS, EgressPolicy
+from harnessgateway.domain.hosts import PACKAGE_MANAGER_HOSTS, EgressPolicy, HostEntry
 from harnessgateway.domain.package import Manifest
 from harnessgateway.domain.resolve import Resolved
 
@@ -229,40 +229,38 @@ def build_plan(*, org_id: str, build_id: str, image_id: str, environment: Enviro
     )
 
 
-def setup_policy(environment: Environment) -> EgressPolicy:
-    """What an environment's setup script may reach, whatever its mode: the package managers, the hosts its
-    setup names and the hosts of its secrets. A host the environment denies stays denied."""
-    secret_hosts = [host for secret in environment.secrets.values() for host in secret.hosts]
-    return EgressPolicy(mode="limited", allow=(*PACKAGE_MANAGER_HOSTS, *environment.setup.egress, *secret_hosts),
-                        deny=environment.network.deny, allowed_by="the environment's setup.egress")
+def _secret_hosts(environment: Environment) -> list[HostEntry]:
+    return [host for secret in environment.secrets.values() for host in secret.hosts]
 
 
 def turn_policy(resolved: Resolved) -> EgressPolicy:
-    """What a turn's sandbox may reach (spec §9.3). Its provider, in every mode. A limited environment adds what
-    it allows, what the package declares, the hosts of the secrets in use and, if it says so, the package managers."""
-    environment, harness, network = resolved.environment, resolved.harness, resolved.environment.network
+    """What a turn's sandbox may reach (spec §9.3): its provider, in every mode, and what its environment says.
+    A limited environment adds what it allows, the hosts of its own secrets and, if it says so, the package
+    managers. The harness package adds nothing: the environment constrains the agent."""
+    environment, network = resolved.environment, resolved.environment.network
     allow = [resolved.provider.host(resolved.api)] if resolved.provider and resolved.api else []
     if network.mode == "limited":
-        allow += [*network.allow, *harness.manifest.run.egress]
-        for secret in environment.secrets.values():
-            allow.extend(secret.hosts)
-        for name, declared in harness.manifest.secrets.items():
-            if name in harness.secrets_set:
-                allow.extend(declared.hosts)
+        allow += [*network.allow, *_secret_hosts(environment)]
         if network.package_managers:
             allow.extend(PACKAGE_MANAGER_HOSTS)
     return EgressPolicy(mode=network.mode, allow=tuple(allow), deny=network.deny)
 
 
-def install_policy(environment: Environment, manifest: Manifest) -> EgressPolicy:
-    """What a package's install may reach, whatever its environment's mode: the package managers and what the
-    package declares. A host the environment denies stays denied."""
-    return EgressPolicy(
-        mode="limited",
-        allow=(*PACKAGE_MANAGER_HOSTS, *manifest.install.egress),
-        deny=environment.network.deny,
-        allowed_by="the package's install.egress",
-    )
+def _preparing(environment: Environment, *more: HostEntry) -> EgressPolicy:
+    """What preparing an environment may reach, whatever its mode: the package managers and the hosts its setup
+    names. A host the environment denies stays denied."""
+    return EgressPolicy(mode="limited", allow=(*PACKAGE_MANAGER_HOSTS, *environment.setup.egress, *more),
+                        deny=environment.network.deny, allowed_by="the environment's setup.egress")
+
+
+def setup_policy(environment: Environment) -> EgressPolicy:
+    """What an environment's setup script may reach: what preparing it may, and the hosts of its secrets."""
+    return _preparing(environment, *_secret_hosts(environment))
+
+
+def install_policy(environment: Environment) -> EgressPolicy:
+    """What the install of a harness an environment carries may reach: what preparing it may, and no more."""
+    return _preparing(environment)
 
 
 def _step(

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# The platform image (spec §18.2): the program, the Docker command-line client, the kit, and the packages that ship
-# with the platform. `serve`, `proxy` and the steps all run from it. Build it from the repository's root:
+# The platform image (spec §18.2): the program, itself as a wheel, the Docker command-line client, the kit, and the
+# packages that ship with the platform. `serve`, `proxy` and the steps all run from it. Build it from the repository's root:
 #
 #   docker build -f images/platform/Dockerfile -t ghcr.io/harnessgateway/harnessgateway:<version> .
 #
@@ -26,6 +26,9 @@ apk add --no-cache python-3.13 uv docker-cli bash coreutils findutils ca-certifi
 [ -e /usr/bin/python3 ] || ln -s python3.13 /usr/bin/python3
 UV_PROJECT_ENVIRONMENT=/opt/harnessgateway UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
   uv sync --frozen --no-dev --no-editable --python /usr/bin/python3.13
+# The platform itself as a wheel: laid out beside the kit in every install, for a package that checks packages
+# with the platform's own checker (the builder) to install from. Never a version of its own choosing.
+UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never uv build --wheel --python /usr/bin/python3.13 --out-dir /usr/share/harnessgateway
 cd / && rm -rf /src /var/cache/apk /etc/apk/cache
 # one shell: bash serves as /bin/sh; then BusyBox and the package manager go; then no file that raises privileges
 ln -sf bash /bin/sh

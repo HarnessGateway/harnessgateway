@@ -83,11 +83,12 @@ class Environments:
             raise Conflict(f"an environment named {environment.name!r} already exists")
         return environment
 
-    async def ensure_default(self, org_id: str, harnesses: Sequence[str] = ()) -> bool:
-        """Make the environment named `default`, carrying these harnesses, unless there is one. Whether it was
-        made."""
+    async def ensure_default(self, org_id: str, harnesses: Sequence[str] = (),
+                             fields: Mapping[str, Any] | None = None) -> bool:
+        """Make the environment named `default`, carrying these harnesses and set up with these fields, unless
+        there is one. Whether it was made."""
         try:
-            await self.create(org_id, {"name": DEFAULT_ENVIRONMENT, "harnesses": list(harnesses)})
+            await self.create(org_id, {**(fields or {}), "name": DEFAULT_ENVIRONMENT, "harnesses": list(harnesses)})
         except Conflict:
             return False
         return True

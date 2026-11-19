@@ -24,13 +24,18 @@ class RestorePlan:
     files: tuple[InputFile, ...]
 
 
+@dataclass(frozen=True)
+class SavePlan:
+    manifest_key: str | None                   # the parent snapshot's manifest, if the turn has a parent snapshot
+    unsaved: tuple[str, ...]                   # folders left out, as a manifest names them: "mind/.agent/cache"
+
+
 class StepClient(Protocol):
     """Every method raises `Refused` when the platform refuses what was asked."""
 
     async def restore_plan(self, turn_id: str) -> RestorePlan: ...
 
-    async def save_plan(self, turn_id: str) -> str | None:
-        """The key of the parent snapshot's manifest, if the turn has a parent snapshot."""
+    async def save_plan(self, turn_id: str) -> SavePlan: ...
 
     async def record(self, turn_id: str, manifest: str) -> str:
         """Record the turn's snapshot. Returns its id."""

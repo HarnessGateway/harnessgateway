@@ -2,11 +2,13 @@
 
 import io
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from harnessgateway import __version__, packaging
+from harnessgateway.store.egress import Connection
 from harnessgateway.stores import Stores
 from tests.helpers import SHELL, SHELL_MODEL, variant
 from tests.integration.api import Running, running
@@ -298,6 +300,10 @@ async def test_sessions_their_turns_their_files_and_a_turn_s_trace(api: Running)
     assert all(step["started_at"] and step["ended_at"] for step in trace["steps"])
     assert trace["command"].startswith("local hg-sess_")
     assert trace["connections"] == []
+    assert set(trace["used"]) == {"sandbox_seconds", "cpu_seconds", "memory_peak_bytes", "bytes_up", "bytes_down",
+                                  "snapshot_bytes"}
+    assert trace["used"]["sandbox_seconds"] > 0
+    assert trace["used"]["snapshot_bytes"] > 0
     assert "saved as snap_" in trace["log"]
     assert (await api.developer.get("/v1/sessions/sess_00000000000000000000000000")).status_code == 404
 
@@ -437,6 +443,39 @@ async def test_models_are_not_listed_since_a_model_string_names_its_parts(api: R
         assert (await api.runner.get(path)).status_code == 404
 
 
+async def test_a_body_that_holds_a_nul_character_is_refused_and_says_so(api: Running) -> None:
+    # The database holds no text with a NUL character. A request with one is refused before anything is stored.
+    for path, body in (("/v1/responses", {"model": SHELL_MODEL, "input": "echo a\x00b"}),
+                       ("/v1/environments", {"name": "nul", "variables": {"NOTE": "a\x00b"}})):
+        refused = await api.admin.post(path, json=body)
+        assert refused.status_code == 400, refused.text
+        assert "NUL character" in refused.json()["error"]["message"]
+
+
+async def test_an_environment_says_which_hosts_each_install_was_refused(api: Running) -> None:
+    # A package names no host, so an install that needs one its environment does not allow fails with whatever
+    # its downloader says. The environment's page says which hosts it asked for and was refused.
+    await add_shell(api)
+    shown = (await api.admin.get("/v1/environments/default")).json()
+    assert shown["installs"][0]["refused"] == []
+    image = shown["image_id"]
+    [install] = (await api.stores.harnesses.installs_on(api.org, image)).values()
+    now = datetime.now(UTC)
+    await api.stores.egress.add(api.org, [
+        Connection(install.id, host, port, allowed, "said why", 0, 0, now, now)
+        for host, port, allowed in (("astral.sh", 443, False), ("astral.sh", 443, False), ("pypi.org", 443, True),
+                                    ("mirror.example.com", 8443, False))])
+    shown = (await api.admin.get("/v1/environments/default")).json()
+    assert shown["installs"][0]["refused"] == ["astral.sh", "mirror.example.com:8443"]
+    listed = (await api.admin.get("/v1/environments")).json()["data"]
+    assert "refused" not in listed[0]["installs"][0]             # with the logs: for one environment, not a list
+
+    # Another attempt (the environment now allows the host) starts with nothing refused.
+    await api.stores.harnesses.begin_install(api.org, install.id, environment="default", step_token_hash="step",
+                                             proxy_token_hash="proxy")
+    assert (await api.admin.get("/v1/environments/default")).json()["installs"][0]["refused"] == []
+
+
 # ── usage, audit, platform, organization ────────────────────────────────────────────────────────────
 
 async def test_usage_is_summed_by_what_is_asked(api: Running) -> None:
@@ -447,6 +486,7 @@ async def test_usage_is_summed_by_what_is_asked(api: Running) -> None:
     assert by_harness["group_by"] == "harness"
     [row] = by_harness["data"]
     assert (row["group"], row["turns"], row["input_tokens"], row["bytes_up"]) == ("shell", 3, 0, 0)
+    assert (row["cpu_seconds"], row["memory_peak_bytes"]) == (0, 0)        # the test driver measures nothing
     assert row["snapshot_bytes"] >= 0
     by_day = (await api.developer.get("/v1/usage", params={"group_by": "day"})).json()["data"]
     assert len(by_day) == 1

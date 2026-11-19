@@ -34,6 +34,16 @@ def test_every_path_is_found_once_parents_first_in_name_order(roots: dict[str, P
     assert found[1].location == roots["work"] / "README"
 
 
+def test_a_folder_named_to_be_left_out_is_not_found_and_nor_is_what_it_holds(roots: dict[str, Path]) -> None:
+    (roots["mind"] / ".agent" / "cache" / "deep").mkdir(parents=True)
+    (roots["mind"] / ".agent" / "cache" / "deep" / "big.bin").write_bytes(b"x" * 100)
+    (roots["mind"] / ".agent" / "cache-notes").write_bytes(b"kept")         # a name that only starts the same
+    (roots["work"] / ".agent" / "cache").mkdir(parents=True)                 # the same path in the other folder
+    found = [f.path for f in walk(roots, leave_out=frozenset({"mind/.agent/cache", "mind/not-there"}))]
+    assert found == ["mind/.agent", "mind/.agent/cache-notes", "work/.agent", "work/.agent/cache"]
+    assert measure(roots) == 104                                             # the disk limit counts it all the same
+
+
 def test_modes_and_times_are_reported(roots: dict[str, Path]) -> None:
     script = roots["work"] / "run.sh"
     script.write_bytes(b"#!/bin/sh\n")

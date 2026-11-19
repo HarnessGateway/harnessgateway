@@ -103,8 +103,14 @@ def internal_app(stores: Stores) -> FastAPI:
 
     @app.get("/internal/steps/save/{turn_id}")
     async def save_plan(turn_id: str, caller: Caller) -> dict[str, Any]:
-        _, key = await parent_manifest_key(caller.turn_named(turn_id))
-        return {"manifest_key": key}
+        """What to save on, and what to leave out: the caches of every harness the turn's environment carries,
+        since a session's mind holds the folders of each harness that has worked on it."""
+        turn = caller.turn_named(turn_id)
+        _, key = await parent_manifest_key(turn)
+        carried = (await stores.environments.get(turn.org_id, turn.environment)).harnesses
+        caches = {cache for harness in await stores.harnesses.all(turn.org_id) if harness.manifest.name in carried
+                  for cache in harness.manifest.cache}
+        return {"manifest_key": key, "unsaved": sorted(f"mind/{cache}" for cache in caches)}
 
     @app.put("/internal/steps/save/{turn_id}/manifest")
     async def record(turn_id: str, request: Request, caller: Caller) -> dict[str, Any]:

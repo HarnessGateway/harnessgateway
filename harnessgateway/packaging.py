@@ -44,10 +44,22 @@ def pack(folder: Path) -> bytes:
         for path in _members(folder))
 
 
+# Where the platform image keeps the platform itself as a wheel (spec §18.2). A package that checks packages, as
+# the builder does, installs its checker from the copy laid out beside the kit: the version that runs it.
+PLATFORM_WHEELS = Path("/usr/share/harnessgateway")
+
+
+def _kit() -> list[tuple[str, bool, bytes]]:
+    """What the platform puts in every install: the kit, and its own wheel where it runs from its image."""
+    wheels = sorted(PLATFORM_WHEELS.glob("harnessgateway-*.whl"))
+    return [(f"{KIT_DIR}/hgkit.py", False, Path(hgkit.__file__).read_bytes()),
+            *((f"{KIT_DIR}/{wheel.name}", False, wheel.read_bytes()) for wheel in wheels)]
+
+
 def lay_out(package: Package, target: Path) -> None:
     """Write a package's files into a folder, and the kit beside them: what `install` and `run` find at /harness."""
     files = [(file.path, file.executable, file.content) for file in package.files]
-    for path, executable, content in [*files, (f"{KIT_DIR}/hgkit.py", False, Path(hgkit.__file__).read_bytes())]:
+    for path, executable, content in [*files, *_kit()]:
         location = target / path
         location.parent.mkdir(parents=True, exist_ok=True)
         location.write_bytes(content)

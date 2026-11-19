@@ -2,15 +2,34 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 from harnessgateway import packaging
 from harnessgateway.domain.package import Manifest
 from harnessgateway.errors import NotFound, Refused
 
+DEFAULT_ENVIRONMENT_FILE = "default-environment.json"
+
 
 class Catalog:
     def __init__(self, folder: Path) -> None:
         self._folder = folder
+
+    def default_environment(self) -> dict[str, Any]:
+        """How a new installation's `default` environment is set up so that every package installs and runs in
+        it: fields of an environment (spec §9), from the file of that name beside the packages. Nothing when the
+        catalog has no such file. The environment's name and the harnesses it carries are not the file's to say."""
+        path = self._folder / DEFAULT_ENVIRONMENT_FILE
+        if not path.is_file():
+            return {}
+        try:
+            fields = json.loads(path.read_text())
+        except ValueError as error:
+            raise Refused(f"{DEFAULT_ENVIRONMENT_FILE} of the catalog is not JSON: {error}") from error
+        if not isinstance(fields, dict) or {"name", "harnesses"} & fields.keys():
+            raise Refused(f"{DEFAULT_ENVIRONMENT_FILE} of the catalog must be an object of an environment's fields, "
+                          "without name and harnesses")
+        return fields
 
     def entries(self) -> list[Manifest]:
         """Every valid package in the catalog, by name."""

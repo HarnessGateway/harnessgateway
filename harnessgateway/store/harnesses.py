@@ -207,12 +207,14 @@ class Harnesses:
 
     async def begin_install(self, org_id: str, install_id: str, *, environment: str, step_token_hash: str,
                             proxy_token_hash: str) -> None:
-        """An attempt starts: the install is pending, runs with this environment, and its tokens are these."""
+        """An attempt starts: the install is pending, runs with this environment, and its tokens are these. What
+        an earlier attempt logged and reached is forgotten: the install shows its last attempt."""
         async with self._db.org(org_id) as conn:
             await conn.execute(
                 "UPDATE installs SET status = 'pending', log_tail = '', environment = %s, step_token_hash = %s, "
                 "proxy_token_hash = %s, updated_at = now() WHERE org_id = %s AND id = %s",
                 [environment, step_token_hash, proxy_token_hash, org_id, install_id])
+            await conn.execute("DELETE FROM egress WHERE org_id = %s AND subject_id = %s", [org_id, install_id])
 
     async def end_install(self, org_id: str, install_id: str, *, ready: bool, log: str) -> None:
         """An attempt is over: the install is ready or failed, its log is kept, and its tokens are dead."""
@@ -230,13 +232,13 @@ class Harnesses:
                 "WHERE i.step_token_hash = %s", [token_hash])).fetchone()
         return (row["org_id"], row["id"], row["object_key"]) if row else None
 
-    async def install_of_proxy_token(self, install_id: str, token_hash: str) -> tuple[str, str, Manifest] | None:
-        """The install a proxy token belongs to, while it runs: organization, environment name, and manifest."""
+    async def install_of_proxy_token(self, install_id: str, token_hash: str) -> tuple[str, str] | None:
+        """The install a proxy token belongs to, while it runs: its organization and the environment it is for."""
         async with self._db.system() as conn:
             row = await (await conn.execute(
-                "SELECT i.org_id, i.environment, p.manifest FROM installs i JOIN packages p USING (org_id, digest) "
-                "WHERE i.id = %s AND i.proxy_token_hash = %s", [install_id, token_hash])).fetchone()
-        return (row["org_id"], row["environment"], Manifest.load(row["manifest"])) if row else None
+                "SELECT org_id, environment FROM installs WHERE id = %s AND proxy_token_hash = %s",
+                [install_id, token_hash])).fetchone()
+        return (row["org_id"], row["environment"]) if row else None
 
     async def unused_packages(self) -> list[tuple[str, str, str, list[str]]]:
         """Uploaded packages no harness uses, each as (organization, digest, archive key, its installs' ids)."""

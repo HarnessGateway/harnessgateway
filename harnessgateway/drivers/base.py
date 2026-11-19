@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from harnessgateway.domain.outcome import Measured
 from harnessgateway.domain.plan import BuildPlan, SandboxPlan, StepPlan
 
 OnLine = Callable[[str], Awaitable[None]]
@@ -19,6 +20,7 @@ class SandboxExit:
     exit_code: int | None = None
     out_of_memory: bool = False
     error: str = ""
+    measured: Measured | None = None   # None: this driver could not measure it
 
 
 @dataclass(frozen=True)

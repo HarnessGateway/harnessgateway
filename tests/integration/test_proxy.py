@@ -359,12 +359,27 @@ async def test_when_the_turn_is_over_its_credentials_are_worth_nothing(
         assert (await client.get(f"http://127.0.0.1:{world.http}/echo")).status_code == 407
 
 
-async def test_an_install_reaches_package_managers_and_what_its_manifest_names_and_nothing_else(
+async def test_a_harness_secret_opens_no_host_its_environment_does_not_allow(world: World) -> None:
+    """The environment constrains the agent (spec §3): a package's secret says where its value may go, and
+    adds no host to what a turn reaches."""
+    await world.stores.environments.update(world.org, "default", {"secrets": {}})     # none of its own bound there
+    world.platform._policies.clear()
+    policy = await world.platform.policy(world.turn.id, world.token)
+    assert policy is not None
+    assert [secret.value for secret in policy.secrets_for("localhost", world.https)] == ["the-harness-secret"]
+    assert not policy.egress.decide("localhost", world.https).allowed
+    async with world.client() as client:
+        with pytest.raises(httpx.ProxyError, match="403"):
+            await client.get(f"https://localhost:{world.https}/echo")
+        assert (await client.get(f"http://127.0.0.1:{world.http}/echo")).status_code == 200
+
+
+async def test_an_install_reaches_package_managers_and_what_its_environment_s_setup_names_and_nothing_else(
     world: World, tmp_path: Path
 ) -> None:
+    await world.stores.environments.update(world.org, "default", {"setup": {"egress": [f"127.0.0.1:{world.http}"]}})
     harness = await world.stores.harnesses.add(world.org, demo_archive(
-        tmp_path, name="installing", apis=[], settings={}, secrets={},
-        install={"egress": [f"127.0.0.1:{world.http}"]}))
+        tmp_path, name="installing", apis=[], settings={}, secrets={}))
     install = await world.stores.harnesses.install_for(world.org, harness.digest, "sha256:image")
     token = new_token()
     await world.stores.harnesses.begin_install(world.org, install.id, environment="default",

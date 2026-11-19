@@ -5,7 +5,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, replace
 
-from harnessgateway.domain.events import LineError, RunOutput
+from harnessgateway.domain.events import LineError, RunOutput, storable
 from harnessgateway.domain.handover import handover_line
 from harnessgateway.domain.outcome import Observed, Outcome, decide
 from harnessgateway.domain.plan import (
@@ -46,7 +46,7 @@ class _Log:
         self._size = 0
 
     def add(self, text: str) -> None:
-        self._lines.append(text)
+        self._lines.append(storable(text))
         self._size += len(text) + 1
         while self._size > LOG_TAIL and len(self._lines) > 1:
             self._size -= len(self._lines.popleft()) + 1
@@ -127,7 +127,7 @@ class TurnRunner:
         return await self._stores.turns.conclude(
             turn, decide(seen), output=output.output(), usage=terminal.usage if terminal else None,
             snapshot_id=snapshot.id if snapshot else None, log=record.text(),
-            snapshot_bytes=snapshot.bytes if snapshot else 0)
+            snapshot_bytes=snapshot.bytes if snapshot else 0, measured=seen.measured)
 
     async def _prepare(self, turn: Turn, record: _Log) -> _Ready:
         """Decide everything the turn runs with, and make sure its environment is built and its harness installed."""
@@ -242,6 +242,7 @@ class TurnRunner:
             invalid_output=invalid[0] if invalid else None,
             exit_code=result.exit_code,
             terminal=output.terminal,
+            measured=result.measured,
         )
 
     async def _watch(self, watcher: StepPlan, stop: _Stop) -> None:

@@ -50,7 +50,8 @@ class Database:
 
     @asynccontextmanager
     async def org(self, org_id: str) -> AsyncIterator[Connection]:
-        """A transaction on one organization's rows. It carries the organization's id, for row-level security."""
+        """A transaction on one organization's rows. It carries the organization's id as the setting `hg.org_id`:
+        the core adds no row-level security, and an edition with many organizations adds its policies on this."""
         async with self.system() as conn:
             await conn.execute("SELECT set_config('hg.org_id', %s, true)", [org_id])
             yield conn

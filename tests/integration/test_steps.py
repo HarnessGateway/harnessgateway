@@ -17,7 +17,7 @@ import pytest
 from harnessgateway.domain.contract import SANDBOX_UID
 from harnessgateway.domain.snapshot import CHUNK
 from harnessgateway.ids import new_id
-from harnessgateway.steps.client import InputFile, RestorePlan
+from harnessgateway.steps.client import InputFile, RestorePlan, SavePlan
 from harnessgateway.steps.errors import StepError
 from harnessgateway.steps.restore import restore
 from harnessgateway.steps.save import save
@@ -42,12 +42,14 @@ class LocalClient:
     limit_bytes: int = 100 * MB
     uploaded: list[str] = field(default_factory=list)
     corrupt: bool = False
+    unsaved: tuple[str, ...] = ()                       # the folders the harnesses call caches
 
     async def restore_plan(self, turn_id: str) -> RestorePlan:
         return self.plan
 
-    async def save_plan(self, turn_id: str) -> str | None:
-        return (await self.snapshots.get(self.org, self.parent)).manifest_key if self.parent else None
+    async def save_plan(self, turn_id: str) -> SavePlan:
+        key = (await self.snapshots.get(self.org, self.parent)).manifest_key if self.parent else None
+        return SavePlan(manifest_key=key, unsaved=self.unsaved)
 
     async def record(self, turn_id: str, manifest: str) -> str:
         snapshot = await self.snapshots.record(
@@ -204,6 +206,24 @@ async def test_sockets_and_pipes_are_skipped_and_named(client: LocalClient, root
     assert saved.skipped == ("mind/agent.sock", "work/pipe")
     manifest = await client.snapshots.manifest(client.org, saved.snapshot_id)
     assert list(manifest.entries) == ["work/kept"]
+
+
+async def test_a_harness_s_cache_is_not_saved_and_is_gone_after_a_restore(
+    client: LocalClient, roots: dict[str, Path], tmp_path: Path
+) -> None:
+    (roots["mind"] / ".agent" / "cache").mkdir(parents=True)
+    (roots["mind"] / ".agent" / "cache" / "catalogue.bin").write_bytes(b"x" * 4096)
+    (roots["mind"] / ".agent" / "session.json").write_bytes(b"{}")
+    client.unsaved = ("mind/.agent/cache",)
+    saved = await save(client, new_id("turn"), roots)
+    manifest = await client.snapshots.manifest(client.org, saved.snapshot_id)
+    assert list(manifest.entries) == ["mind/.agent", "mind/.agent/session.json"]
+    assert saved.skipped == ()                          # left out on purpose: nothing to report
+
+    client.plan = replace(EMPTY, manifest_key=(await client.snapshots.get(client.org, saved.snapshot_id)).manifest_key)
+    await restore(client, new_id("turn"), roots, tmp_path / "turn")
+    assert not (roots["mind"] / ".agent" / "cache").exists()
+    assert (roots["mind"] / ".agent" / "session.json").read_bytes() == b"{}"
 
 
 async def test_a_save_over_the_disk_limit_fails_and_records_nothing(

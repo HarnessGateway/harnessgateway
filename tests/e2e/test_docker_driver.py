@@ -36,9 +36,18 @@ async def run(driver: DockerDriver, plan: SandboxPlan) -> tuple[SandboxExit, lis
 
 async def test_a_sandbox_runs_and_its_lines_arrive_in_order(driver: DockerDriver, unique: str) -> None:
     result, out, err = await run(driver, sandbox(unique, 'echo one; echo "$GREETING"; echo problem >&2; echo three'))
-    assert result == SandboxExit(started=True, exit_code=0)
+    assert (result.started, result.exit_code, result.out_of_memory) == (True, 0, False)
     assert out == ["one", "hello there", "three"]
     assert err == ["problem"]
+
+
+async def test_what_a_sandbox_used_is_measured(driver: DockerDriver, unique: str) -> None:
+    busy = ("const held = Buffer.alloc(48 * 1024 * 1024, 1), began = Date.now(); "
+            "while (Date.now() - began < 3000); setTimeout(() => held.length, 1500)")
+    result, _, _ = await run(driver, sandbox(unique, f"node -e '{busy}'"))
+    assert result.measured is not None
+    assert 2.0 < result.measured.cpu_seconds < 5.0             # three seconds of one busy processor
+    assert 48 * 1024 * 1024 < result.measured.memory_peak_bytes < 256 * 1024 * 1024
 
 
 async def test_the_exit_code_is_reported(driver: DockerDriver, unique: str) -> None:

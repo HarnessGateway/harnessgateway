@@ -5,13 +5,16 @@ import base64
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from harnessgateway.domain import contract
 from harnessgateway.domain.events import Line, OutputEvents, read_line
 from harnessgateway.kit import hgkit
 
@@ -185,6 +188,9 @@ def test_empty_text_prints_nothing(printed: Printed) -> None:
 # ── the request ────────────────────────────────────────────────────────────────────────────────────────────
 
 
+MODEL = "default/demo/deepseek/deepseek-flash"
+
+
 def turn(tmp_path: Path, body: dict[str, Any], *, handover: str = "", history: list[Any] | None = None,
          files: dict[str, dict[str, bytes]] | None = None, **variables: str) -> dict[str, str]:
     """A turn's inputs laid out as the platform lays them out, and the variables that point at them."""
@@ -209,15 +215,15 @@ def turn(tmp_path: Path, body: dict[str, Any], *, handover: str = "", history: l
 
 
 def test_a_string_input_is_the_prompt(tmp_path: Path) -> None:
-    request = hgkit.Request(turn(tmp_path, {"model": "demo", "input": "List the files.", "instructions": "Be brief."}))
+    request = hgkit.Request(turn(tmp_path, {"model": MODEL, "input": "List the files.", "instructions": "Be brief."}))
     assert (request.prompt, request.instructions, request.model) == ("List the files.", "Be brief.", "deepseek-flash")
-    assert request.body["model"] == "demo"
+    assert request.body["model"] == MODEL
     assert (request.provider.name, request.provider.api, request.provider.url, request.provider.key) == (
         "deepseek", "anthropic", "https://api.deepseek.com/anthropic", "hgs_0123456789abcdef0123456789abcdef")
 
 
 def test_a_list_input_gives_the_text_of_its_user_messages(tmp_path: Path) -> None:
-    body = {"model": "demo", "input": [
+    body = {"model": MODEL, "input": [
         {"role": "user", "content": "First part."},
         {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "An earlier answer."}]},
         {"type": "message", "role": "user", "content": [
@@ -330,20 +336,39 @@ def test_state_keeps_small_named_values_in_the_mind(tmp_path: Path) -> None:
         state.set("../escape", "x")
 
 
-def test_seeds_are_copied_into_the_mind_without_overwriting(tmp_path: Path) -> None:
+def test_seeds_are_copied_into_the_mind_and_the_work_folder_without_overwriting(tmp_path: Path) -> None:
     variables = turn(tmp_path, {"input": "x"})
-    seeds = Path(variables["HG_HARNESS"]) / "seeds" / "mind"
-    (seeds / ".demo" / "skills").mkdir(parents=True)
-    (seeds / ".demo" / "settings.json").write_text("seeded")
-    (seeds / ".demo" / "skills" / "one.md").write_text("skill")
-    mind = Path(variables["HG_MIND"])
+    seeds = Path(variables["HG_HARNESS"]) / "seeds"
+    (seeds / "mind" / ".demo" / "skills").mkdir(parents=True)
+    (seeds / "mind" / ".demo" / "settings.json").write_text("seeded")
+    (seeds / "mind" / ".demo" / "skills" / "one.md").write_text("skill")
+    (seeds / "work" / ".demo").mkdir(parents=True)
+    (seeds / "work" / "AGENTS.md").write_text("who the agent is")           # some CLIs read theirs from where they run
+    (seeds / "work" / ".demo" / "rules.md").write_text("rules")
+    (seeds / "elsewhere").mkdir()
+    (seeds / "elsewhere" / "stray.txt").write_text("not a place seeds go")
+    mind, work = Path(variables["HG_MIND"]), Path(variables["HG_WORK"])
     (mind / ".demo").mkdir()
     (mind / ".demo" / "settings.json").write_text("the agent's own")
+    (work / "AGENTS.md").write_text("the caller's own")
 
-    hgkit.seed_mind(variables)
+    hgkit.seed(variables)
     assert (mind / ".demo" / "settings.json").read_text() == "the agent's own"
     assert (mind / ".demo" / "skills" / "one.md").read_text() == "skill"
-    hgkit.seed_mind(turn(tmp_path, {"input": "x"}, HG_HARNESS=str(tmp_path / "no-seeds")))     # no seeds: nothing
+    assert (work / "AGENTS.md").read_text() == "the caller's own"
+    assert (work / ".demo" / "rules.md").read_text() == "rules"
+    assert not [*mind.rglob("stray.txt"), *work.rglob("stray.txt")]
+    hgkit.seed(turn(tmp_path, {"input": "x"}, HG_HARNESS=str(tmp_path / "no-seeds")))          # no seeds: nothing
+
+
+def test_the_variables_that_let_a_process_reach_out_are_the_ones_the_platform_sets() -> None:
+    # A CLI starts some processes with an environment of its own choosing (a stdio MCP server is one). They
+    # reach nothing unless these are written into their configuration, each turn: the proxy's address is the turn's.
+    names = (*contract.PROXY_VARIABLES, *contract.NO_PROXY_VARIABLES, *contract.CA_VARIABLES,
+             contract.NODE_PROXY_VARIABLE)
+    given = {name: f"the value of {name}" for name in names}
+    assert hgkit.outbound({**given, "HOME": "/mind", "HG_MODEL": "a-model"}) == given
+    assert hgkit.outbound({"HOME": "/mind"}) == {}              # a turn that is attached to no network
 
 
 # ── running and replaying a CLI ────────────────────────────────────────────────────────────────────────────
@@ -370,6 +395,66 @@ def test_a_cli_s_output_can_be_copied_to_a_file_to_make_a_recording(tmp_path: Pa
     assert recording.read_text() == "one\ntwo\n"
     replayed = hgkit.Cli(["/no/such/program"], env={"HG_REPLAY": str(recording)})
     assert list(replayed.lines()) == ["one", "two"]
+
+
+_STOPPED_RUN = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import hgkit
+
+first = hgkit.Cli(["sh", "-c", sys.argv[2]])
+for line in first.lines():
+    print(line, flush=True)
+time.sleep(float(sys.argv[3]))
+print("after", flush=True)
+for line in hgkit.Cli(["sh", "-c", "echo second"]).lines():
+    print(line, flush=True)
+"""
+
+
+def _run_until_started(tmp_path: Path, command: str, pause: float) -> subprocess.Popen[str]:
+    """A `run` whose first CLI is `command`, which then waits `pause` seconds and starts a second CLI."""
+    script = tmp_path / "run.py"
+    script.write_text(_STOPPED_RUN)
+    run = subprocess.Popen([sys.executable, str(script), str(Path(hgkit.__file__).parent), command, str(pause)],
+                           stdout=subprocess.PIPE, text=True)
+    assert run.stdout is not None
+    assert run.stdout.readline() == "started\n"
+    return run
+
+
+def _stop(run: subprocess.Popen[str]) -> str:
+    """Stop `run` as the platform stops a turn. What it printed after that."""
+    run.send_signal(signal.SIGTERM)
+    try:
+        return run.communicate(timeout=10)[0]
+    finally:
+        run.kill()
+
+
+def test_a_stopped_turn_stops_its_cli_and_ends_run_there(tmp_path: Path) -> None:
+    run = _run_until_started(tmp_path, "echo started; sleep 60; echo finished", 0)
+    assert _stop(run) == ""                         # nothing after the CLI's lines is reached: no second CLI
+    assert run.returncode == 0
+
+
+def test_a_stop_reaches_what_the_cli_left_running_apart_from_itself(tmp_path: Path) -> None:
+    # A CLI that starts a daemon for itself, in a session of its own: the daemon is told to end too, and `run`
+    # ends when it has. Without that it would be killed with the sandbox, in the middle of whatever it does.
+    ended = tmp_path / "ended"
+    daemon = f"trap 'sleep 0.3; echo cleanly > {ended}; exit 0' TERM; sleep 60 & wait"
+    run = _run_until_started(tmp_path, f'setsid sh -c "{daemon}" & echo started; sleep 60', 0)
+    time.sleep(0.5)                                 # the daemon has set its trap
+    assert _stop(run) == ""
+    assert run.returncode == 0
+    assert ended.read_text() == "cleanly\n"
+
+
+def test_a_turn_stopped_between_two_clis_starts_no_other(tmp_path: Path) -> None:
+    run = _run_until_started(tmp_path, "echo started", 60)
+    time.sleep(0.5)                                 # the first CLI has ended; `run` is between the two
+    assert _stop(run) == ""
+    assert run.returncode == -signal.SIGTERM
 
 
 def test_under_a_package_check_ids_are_counted_so_output_is_repeatable() -> None:

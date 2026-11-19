@@ -1,14 +1,16 @@
 """Spec §16: API keys and the organization."""
 
 import dataclasses
+import shutil
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
 from harnessgateway.catalog import Catalog
 from harnessgateway.domain.names import DEFAULT_ORG
 from harnessgateway.domain.principal import Principal
-from harnessgateway.errors import Forbidden, Invalid, NotFound
+from harnessgateway.errors import Forbidden, Invalid, NotFound, Refused
 from harnessgateway.serve import init
 from harnessgateway.settings import Settings
 from harnessgateway.stores import Stores
@@ -128,3 +130,23 @@ async def test_setup_adds_the_packages_that_ship_and_a_default_environment_that_
     assert await init(shipped) is None                     # what was set up once is the organization's to change
     assert await stores.harnesses.all(DEFAULT_ORG) == []
     assert await stores.environments.all(DEFAULT_ORG) == []
+
+
+async def test_the_default_environment_is_set_up_as_the_catalog_says_its_packages_need(
+    stores: Stores, settings: Settings, no_default_org: None, tmp_path: Path,
+) -> None:
+    shutil.copytree(SHELL, tmp_path / "shell")
+    (tmp_path / "default-environment.json").write_text('{"setup": {"egress": ["downloads.example"]}, "disk_mb": 20480}')
+    assert await init(dataclasses.replace(settings, catalog=str(tmp_path))) is not None
+    [default] = await stores.environments.all(DEFAULT_ORG)
+    assert (default.name, default.harnesses) == ("default", ("shell",))
+    assert ([entry.host for entry in default.setup.egress], default.disk_mb) == (["downloads.example"], 20480)
+    assert default.network.allow == ()                     # what the file does not name is as any new environment's
+
+
+@pytest.mark.parametrize("said", ['{"name": "other"}', '{"harnesses": []}', '["shell"]', "not json"])
+def test_a_catalog_says_only_how_the_default_environment_is_set_up(tmp_path: Path, said: str) -> None:
+    (tmp_path / "default-environment.json").write_text(said)
+    with pytest.raises(Refused, match=r"default-environment\.json"):
+        Catalog(tmp_path).default_environment()
+    assert Catalog(tmp_path / "absent").default_environment() == {}

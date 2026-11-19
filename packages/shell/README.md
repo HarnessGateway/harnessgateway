@@ -25,7 +25,7 @@ the session.
 
 | File | What it is |
 |---|---|
-| `harness.json` | The manifest: name, version, which provider APIs the harness speaks, the hosts it needs, its settings and secrets |
+| `harness.json` | The manifest: name, version, which provider APIs the harness speaks, its settings and secrets |
 | `install` | Executable. Runs once per environment image. Puts the CLI under `/harness`. |
 | `run` | Executable. Runs once per turn. Starts the CLI and prints what it does. |
 | `seeds/mind/` | Optional. Files copied into the session's mind on first use. |
@@ -56,13 +56,14 @@ One JSON object per line on standard output:
 Standard error is free text and goes to the turn's log. Exit 0.
 
 The kit at `/harness/kit/hgkit.py` (Python, standard library only) reads the inputs and prints valid lines:
-`Request`, `State`, `seed_mind`, `Cli`, `Emitter`. Using it is optional.
+`Request`, `State`, `seed`, `Cli`, `Emitter`. Using it is optional.
 
 ## Writing a new package
 
 1. Copy this folder. Change `name`, `version` and `description` in `harness.json`. Set `mind` to the CLI's
-   dot directory under `$HOME`, `apis` to the provider APIs it can speak, and the egress lists to the hosts
-   its install and its turns need.
+   dot directory under `$HOME`, and `apis` to the provider APIs it can speak. Say in the README which hosts
+   its install and its turns need beyond the package managers and the provider: a package names no host, and
+   reaches only what the environment that carries it allows.
 2. In `install`, install the CLI at a pinned version under `$HG_HARNESS/tools`, by the CLI's own documented
    method, and check the version you got.
 3. In `run`, start the CLI headless with `hgkit.Cli`, giving it `request.brief()` (the handover, the

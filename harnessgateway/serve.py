@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 import signal
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 
 import uvicorn
@@ -64,8 +64,8 @@ async def opened(settings: Settings, extensions: Extensions) -> AsyncIterator[St
 
 async def init(settings: Settings, *, new_admin_key: bool = False) -> str | None:
     """First-time setup: the organization, the harnesses that ship with the platform, a default environment that
-    carries them all, and the first admin key. Returns the key when it made one. Run again, it changes nothing:
-    what was set up once is the organization's to change.
+    carries them all, set up as the catalog says they need, and the first admin key. Returns the key when it made
+    one. Run again, it changes nothing: what was set up once is the organization's to change.
 
     With `new_admin_key` it makes another admin key even though keys exist: the way back in when every admin
     key is lost. It is run on the host, by someone who could read the database anyway."""
@@ -74,7 +74,7 @@ async def init(settings: Settings, *, new_admin_key: bool = False) -> str | None
             catalog = Catalog(Path(settings.catalog))
             shipped = [(await stores.harnesses.add(DEFAULT_ORG, catalog.archive(m.name))).name
                        for m in catalog.entries()]
-            await stores.environments.ensure_default(DEFAULT_ORG, shipped)
+            await stores.environments.ensure_default(DEFAULT_ORG, shipped, catalog.default_environment())
         existing = await stores.keys.all(DEFAULT_ORG)
         if existing and not new_admin_key:
             return None
@@ -100,8 +100,28 @@ class _Server(uvicorn.Server):
         yield
 
 
+class Broken(Exception):
+    """A part of the platform that must keep running has ended. The process ends with it, to be started again."""
+
+
+async def stopped_or_broken(stop: asyncio.Event, working: Mapping[str, "asyncio.Task[None]"]) -> str | None:
+    """Wait until the process is told to stop, or until one of its workers ends, which none should: a runner
+    that has ended claims no turn, whatever the rest goes on answering. None for a stop; else what ended, and why."""
+    told = asyncio.create_task(stop.wait())
+    try:
+        await asyncio.wait({told, *working.values()}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        told.cancel()
+    for name, task in working.items():
+        if task.done():
+            error = None if task.cancelled() else task.exception()
+            return f"{name} ended: {error!r}" if error else f"{name} ended"
+    return None
+
+
 async def serve(settings: Settings) -> None:
-    """Run the public API, the internal API, the turn runner and housekeeping until told to stop."""
+    """Run the public API, the internal API, the turn runner and housekeeping until told to stop. If the runner
+    or housekeeping ends by itself (the database went away, say), everything is stopped and `Broken` is raised."""
     extensions = Extensions.load(settings.extensions)
     async with opened(settings, extensions) as stores:
         driver = driver_for(settings, extensions)
@@ -132,12 +152,15 @@ async def serve(settings: Settings) -> None:
         await trust_bundle(stores, driver)
         for org in await stores.orgs.all():
             platform.prepare_in_background(org.id)                 # a new version may need a new image
-        working = [asyncio.create_task(runner.run()), asyncio.create_task(Housekeeping(platform).run())]
-        await stop.wait()
+        working = {"the turn runner": asyncio.create_task(runner.run()),
+                   "housekeeping": asyncio.create_task(Housekeeping(platform).run())}
+        broken = await stopped_or_broken(stop, working)
         log.info("stopping: running turns are stopped, saved and ended")
-        for task in working:
+        for task in working.values():
             task.cancel()
-        await asyncio.gather(*working, return_exceptions=True)
+        await asyncio.gather(*working.values(), return_exceptions=True)
         for server in servers:
             server.should_exit = True
         await asyncio.gather(*serving, return_exceptions=True)
+    if broken:
+        raise Broken(broken)

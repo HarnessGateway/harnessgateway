@@ -1,5 +1,64 @@
 # Changelog
 
+## 4.3.0
+
+This version changes the package contract: a manifest that names hosts to reach is refused.
+
+- The environment constrains the agent. A turn reaches its provider and what its environment allows, and
+  nothing else. A harness package no longer adds hosts: `run.egress` and `install.egress` are gone from
+  `harness.json`. A harness secret is still put in only toward the hosts its manifest binds it to, and those
+  hosts are reached only where the environment allows them.
+- An install reaches the package managers and the environment's `setup.egress`, as its setup script does.
+  A CLI that is downloaded from anywhere else needs that host in `setup.egress` of each environment that
+  carries it.
+- Console: a harness's page no longer lists hosts it reaches, and an environment's form asks what "Setup and
+  installs may also reach".
+- An open environment may carry a deny list: any public host, except those it names. Before, a deny list
+  was refused with any mode but `limited`.
+- A turn that is stopped keeps its CLI's session. The kit's `Cli` now ends `run` when the CLI it stopped has
+  ended, so nothing after `lines()` runs: no terminal line, and no second CLI. Before, the four agent
+  packages took a stopped CLI's exit for a session that could not be resumed and started a new one while the
+  turn was being stopped, and the next turn had forgotten the conversation. `Cli.stopped` is gone.
+- A stop reaches everything the CLI started. The kit passes the signal to every process below `run`, a daemon
+  the CLI started for itself included, and waits for them to end. Before, such a daemon was killed with the
+  sandbox part-way through the turn (Hermes then held the session for five minutes).
+- `serve` stops when its turn runner or its housekeeping ends, and exits with code 1, so that what supervises
+  it starts it again. Before, a runner that lost the database went on unnoticed: the process kept accepting
+  requests that nothing would ever run.
+- A NUL character no longer fails a turn. An agent that printed one (the content of a binary file, say) had
+  its turn end as `sandbox_failed` with nothing saved, because the database holds no text with one. In a
+  turn's output and log each becomes U+FFFD; a request body that holds one is refused with `400`.
+- Text that was being printed when a turn was stopped or killed is kept: its message or reasoning item is in
+  the response's output with `status: "incomplete"`. Before, it was streamed and then left out of the response.
+- The runner fills a slot the moment one of its own turns ends, not at its next heartbeat.
+- An environment says which hosts the last attempt of each of its installs asked for and was refused
+  (`installs[].refused`, and on its page in the console): the hosts to add to `setup.egress` when a CLI is downloaded from somewhere the
+  package managers do not cover.
+- Console: the draft editor shows a file as open once its content has arrived, and takes no typing before
+  that; a session page no longer replaces its buttons at every poll, which could lose a click.
+- The README's and the console's examples of a setup script work on the platform's sandbox image, which has
+  pip and npm and no system package manager.
+- Usage has the processor time and the peak memory of each turn's sandbox (`cpu_seconds`,
+  `memory_peak_bytes`), measured by the driver. `GET /v1/usage` reports them, a turn's trace has all its
+  measures as `used`, and the console shows CPU time, peak memory, network out and in, and storage.
+- A package may name `cache` folders in its mind: they are not saved with the session, and the CLI makes
+  them again after a restore. They still count toward the disk limit.
+- Every install is given the platform itself as a wheel, beside the kit. The harness package builder installs
+  its package checker from it; before, it pinned a platform version of its own, and checked packages against
+  an older contract than the one it was told about.
+- The kit has `outbound()`: the proxy and certificate variables of the turn, for a package to write into
+  the configuration of a stdio MCP server, which a CLI starts without them.
+- The kit's `seed_mind()` is `seed()`, and it also copies `seeds/work` into the work folder, for a CLI that
+  reads its instructions only from the folder it runs in.
+- A provider and a harness may speak the Gemini API: `gemini` is a fourth API kind, beside `anthropic`,
+  `openai-responses` and `openai-chat`.
+- The platform ships with 27 harness packages: the CLIs of 26 agent harnesses, each unmodified, and the
+  harness package builder. 22 of them were written by the builder and proven on a platform (the packages
+  repository says how). A new installation adds them all, and its `default` environment carries them all.
+- The catalog may say how a new installation's `default` environment is set up so that every package installs
+  and runs in it: `default-environment.json` beside the packages, holding fields of an environment. The
+  packages that ship ask for one host during setup, `x.ai`, which Grok Build's install downloads from.
+
 ## 4.2.0
 
 This version changes the API: requests and clients written for 4.1 need the changes below.

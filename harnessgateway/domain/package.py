@@ -1,4 +1,8 @@
-"""A harness package's manifest, harness.json (spec §8.2)."""
+"""A harness package's manifest, harness.json (spec §8.2).
+
+It names no host a turn or an install may reach: that is the environment's to say (spec §3, principle 7). A
+secret's hosts say where its value may be put, which narrows.
+"""
 
 import re
 from typing import Annotated, Any, Literal, Self
@@ -35,22 +39,33 @@ def check_declared_names(names: list[str], what: str) -> None:
             raise ValueError(f"{what}: {name} is set by the platform and cannot be used")
 
 
-def _mind(value: str) -> str:
+CACHE_MAX = 16
+
+
+def _under_home(value: str, what: str) -> str:
     parts = value.split("/")
     if not value or len(value) > 255 or any(part in ("", ".", "..") for part in parts):
-        raise ValueError("mind is a path under $HOME with no leading '/', no '..' and no empty part")
+        raise ValueError(f"{what} is a path under $HOME with no leading '/', no '..' and no empty part")
     if parts[0] == STATE_DIR:
-        raise ValueError(f"mind cannot be {STATE_DIR}, which the platform uses")
+        raise ValueError(f"{what} cannot be {STATE_DIR}, which the platform uses")
     return value
 
 
+def _mind(value: str) -> str:
+    return _under_home(value, "mind")
+
+
+def _cache(values: tuple[str, ...]) -> tuple[str, ...]:
+    if len(set(values)) != len(values):
+        raise ValueError("cache names a folder twice")
+    return tuple(_under_home(value, "cache") for value in values)
+
+
 class Install(Definition):
-    egress: Annotated[tuple[HostEntry, ...], entries("install.egress"), AS_WRITTEN] = ()
     timeout_s: Annotated[int, Field(ge=1, le=3600)] = 900
 
 
 class Run(Definition):
-    egress: Annotated[tuple[HostEntry, ...], entries("run.egress"), AS_WRITTEN] = ()
     stop_grace_s: Annotated[int, Field(ge=1, le=300)] = 10
 
 
@@ -78,6 +93,7 @@ class Manifest(Definition):
     version: Annotated[str, Field(pattern=_VERSION)]
     description: Annotated[str, Field(max_length=4000)] = ""
     mind: Annotated[str, AfterValidator(_mind)] | None = None
+    cache: Annotated[tuple[str, ...], Field(max_length=CACHE_MAX), AfterValidator(_cache)] = ()
     apis: Annotated[tuple[ApiName, ...], AfterValidator(_unique_apis)]
     install: Install = Install()
     run: Run = Run()

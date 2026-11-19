@@ -53,6 +53,9 @@ def _serve(_: argparse.Namespace) -> int:
     except SettingsError as e:
         print(f"settings: {e}", file=sys.stderr)
         return 2
+    except serve.Broken as e:
+        print(f"stopped, to be started again: {e}", file=sys.stderr)
+        return 1
     return 0
 
 

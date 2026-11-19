@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from harnessgateway.errors import Refused
-from harnessgateway.steps.client import InputFile, RestorePlan
+from harnessgateway.steps.client import InputFile, RestorePlan, SavePlan
 from harnessgateway.steps.errors import StepError
 
 TIMEOUT_S = 120
@@ -45,9 +45,9 @@ class HttpStepClient:
             manifest_key=plan["manifest_key"], warm=plan["warm"], request=plan["request"], history=plan["history"],
             handover=plan["handover"], files=tuple(InputFile(**file) for file in plan["files"]))
 
-    async def save_plan(self, turn_id: str) -> str | None:
-        key: str | None = (await self._call("GET", f"/internal/steps/save/{turn_id}")).json()["manifest_key"]
-        return key
+    async def save_plan(self, turn_id: str) -> SavePlan:
+        plan = (await self._call("GET", f"/internal/steps/save/{turn_id}")).json()
+        return SavePlan(manifest_key=plan["manifest_key"], unsaved=tuple(plan["unsaved"]))
 
     async def record(self, turn_id: str, manifest: str) -> str:
         response = await self._call("PUT", f"/internal/steps/save/{turn_id}/manifest", content=manifest.encode())
