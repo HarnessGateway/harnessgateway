@@ -4,7 +4,7 @@ import shlex
 
 from harnessgateway.domain.masking import mask
 from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
-from harnessgateway.drivers.docker import LineSplitter, render_build, render_sandbox, render_step
+from harnessgateway.drivers.docker import LineSplitter, proxy_address, render_build, render_sandbox, render_step
 
 SANDBOX = SandboxPlan(
     name="hg-sess_X",
@@ -24,10 +24,10 @@ SANDBOX = SandboxPlan(
 
 
 def test_a_sandbox_is_rendered_as_the_command_of_the_specification() -> None:
-    assert render_sandbox(SANDBOX, runtime=None) == [
+    assert render_sandbox(SANDBOX, runtime=None, hosts={"egress": "10.200.0.82"}) == [
         "docker", "run", "--quiet", "--name", "hg-sess_X", "--init",
         "--label", "hg.org=org_default", "--label", "hg.session=sess_X", "--label", "hg.turn=resp_Y",
-        "--network", "hg-sandbox",
+        "--network", "hg-sandbox", "--add-host", "egress:10.200.0.82",
         "--cpus", "1.5", "--memory", "2048m", "--memory-swap", "2048m", "--pids-limit", "256",
         "--read-only", "--tmpfs", "/tmp:rw,exec,size=512m",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
@@ -44,27 +44,48 @@ def test_the_image_s_own_entrypoint_never_runs_and_the_command_s_arguments_follo
     the image says."""
     from dataclasses import replace
 
-    argv = render_sandbox(replace(SANDBOX, command=["/bin/sh", "-c", "echo hi"]), runtime=None)
+    argv = render_sandbox(replace(SANDBOX, command=["/bin/sh", "-c", "echo hi"]), runtime=None, hosts={})
     assert argv[-5:] == ["--entrypoint", "/bin/sh", "sha256:abc", "-c", "echo hi"]
 
 
 def test_an_isolating_runtime_is_named_when_there_is_one() -> None:
-    argv = render_sandbox(SANDBOX, runtime="runsc")
+    argv = render_sandbox(SANDBOX, runtime="runsc", hosts={})
     assert argv[argv.index("--runtime"):argv.index("--runtime") + 2] == ["--runtime", "runsc"]
-    assert "--runtime" not in render_sandbox(SANDBOX, runtime=None)
+    assert "--runtime" not in render_sandbox(SANDBOX, runtime=None, hosts={})
+
+
+def test_a_sandbox_is_given_the_proxy_s_address_for_its_name() -> None:
+    """Under gVisor a sandbox has a network stack of its own, which Docker's name service for a network does not
+    reach: the name is in the sandbox's hosts file instead, under every runtime."""
+    argv = render_sandbox(SANDBOX, runtime="runsc", hosts={"egress": "10.200.0.82"})
+    assert argv[argv.index("--add-host"):argv.index("--add-host") + 2] == ["--add-host", "egress:10.200.0.82"]
+    assert argv.index("--add-host") < argv.index("--entrypoint")
+    assert "--add-host" not in render_sandbox(SANDBOX, runtime="runsc", hosts={})
+
+
+def test_the_proxy_is_the_container_that_answers_to_its_name_on_the_sandbox_network() -> None:
+    inspected = "\n".join([
+        '{"hg-sandbox": {"Aliases": null, "IPAddress": "10.200.0.83"}}',                       # another sandbox
+        "Error response from daemon: No such object: 5ac25e05",                                # gone meanwhile
+        '{"hg-control": {"Aliases": ["proxy"], "IPAddress": "10.200.0.66"}, '
+        '"hg-sandbox": {"Aliases": ["egress"], "IPAddress": "10.200.0.82"}}',
+    ])
+    assert proxy_address(inspected, "hg-sandbox") == "10.200.0.82"
+    assert proxy_address(inspected, "hg-control") is None       # it answers to the name on the sandbox network only
+    assert proxy_address("", "hg-sandbox") is None
 
 
 def test_a_sandbox_with_no_network_is_attached_to_none() -> None:
     from dataclasses import replace
 
-    argv = render_sandbox(replace(SANDBOX, network=None), runtime=None)
+    argv = render_sandbox(replace(SANDBOX, network=None), runtime=None, hosts={})
     assert argv[argv.index("--network") + 1] == "none"
 
 
 def test_an_install_gets_a_disk_backed_tmp_that_goes_with_the_container() -> None:
     from dataclasses import replace
 
-    argv = render_sandbox(replace(SANDBOX, tmp_mb=None), runtime=None)
+    argv = render_sandbox(replace(SANDBOX, tmp_mb=None), runtime=None, hosts={})
     assert "--tmpfs" not in argv
     assert argv[argv.index("--read-only") + 1:argv.index("--read-only") + 3] == ["--volume", "/tmp"]
 

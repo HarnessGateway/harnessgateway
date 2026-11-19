@@ -55,6 +55,10 @@ This version changes the package contract: a manifest that names hosts to reach 
 - The platform ships with 27 harness packages: the CLIs of 26 agent harnesses, each unmodified, and the
   harness package builder. 22 of them were written by the builder and proven on a platform (the packages
   repository says how). A new installation adds them all, and its `default` environment carries them all.
+- Under gVisor a sandbox reaches the egress proxy. It is given the proxy's address for the name `egress`, in
+  its hosts file. Before, it asked Docker's name service for the network, which a sandbox under gVisor does
+  not reach: nothing that needed the network worked there (an install that downloads, a call to a model).
+  A sandbox on the host's kernel was not affected.
 - `install.sh --with-gvisor` installs gVisor from the one archive its makers now publish (runsc, the
   containerd shim and the helpers runsc needs beside it). The separate binaries it downloaded before are gone
   from their release folder, so the option failed on every version.

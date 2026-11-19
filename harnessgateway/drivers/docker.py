@@ -4,11 +4,12 @@ import asyncio
 import json
 import shlex
 from asyncio.subprocess import PIPE, STDOUT
+from collections.abc import Mapping
 
 from harnessgateway.domain.contract import SANDBOX_UID
 from harnessgateway.domain.events import LINE_MAX
 from harnessgateway.domain.masking import mask
-from harnessgateway.domain.plan import BuildPlan, Mount, SandboxPlan, StepPlan
+from harnessgateway.domain.plan import PROXY_HOST, BuildPlan, Mount, SandboxPlan, StepPlan
 from harnessgateway.drivers.base import BuildResult, DriverError, OnLine, SandboxExit, StepResult
 from harnessgateway.drivers.meter import Meter
 
@@ -34,16 +35,31 @@ def _mounts_and_env(mounts: list[Mount], env: dict[str, str]) -> list[str]:
     return argv
 
 
-def render_sandbox(plan: SandboxPlan, *, runtime: str | None) -> list[str]:
+def proxy_address(inspected: str, network: str) -> str | None:
+    """The address of the container that answers to the egress proxy's name on a network, from what
+    `docker inspect --format '{{json .NetworkSettings.Networks}}'` printed for the containers attached to it:
+    one object a line. A line that is none (a container that went away meanwhile) is passed over."""
+    for line in inspected.splitlines():
+        try:
+            attached = json.loads(line).get(network) or {}
+        except (ValueError, AttributeError):
+            continue
+        if PROXY_HOST in (attached.get("Aliases") or []):
+            return str(attached["IPAddress"])
+    return None
+
+
+def render_sandbox(plan: SandboxPlan, *, runtime: str | None, hosts: Mapping[str, str]) -> list[str]:
     """The command that runs an untrusted container: every hardening flag, none of them optional.
 
     `--quiet`: what the command prints is the container's output and nothing else, even when Docker has to
-    pull the image first."""
+    pull the image first. `hosts` are the names the sandbox is given the address of (spec §7.4)."""
     in_memory, on_disk = f"/tmp:rw,exec,size={plan.tmp_mb}m", "/tmp"      # noqa: S108 - paths inside the sandbox
     tmp = ["--tmpfs", in_memory] if plan.tmp_mb is not None else ["--volume", on_disk]
     return [
         "docker", "run", "--quiet", "--name", plan.name, "--init",
         *_common(plan.labels, plan.network),
+        *[part for name, address in hosts.items() for part in ("--add-host", f"{name}:{address}")],
         *(["--runtime", runtime] if runtime else []),
         "--cpus", f"{plan.cpus:g}", "--memory", f"{plan.memory_mb}m", "--memory-swap", f"{plan.memory_mb}m",
         "--pids-limit", str(plan.pids),
@@ -168,8 +184,26 @@ class DockerDriver:
             output = await self._checked("image", "inspect", "--format", "{{.Id}}", ref)
         return output
 
+    async def _hosts(self, network: str | None) -> dict[str, str]:
+        """The egress proxy's name and its address on a sandbox's network, when the proxy is there (spec §7.4).
+        A sandbox is told the address: under gVisor it has a network stack of its own, which Docker's name
+        service for a network does not reach, and a name it cannot resolve is a proxy it cannot use."""
+        if network is None:
+            return {}
+        code, attached = await self._docker(
+            "network", "inspect", "--format", "{{range $id, $_ := .Containers}}{{$id}} {{end}}", network)
+        if code != 0 or not attached.split():
+            return {}
+        _, inspected = await self._docker(
+            "inspect", "--format", "{{json .NetworkSettings.Networks}}", *attached.split())
+        address = proxy_address(inspected, network)
+        return {PROXY_HOST: address} if address else {}
+
+    async def _render(self, plan: SandboxPlan) -> list[str]:
+        return render_sandbox(plan, runtime=await self._resolve_runtime(), hosts=await self._hosts(plan.network))
+
     async def describe(self, plan: SandboxPlan) -> str:
-        return mask(shlex.join(render_sandbox(plan, runtime=await self._resolve_runtime())))
+        return mask(shlex.join(await self._render(plan)))
 
     async def build(self, plan: BuildPlan, on_line: OnLine) -> BuildResult:
         argv = render_build(plan)
@@ -219,7 +253,7 @@ class DockerDriver:
         return StepResult(code, output[-OUTPUT_TAIL:])
 
     async def run_sandbox(self, plan: SandboxPlan, on_stdout: OnLine, on_stderr: OnLine) -> SandboxExit:
-        argv = render_sandbox(plan, runtime=await self._resolve_runtime())
+        argv = await self._render(plan)
         process = await asyncio.create_subprocess_exec(*argv, stdout=PIPE, stderr=PIPE)
         assert process.stdout is not None
         assert process.stderr is not None
