@@ -39,14 +39,14 @@ if [ "$GVISOR" = true ]; then
   [ "$(uname -s)" = Linux ] || fail "--with-gvisor is for Linux hosts."
   if ! docker info --format '{{json .Runtimes}}' | grep -q runsc; then
     echo "Installing gVisor (runsc), by its official method ..."
-    arch=$(uname -m)
-    base="https://storage.googleapis.com/gvisor/releases/release/latest/${arch}"
+    # Its makers publish one archive: runsc, the containerd shim, and gvisor-bin/, the helpers runsc looks for
+    # beside itself. The zstd one where this host can read it, else the bzip2 one.
+    archive=gvisor.tar.$(command -v zstd >/dev/null 2>&1 && echo zstd || echo bz2)
+    base="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
     tmp=$(mktemp -d)
-    (cd "$tmp" && curl -fsSLO "$base/runsc" -O "$base/runsc.sha512" -O "$base/containerd-shim-runsc-v1" \
-        -O "$base/containerd-shim-runsc-v1.sha512" \
-      && sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512 \
-      && chmod a+rx runsc containerd-shim-runsc-v1 \
-      && sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/)
+    (cd "$tmp" && curl -fsSLO "$base/$archive" -O "$base/$archive.sha512" \
+      && sha512sum -c "$archive.sha512" \
+      && sudo tar -xf "$archive" -C /usr/local/bin)
     rm -rf "$tmp"
     sudo /usr/local/bin/runsc install
     sudo systemctl reload docker || sudo systemctl restart docker

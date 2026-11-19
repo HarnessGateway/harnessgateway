@@ -55,6 +55,9 @@ This version changes the package contract: a manifest that names hosts to reach 
 - The platform ships with 27 harness packages: the CLIs of 26 agent harnesses, each unmodified, and the
   harness package builder. 22 of them were written by the builder and proven on a platform (the packages
   repository says how). A new installation adds them all, and its `default` environment carries them all.
+- `install.sh --with-gvisor` installs gVisor from the one archive its makers now publish (runsc, the
+  containerd shim and the helpers runsc needs beside it). The separate binaries it downloaded before are gone
+  from their release folder, so the option failed on every version.
 - The catalog may say how a new installation's `default` environment is set up so that every package installs
   and runs in it: `default-environment.json` beside the packages, holding fields of an environment. The
   packages that ship ask for one host during setup, `x.ai`, which Grok Build's install downloads from.

@@ -126,16 +126,19 @@ jobs:
             if command -v apk || command -v busybox; then echo "a package manager or BusyBox is left"; exit 1; fi
             test -z "$(find / -xdev -type f -perm /6000 2>/dev/null)"'
       # Each package that ships with the platform installs on the sandbox image as the platform installs it: as
-      # user 10000, into /harness with the kit beside it, on a read-only image with a scratch /tmp. A package that
-      # no longer installs (a new npm that skips install scripts, a moved download) fails here, not for a user.
+      # user 10000, into /harness with the kit and the platform's own wheel beside it, on a read-only image with a
+      # scratch /tmp. A package that no longer installs (a new npm that skips install scripts, a moved download)
+      # fails here, not for a user.
       - name: Every package that ships with the platform installs on the sandbox image
         run: |
           git clone --depth 1 https://github.com/HarnessGateway/harness-packages /tmp/harness-packages
+          wheel=$(mktemp -d) platform=$(docker create harnessgateway:ci)
+          docker cp "$platform:/usr/share/harnessgateway/." "$wheel" && docker rm "$platform" >/dev/null
           for manifest in /tmp/harness-packages/*/harness.json; do
             name=$(jq -r .name "$manifest") version=$(jq -r .version "$manifest")
             dir=$(mktemp -d)
             cp -r "$(dirname "$manifest")/." "$dir/"
-            mkdir -p "$dir/kit" && cp harnessgateway/kit/hgkit.py "$dir/kit/"
+            mkdir -p "$dir/kit" && cp harnessgateway/kit/hgkit.py "$wheel"/harnessgateway-*.whl "$dir/kit/"
             sudo chown -R 10000:10000 "$dir"
             echo "::group::$name $version"
             docker run --rm --user 10000:10000 --read-only --tmpfs /tmp:rw,exec --volume "$dir:/harness" \
