@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.4.1
+
+This version changes no code.
+
+- A walkthrough of the console's Providers, Environments and Harnesses pages, with screenshots:
+  `docs/console-setup.md`. For each part of each page it says what the part shows, the API call behind it and
+  what the platform does with that call. The README links to it.
+
 ## 4.4.0
 
 This version changes the API: the audit log is no longer in the core.

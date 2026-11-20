@@ -113,7 +113,8 @@ Every part is named, always: nothing is filled in for you. The model is everythi
   files, and add it.
 - **A console.** Chat with any harness and see what it made beside the reply; a transcript, a trace and the
   files of every session; a harness editor; a playground; manage providers, environments,
-  harnesses and keys.
+  harnesses and keys. [The Setup pages, part by part](docs/console-setup.md) shows what each part of the
+  Providers, Environments and Harnesses pages does and the API call behind it.
 
 ## Harness packages
 
