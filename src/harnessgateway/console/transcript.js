@@ -10,9 +10,12 @@ const SHOWN = 20000;                             // the most of one step's input
 export const inputText = input => typeof input === "string" ? input : (input || []).filter(item => !item.role || item.role === "user")
   .flatMap(item => typeof item.content === "string" ? [item.content] : (item.content || []).map(part => part.text || part.filename || part.file_id || "")).join("\n");
 
-/** An agent's words as nodes: a fenced block as code, a `span` as code, the rest as it is. */
+/** A line's `code` and **strong** words as nodes. */
+const marked = text => text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/).map((piece, at) => at % 2 === 0 ? piece
+  : piece[0] === "`" ? h("code", {}, piece.slice(1, -1)) : h("b", {}, piece.slice(2, -2)));
+/** An agent's words as nodes: a fenced block as code, a heading as one, and the rest as it is, line for line. */
 const prose = text => text.split(/```[^\n]*\n([\s\S]*?)```\n?/).map((part, at) => at % 2 ? h("pre", {}, part.replace(/\n$/, ""))
-  : part.replace(/^\n+|\n+$/g, "").split(/`([^`\n]+)`/).map((piece, inside) => inside % 2 ? h("code", {}, piece) : piece));
+  : part.replace(/^\n+|\n+$/g, "").split(/^#{1,6} (.*)$/m).map((piece, heading) => heading % 2 ? h("b", { class: "heading" }, marked(piece)) : marked(piece)));
 
 /** One output item as a step the agent took ({label, body}), or as what came of one ({output}); both carry the
  *  call's id, which is how the two are put together. */
