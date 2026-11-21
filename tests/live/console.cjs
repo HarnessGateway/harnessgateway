@@ -242,6 +242,25 @@ const api = async (method, path, body) => {
     expect(await page.inputValue("select[title=Harness]") === HARNESS, "the environment's harness is not offered");
     expect(await page.isHidden("select[title=Provider]") && await page.isHidden("input[title=Model]"), "a provider is asked for by a harness that calls none");
   });
+  await check("a harness no provider can serve says which provider to add, and is not what a new chat starts on", async () => {
+    await page.route("**/v1/providers?*", route => route.fulfill({ json: { object: "list", data: [], has_more: false } }));
+    await go("#/sessions"); await go("#/chat");
+    const speaking = (await api("GET", "/v1/harnesses")).data.find(each => each.manifest.apis.length);
+    const carrying = speaking && (await api("GET", "/v1/environments")).data.find(each => each.harnesses.includes(speaking.name) && each.harnesses.length > 1);
+    if (carrying) {                                // the installation has a harness that calls a model
+      await page.selectOption("select[title=Environment]", carrying.name);
+      expect(await page.inputValue("select[title=Harness]") !== speaking.name, "a new chat starts on a harness that cannot run yet");
+      await page.selectOption("select[title=Harness]", speaking.name);
+      await page.waitForSelector(".line-bar .needs:visible");
+      expect((await page.textContent(".line-bar .needs")).includes(speaking.manifest.apis[0]), "it does not say which API a provider must speak");
+      await page.fill(".composer textarea", "hello"); await page.press(".composer textarea", "Enter");
+      await toast("Add a provider");
+      await shot("09-chat-needs-provider");
+    }
+    await page.unroute("**/v1/providers?*");
+    await go("#/sessions"); await go("#/chat");
+    await page.selectOption("select[title=Environment]", ENVIRONMENT);
+  });
   await check("a message runs in a sandbox and its reply arrives", async () => {
     const reply = await say("echo hello from the console > note.txt; cat note.txt; cat .started");
     const text = await reply.locator(".text").textContent();

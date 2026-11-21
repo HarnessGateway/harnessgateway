@@ -32,6 +32,7 @@ export async function chat(main, params) {
   const list = h("div", { class: "list" }), log = h("div", { class: "log" }), made = h("div", { class: "made" });
   const environmentPick = h("select", { title: "Environment" }), harnessPick = h("select", { title: "Harness" }), providerPick = h("select", { title: "Provider" });
   const modelPick = h("input", { title: "Model", placeholder: "model" }), calls = h("span", { style: "display:contents" }, "/", providerPick, "/", modelPick);
+  const needs = h("a", { class: "needs", href: "#/providers" });    // shown in their place when no provider can serve the harness
   const input = h("textarea", { rows: 1, placeholder: "Message the agent…" });
   const send = h("button", { class: "primary square", title: "Send" }, icon("send")), stop = h("button", { class: "square", title: "Stop", hidden: true }, icon("stop"));
   // This browser's chats, newest first: {id, title, model, session, exchanges: [{text, response}]}.
@@ -43,15 +44,23 @@ export async function chat(main, params) {
   // the model line: four parts, each offered only what can follow the one before it
   const harness = () => harnesses.find(found => found.name === harnessPick.value);
   const alone = () => !harness() || !harness().manifest.apis.length;          // it calls no model: none/none
+  /** The providers that speak an API the harness of this name speaks. */
+  const serving = name => providers.filter(found => ((harnesses.find(each => each.name === name) || {}).manifest || { apis: [] }).apis
+    .some(api => api in found.apis)).map(found => found.name);
   const line = () => [environmentPick.value, harnessPick.value, alone() ? "none" : providerPick.value, alone() ? "none" : modelPick.value.trim()].join("/");
   const offer = (select, names, wanted) => add(clear(select), names.map(name => h("option", { value: name, selected: name === wanted }, name)));
   const offerProviders = (wanted, model) => {
-    offer(providerPick, harness() ? providers.filter(found => harness().manifest.apis.some(api => api in found.apis)).map(found => found.name) : [], wanted);
-    calls.hidden = alone();
+    const able = serving(harnessPick.value);
+    offer(providerPick, able, wanted);
+    calls.hidden = alone() || !able.length;
+    needs.hidden = alone() || able.length > 0;
+    needs.textContent = alone() ? "" : `Add a provider that speaks ${harness().manifest.apis.join(" or ")}`;
     modelPick.value = model || used[providerPick.value] || "";
   };
   const offerHarnesses = (wanted, ...rest) => {
-    offer(harnessPick, (environments.find(found => found.name === environmentPick.value) || { harnesses: [] }).harnesses, wanted);
+    const carried = (environments.find(found => found.name === environmentPick.value) || { harnesses: [] }).harnesses;
+    const runs = name => !harnesses.find(each => each.name === name)?.manifest.apis.length || serving(name).length > 0;
+    offer(harnessPick, carried, carried.includes(wanted) ? wanted : carried.find(runs));       // unasked: one that can run now
     offerProviders(...rest);
   };
   const pick = model => {
@@ -122,6 +131,7 @@ export async function chat(main, params) {
   async function submit() {
     const words = input.value.trim();
     if (!words || running) return;
+    if (!needs.hidden) return fail(new Error(`${needs.textContent}, under Providers.`));
     if (!alone() && !modelPick.value.trim()) return fail(new Error("Name the model: any model the provider serves."));
     input.value = ""; input.style.height = "";
     if (!alone()) { used[providerPick.value] = modelPick.value.trim(); write(MODELS, used); }
@@ -145,7 +155,7 @@ export async function chat(main, params) {
   input.oninput = () => { input.style.height = ""; input.style.height = `${Math.min(input.scrollHeight, 200)}px`; };
 
   add(clear(main), h("div", { class: "chat" }, list, h("div", { class: "middle" },
-    h("div", { class: "line-bar" }, environmentPick, "/", harnessPick, calls), log, h("div", { class: "composer" }, input, stop, send)), made));
+    h("div", { class: "line-bar" }, environmentPick, "/", harnessPick, calls, needs), log, h("div", { class: "composer" }, input, stop, send)), made));
   pick((current || chats[0] || {}).model || `${environments.find(found => found.harnesses.length).name}/`);
   showList();
   await showMade();
