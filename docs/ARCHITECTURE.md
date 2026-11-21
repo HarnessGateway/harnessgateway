@@ -14,7 +14,7 @@ Everything else may change. These are what users, packages and editions are writ
    against the SDK's response type. The only field with a meaning of the platform's own is `model`.
 2. **The three definitions** (providers, environments, harnesses) share one shape: a name, a definition, and
    secrets sealed beside it. They have one set of verbs.
-3. **The harness package** is `harness.json`, `install` and `run` ([PACKAGES.md](PACKAGES.md)). The platform knows
+3. **The harness package** is `harness.json`, `install` and `run` ([PACKAGES.md](../src/harnessgateway/defaults/harness-package-builder/guide/PACKAGES.md)). The platform knows
    no agent CLI: everything about one is in its package.
 4. **The sandbox** is what a package finds inside it: `/mind`, `/work`, `/turn`, `/harness`, the variables, the
    proxy. It has a version, which a package names.
@@ -49,6 +49,8 @@ the process that answers need not be the one that runs the turn.
 | `proxy/` | The sandbox's only way out | A process of its own, with no database and no sealing key: what faces untrusted code holds nothing worth stealing but the secrets of sandboxes running right now |
 | `api/` | HTTP in, HTTP out | It validates and delegates; it decides nothing |
 | `extensions.py` | The seams | So that an edition adds to the core instead of changing it |
+| `defaults/` | What an organization starts with | Given once, at setup, through the same stores as anything an organization adds: the platform still knows no harness |
+| `console/` | The pages people use the platform through | A client of the API, served beside it: it has no route of its own, so the API is whole without it |
 
 Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain`; `store` and `driver` use
 `domain`; `domain` uses nothing.

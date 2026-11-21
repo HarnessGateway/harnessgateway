@@ -11,8 +11,8 @@ one field of the request:
 Change any part and the agent built on the API does not change: the same request, the same session, the same
 files. A harness that calls no model is `environment/harness/none/none`.
 
-This repository is the open-source core: one host, Docker, one organization, API keys. It is an API; nothing in
-it needs a console.
+This repository is the open-source core: one host, Docker, one organization, API keys. It is an API, and it comes
+with a console for it: a client of that API, which nothing in the API needs.
 
 ## Run it
 
@@ -20,16 +20,29 @@ it needs a console.
 ./install.sh                    # builds the image, starts it, and prints the first API key, once
 ```
 
+Then open `http://127.0.0.1:8000` and sign in with the key: that is the console. Or use the API alone.
+
 It is one image run twice (`serve`: the API and the turn runner; `proxy`: the egress proxy) and PostgreSQL. Each
 turn is one more container, started through the Docker socket and gone when the turn ends. With gVisor (`runsc`)
 installed, sandboxes run under it; without it, isolation is `none`, and the log says so at every start.
+
+## What it starts with
+
+| | |
+|---|---|
+| `default` | An environment on a common image (`node:22`), with the default limits and network |
+| `shell` | The smallest harness: it runs a request's input as a command. `default/shell/none/none` tries an environment before any agent is set up |
+| `harness-package-builder` | An agent that writes harness packages for other agent CLIs. Add a provider that speaks the Anthropic API, ask it for a package, and add what it wrote from its session |
+
+They are given once, at setup, and are yours from then on: change them, delete them, add your own. Nothing else
+ships: no provider, and no other agent.
 
 ## The three things you define
 
 | | | |
 |---|---|---|
 | **Provider** | `PUT /v1/providers/{name}` | A model endpoint: each API shape it speaks at a base URL, and a key |
-| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([docs/PACKAGES.md](docs/PACKAGES.md)) |
+| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([the package contract](src/harnessgateway/defaults/harness-package-builder/guide/PACKAGES.md)) |
 | **Environment** | `PUT /v1/environments/{name}` | Where turns run: image, limits, network, variables, secrets, a startup script, and the harnesses it carries |
 
 ```sh
@@ -83,6 +96,12 @@ Blocking, `stream`, `background`, `store`, cancel, delete and input items work a
 A response's `metadata.hg_session` names its session; `cntr_` and the rest of that id is its container. A refusal
 is the OpenAI error envelope, and names the field that was wrong.
 
+## The console
+
+Chat, the three definitions, sessions and usage, at `/console` on the API's own address. It calls only the routes
+above, with the key you sign in with, so anything it does a program can do the same way. The chat in it is an
+application built on the Responses API alone. `HG_CONSOLE=off` serves the API without it.
+
 ## Editions
 
 The core is complete by itself, and it is also what every other edition is built on. An edition is a package the
@@ -101,7 +120,8 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `src/harnessgateway/api/` | The routes |
 | `src/harnessgateway/extensions.py` | The seams an edition builds on |
 | `src/harnessgateway/kit/hgkit.py` | What a package's `run` may import: the mapping between a Responses request and a CLI |
-| `examples/shell/` | The smallest harness package |
+| `src/harnessgateway/defaults/` | What an organization starts with: the `default` environment, and the `shell` and `harness-package-builder` packages |
+| `src/harnessgateway/console/` | The console: plain JavaScript modules and one stylesheet, served as they are |
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) says how the parts work together.
 
@@ -112,6 +132,7 @@ uv run ruff check . && uv run mypy          # lint, and strict types
 uv run pytest tests/unit                    # the rules
 tests/run.sh                                # everything, on a real database (the installation must be up)
 HG_URL=… HG_KEY=hg_… python3 tests/live/turns.py     # a running installation, in real containers
+HG_URL=… HG_KEY=hg_… node tests/live/console.cjs     # every page of its console, in a real browser (Playwright)
 ```
 
 Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

@@ -10,6 +10,7 @@
 - **Rules are pure.** Anything that can be decided without I/O lives in `domain/` and is decided there.
 - **Validate at every boundary**, and refuse with a message that names what was wrong and what is allowed.
 - **The platform knows no harness.** Anything about one agent CLI belongs in its package.
+- **The console is a client.** It calls the public API and nothing else: what it needs, the API gives everyone.
 - **The Responses API is not extended.** No request field, no response field, no route under its paths.
 - **An edition extends at a seam.** A change that makes the core know about an edition is the wrong change.
 - **No secret** in any file, log, test, commit or error message.
@@ -25,6 +26,7 @@ uv run ruff check . && uv run mypy          # lint, and strict types
 uv run pytest tests/unit                    # the rules: no database, no Docker
 ./install.sh && tests/run.sh                # everything, on a real database
 HG_URL=http://127.0.0.1:8000 HG_KEY=hg_… python3 tests/live/turns.py     # real containers
+HG_URL=http://127.0.0.1:8000 HG_KEY=hg_… node tests/live/console.cjs     # the console, in a real browser
 ```
 
 A change starts with a test that fails without it: unit for a rule, integration for a store, the runner or the

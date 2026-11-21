@@ -10,3 +10,6 @@ The first version of the open-source core.
 - An egress proxy that enforces each environment's network and keeps secrets out of sandboxes.
 - Sessions as their requests and responses; usage as CPU, memory, network and storage.
 - The seams an edition builds on, and a sample extension that uses each.
+- A console at `/console`: chat, providers, environments, harnesses, sessions and usage.
+- What an organization starts with: the `default` environment, and the `shell` and `harness-package-builder`
+  harnesses.

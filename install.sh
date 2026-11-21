@@ -57,9 +57,11 @@ echo
 [ "${ready:-}" = 1 ] || { docker compose logs --tail 40 serve >&2; fail "it did not become ready; its last log lines are above."; }
 cat <<DONE
 HarnessGateway is running.
-  API:       http://$(kept HG_BIND):${port}
+  Console:   http://$(kept HG_BIND):${port}/console/   (sign in with the API key)
+  API:       http://$(kept HG_BIND):${port}/v1
   Settings:  $(pwd)/.env  (it holds the installation's secrets; keep it)
-Next: add a provider, a harness and an environment through the API, and send a request. README.md walks through it.
+It starts with the default environment and two harnesses: shell, to try an environment, and harness-package-builder,
+to write packages for other agents. Next: add a provider. README.md walks through the rest.
 Lost the key: docker compose exec serve harnessgateway init --new-key
 To update it: run this installer again.     To stop it: docker compose down
 DONE
