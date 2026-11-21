@@ -1,0 +1,44 @@
+"""The command line: `serve` (the platform), `proxy` (the egress proxy) and `init` (the first API key)."""
+
+import argparse
+import asyncio
+import logging
+import os
+import sys
+
+from harnessgateway import __version__
+from harnessgateway.settings import ProxySettings, Settings, SettingsError
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="harnessgateway", description=__doc__)
+    parser.add_argument("--version", action="version", version=__version__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("serve", help="run the API and the turn runner")
+    commands.add_parser("proxy", help="run the egress proxy")
+    init = commands.add_parser("init", help="make the first API key, and print it")
+    init.add_argument("--new-key", action="store_true", help="make another key even though keys exist")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=os.environ.get("HG_LOG_LEVEL", "info").upper(),
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    try:
+        if args.command == "proxy":                # imported where it runs: the proxy never loads the platform
+            from harnessgateway.proxy.control import run_proxy
+            asyncio.run(run_proxy(ProxySettings.from_env(os.environ)))
+            return 0
+        from harnessgateway.serve import Broken, serve
+        from harnessgateway.serve import init as make_key
+        settings = Settings.from_env(os.environ)
+        if args.command == "init":
+            key = asyncio.run(make_key(settings, new_key=args.new_key))
+            print(f"API key (shown once): {key}" if key else "Already set up: the API key was printed the first time.")
+            return 0
+        try:
+            asyncio.run(serve(settings))
+        except Broken as broken:
+            print(f"harnessgateway: {broken}", file=sys.stderr)
+            return 1
+        return 0
+    except SettingsError as wrong:
+        print(f"harnessgateway: {wrong}", file=sys.stderr)
+        return 2
