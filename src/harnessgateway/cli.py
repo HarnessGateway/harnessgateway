@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=os.environ.get("HG_LOG_LEVEL", "info").upper(),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)     # it logs every request: the platform's own log is lost in it
     try:
         if args.command == "proxy":                # imported where it runs: the proxy never loads the platform
             from harnessgateway.proxy.control import run_proxy
