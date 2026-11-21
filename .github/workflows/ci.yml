@@ -1,0 +1,27 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: hg
+          POSTGRES_PASSWORD: hg
+          POSTGRES_DB: hg_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U hg" --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra dev
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run pytest tests/unit tests/integration
+        env:
+          HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
