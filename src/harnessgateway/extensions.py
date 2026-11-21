@@ -3,7 +3,7 @@
 An extension is a class named in HG_EXTENSIONS as `module:Class`. It subclasses `Extension` and overrides the
 seams it uses; every seam's default is the core's own behaviour. An edition never patches the core. It replaces
 a part (who is calling, what they may do, where sandboxes run, where bytes are kept, how secrets are sealed), is
-asked before a turn starts, hears what happened, or adds routes and schema of its own.
+asked before a turn starts, hears what happened, or adds routes, schema and console pages of its own.
 """
 
 import importlib
@@ -64,6 +64,11 @@ class Extension:
         """Folders of schema files, applied after the core's."""
         return []
 
+    def console(self) -> Path | None:
+        """A folder of files served with the console's own, at the same paths. Its `edition.js` names the pages
+        it adds; a file of any other of the console's names takes that file's place."""
+        return None
+
 
 class Extensions:
     """Every loaded extension, asked in the order they were named."""
@@ -114,3 +119,6 @@ class Extensions:
 
     def migrations(self) -> list[Path]:
         return [folder for extension in self._all for folder in extension.migrations()]
+
+    def console(self) -> list[Path]:
+        return [folder for extension in self._all if (folder := extension.console()) is not None]
