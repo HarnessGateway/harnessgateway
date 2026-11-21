@@ -50,8 +50,8 @@ class HostEntry:
 
     @classmethod
     def parse(cls, value: object) -> "HostEntry":
-        if not isinstance(value, str) or not value or value != value.strip():
-            raise Invalid(f"a host entry is host, *.suffix or host:port: {value!r}")
+        if not isinstance(value, str) or not value or value != value.strip() or "/" in value:
+            raise Invalid(f"a host entry is host, *.suffix or host:port, with no scheme and no path: {value!r}")
         text = value.lower()
         host, colon, port = text.rpartition(":")
         if not colon or _address(text) is not None:          # no port, or a bare IPv6 address
@@ -59,7 +59,7 @@ class HostEntry:
         if port and not (port.isdigit() and 1 <= int(port) <= 65535):
             raise Invalid(f"a port is 1 to 65535: {value!r}")
         if _address(host) is None and not _HOSTNAME.fullmatch(host):
-            raise Invalid(f"a host entry is host, *.suffix or host:port, with no scheme and no path: {value!r}")
+            raise Invalid(f"a host entry is host, *.suffix or host:port: {value!r}")
         return cls(host, int(port) if port else None)
 
     def __str__(self) -> str:
