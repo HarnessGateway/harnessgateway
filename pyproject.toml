@@ -50,7 +50,7 @@ ignore = ["S101"]                # assert states what must hold; it guards nothi
 "src/harnessgateway/kit/hgkit.py" = ["UP", "S603"]   # runs in any image on Python 3.9; starting a CLI is its job
 "src/harnessgateway/store/**" = ["S608"]                # queries are built from constants; every value is a parameter
 "tests/**" = ["E501", "S"]                            # a test reads better with its assertion on one line
-"examples/**" = ["E501", "S"]
+"src/harnessgateway/defaults/**" = ["S603", "S108"]   # the builder's trial runs a package's programs: that is its job
 
 [tool.mypy]
 python_version = "3.12"

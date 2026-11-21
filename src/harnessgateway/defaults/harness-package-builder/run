@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""run: one turn of the harness package builder, which is Claude Code told how this platform's packages are made.
+
+Claude Code is started headless and prints one JSON object a line (`--output-format stream-json`): the provider's
+own stream events as they arrive, each finished assistant message, each tool's result, and a last `result` line.
+This reads those lines and prints what the platform takes.
+"""
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))
+
+import hgkit  # noqa: E402 - the kit is found through the path set above
+
+HARNESS = os.environ["HG_HARNESS"]
+CLAUDE = os.path.join(HARNESS, "tools", "node_modules", ".bin", "claude")
+ROLE = ("You are the harness package builder of HarnessGateway, running in one of its sandboxes. Before anything "
+        f"else, in every session, read {HARNESS}/guide/BUILDER.md and work as it says. It describes this platform "
+        "as it is installed here: trust it over anything you remember about HarnessGateway.")
+SHOWN = 100_000                                    # the most of one file's content that is printed as a diff
+
+
+def command(request, session):
+    """Claude Code, headless, acting without asking: the sandbox is what holds it."""
+    args = [CLAUDE, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+            "--dangerously-skip-permissions", "--append-system-prompt", "\n\n".join(filter(None, [ROLE, request.instructions]))]
+    servers = {server["server_label"]: {"type": "http", "url": server["server_url"],
+                                        **({"headers": server["headers"]} if server.get("headers") else {})}
+               for server in request.mcp_servers if server.get("server_label") and server.get("server_url")}
+    if servers:
+        args += ["--mcp-config", json.dumps({"mcpServers": servers})]
+    return args + (["--resume", session] if session else [])
+
+
+def environment(request):
+    """How Claude Code is told its provider. The key is a placeholder: the egress proxy puts the real one in."""
+    return {**os.environ, "ANTHROPIC_BASE_URL": request.provider_url, "ANTHROPIC_AUTH_TOKEN": request.provider_key,
+            "ANTHROPIC_MODEL": request.model, "ANTHROPIC_SMALL_FAST_MODEL": request.model,     # its background model
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": request.model,                                    # the same, by its newer name
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1"}
+
+
+def marked(text, mark):
+    """Text as the lines of a diff."""
+    return "".join(f"{mark}{line}\n" for line in str(text).splitlines())[:SHOWN]
+
+
+def text_of(content):
+    """A tool result's text: Claude Code gives a string, or a list of blocks."""
+    return content if isinstance(content, str) else "\n".join(
+        block.get("text", "") for block in content or [] if isinstance(block, dict))
+
+
+def used(emit, name, given, block):
+    """Print one finished tool call as the kind of step it was."""
+    output, failed = text_of(block.get("content")), bool(block.get("is_error"))
+    if name == "Bash":
+        emit.ran(given.get("command", ""), "" if failed else output, output if failed else "", int(failed))
+    elif name == "Write" and not failed:
+        emit.wrote(given.get("file_path", ""), marked(given.get("content", ""), "+"))
+    elif name in ("Edit", "MultiEdit") and not failed:
+        emit.edited(given.get("file_path", ""), "".join(
+            marked(edit.get("old_string", ""), "-") + marked(edit.get("new_string", ""), "+")
+            for edit in given.get("edits") or [given])[:SHOWN])
+    elif name.startswith("mcp__") and name.count("__") >= 2:
+        _, server, tool = name.split("__", 2)
+        emit.called(server, tool, given, None if failed else output, output if failed else None)
+    else:
+        emit.used(name, json.dumps(given), output)
+
+
+def turn(request, emit, state, session):
+    """Run Claude Code once. Returns whether it reached its last line, and its exit code."""
+    cli = hgkit.Cli(command(request, session), env=environment(request), stdin=request.brief(instructions=False))
+    calls, streamed, ended = {}, False, False      # tool calls awaiting results; whether a message came in pieces
+    for line in cli.lines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            emit.log(line)                         # not one of its events: something it printed aside
+            continue
+        kind, inner, own = event.get("type"), event.get("event") or {}, not event.get("parent_tool_use_id")
+        if ended:
+            continue
+        if kind == "system" and event.get("subtype") == "init" and event.get("session_id"):
+            state.set("session", event["session_id"])          # kept at once: a stopped turn is continued too
+        elif kind == "stream_event" and own:                   # a subagent's words are not the answer
+            delta = inner.get("delta") or {}
+            streamed = streamed and inner.get("type") != "message_start"
+            if delta.get("type") in ("text_delta", "thinking_delta"):
+                streamed = True
+                emit.say(delta.get("text", "")) if delta["type"] == "text_delta" else emit.think(delta.get("thinking", ""))
+        elif kind == "assistant":
+            for block in (event.get("message") or {}).get("content") or []:
+                if block.get("type") == "tool_use":
+                    calls[block.get("id")] = (block.get("name", ""), block.get("input") or {})
+                elif own and not streamed:                     # it did not arrive in pieces: say it whole
+                    emit.say(block.get("text", "")) if block.get("type") == "text" else emit.think(block.get("thinking", ""))
+            streamed = False
+        elif kind == "user":
+            for block in (event.get("message") or {}).get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                    used(emit, *calls.pop(block["tool_use_id"]), block)
+        elif kind == "result":
+            counted, ended = event.get("usage") or {}, True
+            cached = counted.get("cache_read_input_tokens", 0)
+            usage = {"input_tokens": counted.get("input_tokens", 0) + cached + counted.get("cache_creation_input_tokens", 0),
+                     "output_tokens": counted.get("output_tokens", 0), "input_tokens_details": {"cached_tokens": cached}}
+            if event.get("is_error") or event.get("subtype") != "success":
+                emit.failed(str(event.get("subtype") or "cli_error"),
+                            str(event.get("result") or f"Claude Code ended with {event.get('subtype')}")[:2000], usage)
+            else:
+                emit.done(usage)
+    return ended, cli.exit_code
+
+
+def main():
+    request, emit, state = hgkit.Request(), hgkit.Emitter(), hgkit.State()
+    session = state.get("session")
+    ended, code = turn(request, emit, state, session)
+    if session and not ended and code != 0:
+        # Its own record of the session is gone or unusable (a stopped turn can leave it so): start a new one.
+        emit.log(f"Claude Code could not resume session {session} (exit code {code}): starting a new one")
+        state.clear("session")
+        ended, code = turn(request, emit, state, None)
+    if not ended:
+        emit.failed("cli_exit", f"Claude Code exited with code {code} without a result.")
+
+
+if __name__ == "__main__":
+    main()
