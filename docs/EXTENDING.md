@@ -62,7 +62,7 @@ package and the sandbox. An extension builds around them and never changes what 
 
 A driver implements `harnessgateway.driver.base.Driver`: keep the folders a plan names, move a session's files
 between them and a `ChunkStore`, run a `SandboxPlan`, and say what it used. A plan is plain data and says nothing
-about how to run it. The Docker driver is 200 lines and is the reference.
+about how to run it. The Docker driver is about 200 lines and is the reference.
 
 ## Many organizations
 

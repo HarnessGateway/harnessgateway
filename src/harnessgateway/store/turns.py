@@ -50,8 +50,6 @@ class Turn:
     output: list[dict[str, Any]]
     usage: dict[str, Any] | None
     snapshot_id: str | None
-    store: bool
-    cancel_requested: bool
     log: str
     created_at: datetime
     started_at: datetime | None

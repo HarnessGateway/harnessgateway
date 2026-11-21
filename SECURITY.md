@@ -4,7 +4,7 @@ HarnessGateway runs code an agent wrote. Please report anything that lets that c
 allows, and anything that exposes a secret.
 
 **Report privately**, through this repository's security advisories ("Report a vulnerability"), not in a public
-issue. Say what you did, what happened and what you expected. You will get an answer within three working days.
+issue. Say what you did, what happened and what you expected.
 
 ## What the core promises
 

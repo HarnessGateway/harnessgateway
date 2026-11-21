@@ -83,7 +83,7 @@ When the turn is stopped, `run` is sent `SIGTERM` and has `run.stop_grace_s` sec
 it is optional.
 
 ```python
-import os, sys
+import json, os, sys
 sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))
 import hgkit
 
