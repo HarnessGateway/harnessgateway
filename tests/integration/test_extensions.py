@@ -54,6 +54,8 @@ async def test_an_edition_replaces_parts_is_asked_and_told_and_adds_its_own_with
             assert edition.heard[0][1]["by"] == "admin" and "sk-real" not in str(edition.heard)
             audit = (await http.get("/v1/audit", headers=reader)).json()["data"]         # its own route, on its own table
             assert [row["name"] for row in audit] == names
+            assert 'id: "audit"' in (await http.get("/console/edition.js")).text         # its page in the console
+            assert (await http.get("/console/app.js")).status_code == 200                # beside the core's own
     finally:
         running.cancel()
         await asyncio.gather(running, return_exceptions=True)

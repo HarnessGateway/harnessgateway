@@ -99,3 +99,6 @@ class Edition(Extension):
 
     def migrations(self) -> list[Path]:
         return [Path(__file__).parent / "edition_schema"]
+
+    def console(self) -> Path | None:
+        return Path(__file__).parent / "edition_console"
