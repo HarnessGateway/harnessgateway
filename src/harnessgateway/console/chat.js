@@ -73,15 +73,17 @@ export async function chat(main, params) {
   async function showMade() {
     clear(made).append(h("h2", {}, "Files"));
     if (!current || !current.session) return add(made, h("p", { class: "muted small" }, "What the agent writes in /work shows here."));
-    const container = containerOf(current.session), files = await all(`/v1/containers/${container}/files`).catch(() => []);
+    // One page of them: a session may hold many thousands, and the conversation does not wait for a list.
+    const container = containerOf(current.session), listed = await get(`/v1/containers/${container}/files?limit=100`).catch(() => ({ data: [] }));
     const open = async file => {
       const content = await (await get(`/v1/containers/${container}/files/${file.id}/content`, { raw: true })).blob();
       const link = h("a", { href: URL.createObjectURL(content), download: file.path.split("/").pop() });
       link.click();
       URL.revokeObjectURL(link.href);
     };
-    add(made, files.length ? files.map(file => h("div", { class: "file" }, h("button", { class: "link", onclick: () => open(file).catch(fail) }, file.path.replace(/^\/work\//, "")),
-      h("span", {}, bytes(file.bytes)))) : h("p", { class: "muted small" }, "Nothing yet."));
+    add(made, listed.data.length ? listed.data.map(file => h("div", { class: "file" }, h("button", { class: "link", title: file.path, onclick: () => open(file).catch(fail) }, file.path.replace(/^\/work\//, "")),
+      h("span", {}, bytes(file.bytes)))) : h("p", { class: "muted small" }, "Nothing yet."),
+      listed.has_more && h("p", { class: "muted small" }, "The first 100 are shown."));
   }
 
   function showList() {
@@ -158,7 +160,7 @@ export async function chat(main, params) {
     h("div", { class: "line-bar" }, environmentPick, "/", harnessPick, calls, needs), log, h("div", { class: "composer" }, input, stop, send)), made));
   pick((current || chats[0] || {}).model || `${environments.find(found => found.harnesses.length).name}/`);
   showList();
-  await showMade();
+  showMade().catch(fail);
   if (!current) add(log, h("div", { class: "empty", style: "max-width:520px;margin:14vh auto 0;border:0" },
     h("h1", { style: "margin-bottom:8px;color:var(--ink)" }, "What should the agent do?"), "Each chat is one session: its files and the agent's own memory carry from message to message, and every message runs in a fresh sandbox."));
 

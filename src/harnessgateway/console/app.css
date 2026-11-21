@@ -137,7 +137,7 @@ pre { margin: 6px 0; padding: 12px 14px; background: var(--sunk); border-radius:
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 
 /* chat */
-.chat { display: grid; grid-template-columns: 232px 1fr 264px; height: 100%; }
+.chat { display: grid; grid-template-columns: 232px 1fr 264px; grid-template-rows: minmax(0, 1fr); height: 100%; }   /* a long conversation scrolls in its own column */
 .chat .list { border-right: 1px solid var(--line); padding: 14px 10px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .chat .list > button { justify-content: center; margin-bottom: 10px; }
 .chat .list a { display: flex; align-items: center; height: 34px; padding: 0 4px 0 10px; border-radius: 8px; color: var(--muted); }
@@ -154,7 +154,8 @@ pre { margin: 6px 0; padding: 12px 14px; background: var(--sunk); border-radius:
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .composer textarea { border: 0; font: 14px/1.5 var(--sans); min-height: 40px; max-height: 200px; resize: none; padding: 9px 8px; } .composer textarea:focus { box-shadow: none; }
 .chat .made { border-left: 1px solid var(--line); padding: 16px 16px; overflow: auto; } .chat .made h2 { margin-top: 2px; }
-.chat .made .file { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; } .chat .made .file span { color: var(--faint); font-size: 12px; margin-left: auto; white-space: nowrap; }
+.chat .made .file { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; }
+.chat .made .file button { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .chat .made .file span { color: var(--faint); font-size: 12px; margin-left: auto; white-space: nowrap; }
 .start { max-width: 520px; margin: 14vh auto 0; padding: 0 20px; } .start h1 { margin-bottom: 8px; } .start .step { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--line);
          border-radius: 12px; margin-top: 10px; background: var(--surface); } .start .step:hover { border-color: var(--line-strong); }
 .start .num { width: 26px; height: 26px; border-radius: 99px; display: grid; place-items: center; font-weight: 600; font-size: 12.5px; background: var(--sunk); color: var(--muted); flex: none; }
@@ -166,6 +167,7 @@ pre { margin: 6px 0; padding: 12px 14px; background: var(--sunk); border-radius:
 .reply .who { font: 500 12px var(--mono); color: var(--faint); margin-bottom: 6px; }
 .reply .text { white-space: pre-wrap; word-break: break-word; margin: 8px 0; } .reply .text pre { margin: 8px 0; white-space: pre; }
 code { font: 12.5px var(--mono); background: var(--sunk); padding: 1px 5px; border-radius: 5px; }
+.reply .text b { font-weight: 650; } .reply .text .heading { font-size: 15px; letter-spacing: -.01em; }
 .reply details, .reply .step { margin: 6px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .reply .step { padding: 7px 12px 7px 26px; font: 12.5px var(--mono); color: var(--muted); }
 .reply summary { cursor: pointer; padding: 7px 12px; font: 12.5px var(--mono); color: var(--muted); list-style: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
