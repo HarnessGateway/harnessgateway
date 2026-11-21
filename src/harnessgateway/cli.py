@@ -1,4 +1,4 @@
-"""The command line: `serve` (the platform), `proxy` (the egress proxy) and `init` (the first API key)."""
+"""The command line: `serve` (the platform), `proxy` (the egress proxy) and `init` (the first-time setup)."""
 
 import argparse
 import asyncio
@@ -16,7 +16,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("serve", help="run the API and the turn runner")
     commands.add_parser("proxy", help="run the egress proxy")
-    init = commands.add_parser("init", help="make the first API key, and print it")
+    init = commands.add_parser("init", help="set the installation up: its defaults, and its first API key, printed")
     init.add_argument("--new-key", action="store_true", help="make another key even though keys exist")
     args = parser.parse_args(argv)
     logging.basicConfig(level=os.environ.get("HG_LOG_LEVEL", "info").upper(),

@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Iterator
 import uvicorn
 from starlette.applications import Starlette
 
-from harnessgateway import __version__
+from harnessgateway import __version__, defaults
 from harnessgateway.api.app import internal_app, public_app
 from harnessgateway.domain import contract
 from harnessgateway.domain.sandbox import TRUST_FOLDER
@@ -45,13 +45,17 @@ async def opened(settings: Settings) -> AsyncIterator[Platform]:
 
 
 async def init(settings: Settings, *, new_key: bool = False) -> str | None:
-    """Make the first API key. Returns the key when it made one. With `new_key` it makes another even though
-    keys exist: the way back in when every key is lost. It is run on the host, by someone who could read the
-    database anyway."""
+    """Set the installation up: give its organization the defaults, then make the first API key. Returns the key
+    when it made one. The defaults come before the key and only with the first one, so a setup that was
+    interrupted is finished by running it again, and one that is finished is never repeated. With `new_key` it
+    makes another key even though keys exist: the way back in when every key is lost. It is run on the host, by
+    someone who could read the database anyway."""
     async with opened(settings) as platform:
         existing = await platform.keys.all(DEFAULT_ORG)
         if existing and not new_key:
             return None
+        if not existing:
+            await defaults.give(platform, DEFAULT_ORG)
         return (await platform.keys.create(DEFAULT_ORG, "made on the host" if existing else "first key"))[1]
 
 
