@@ -1,0 +1,7 @@
+# Only what the image is built from is sent to the builder.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src

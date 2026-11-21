@@ -1,0 +1,57 @@
+[project]
+name = "harnessgateway-core"
+version = "0.1.0"
+description = "Agent infrastructure: any agent harness CLI, run in a sandbox, behind the OpenAI Responses API."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "starlette>=0.40",           # the HTTP routes
+    "uvicorn>=0.30",             # serves them
+    "python-multipart>=0.0.9",   # file uploads, as the Files API sends them
+    "psycopg[binary,pool]>=3.2", # PostgreSQL
+    "pydantic>=2.8",             # validates definitions
+    "openai>=1.60",              # its types are what a request, an event and a response are validated against
+    "cryptography>=43",          # seals secrets, and signs the certificates the egress proxy shows
+    "certifi>=2024.8",           # the public roots a sandbox trusts beside the platform's own
+    "httpx>=0.27",               # the proxy's calls to the platform, and the Docker daemon's stats
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11"]
+
+[project.scripts]
+harnessgateway = "harnessgateway.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harnessgateway"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q -ra"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S"]
+ignore = ["S101"]                # assert states what must hold; it guards nothing a caller can reach
+
+[tool.ruff.lint.per-file-ignores]
+"src/harnessgateway/kit/hgkit.py" = ["UP", "S603"]   # runs in any image on Python 3.9; starting a CLI is its job
+"tests/**" = ["E501", "S"]                            # a test reads better with its assertion on one line
+"examples/**" = ["E501", "S"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]

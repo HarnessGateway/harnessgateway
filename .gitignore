@@ -1,0 +1,11 @@
+# local settings: they hold an installation's keys
+.env
+
+__pycache__/
+*.egg-info/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+dist/
+.DS_Store
