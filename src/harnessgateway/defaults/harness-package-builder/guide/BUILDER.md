@@ -28,7 +28,8 @@ minutes unless you give it a longer limit: give installs and trial turns ten.
 | `/work/.scratch/` | Your experiments: notes, sample output |
 | `/work/.trial/<name>/` | Made by the trial: stand-ins for `/harness`, `/mind`, `/work` and `/turn` |
 
-Everything under `/work` is saved with the session. `/tmp` is small and lost when the turn ends.
+Everything under `/work` is saved with the session after every turn, and the person sees it listed beside the
+chat: keep it small. `/tmp` is small too, and lost when the turn ends.
 
 ## What you can reach
 
@@ -97,7 +98,9 @@ to allow it in this environment (Environments, the environment, Network) and sen
 - `run` and the CLI write nothing under `/harness` during a turn: it is read-only there. What the CLI wants to
   write goes to the mind, by the CLI's own option or variable for that.
 - No key, token or placeholder is in any file of the package.
-- `/work/<name>/` holds the package and nothing else.
+- `/work/<name>/` holds the package and nothing else, and `/work` holds that folder and nothing else: once the
+  trial has passed, remove `/work/.scratch` and `/work/.trial`. A CLI installed there is hundreds of megabytes saved
+  with every turn, and the trial makes it again in a minute when you need it.
 
 ## Handing over
 
