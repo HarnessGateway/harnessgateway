@@ -1,7 +1,8 @@
 """Providers, environments and harnesses: one table and one set of verbs, with their secrets sealed beside them.
 Also what a harness is made from (its package) and made into (its install for an image)."""
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -16,7 +17,7 @@ from harnessgateway.domain.sealing import Sealer
 from harnessgateway.errors import Invalid, NotFound
 from harnessgateway.ids import check_name, new_id
 from harnessgateway.store.blobs import BlobStore
-from harnessgateway.store.db import Database
+from harnessgateway.store.db import Connection, Database
 
 LOG_MAX = 64 * 1024
 _ROW = "kind, name, spec, sealed, created_at, updated_at"
@@ -42,6 +43,20 @@ class Resource:
         if self.kind == "harnesses":
             said["missing"] = Harness.load(self.spec).missing(set(self.sealed))
         return said
+
+
+@dataclass(frozen=True)
+class Install:
+    """A package installed, or being installed, for an image, by whoever holds it."""
+
+    id: str
+    ready: bool
+    _conn: Connection
+
+    async def end(self, *, ready: bool, log: str) -> None:
+        """Record how an attempt to install it ended."""
+        await self._conn.execute("UPDATE installs SET status = %s, log = %s, updated_at = now() WHERE id = %s",
+                                 ["ready" if ready else "failed", log[-LOG_MAX:], self.id])
 
 
 def package_key(org_id: str, digest: str) -> str:
@@ -192,23 +207,21 @@ class Resources:
 
     # installs: a package installed for an image
 
-    async def install_for(self, org_id: str, digest: str, image_id: str) -> tuple[str, bool]:
-        """The id of the install of a package for an image (the one there is, or a new one), and whether it is
-        ready to run."""
+    @asynccontextmanager
+    async def installing(self, org_id: str, digest: str, image_id: str) -> AsyncIterator["Install"]:
+        """The install of a package for an image (the one there is, or a new one), held for as long as the block
+        lasts: no other turn, in this process or another, installs the same thing meanwhile."""
         async with self._db.tx(org_id) as conn:
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                               [f"{org_id}/{digest}/{image_id}"])
             await conn.execute(
                 "INSERT INTO installs (id, org_id, digest, image_id, status) VALUES (%s, %s, %s, %s, 'pending') "
                 "ON CONFLICT (org_id, digest, image_id) DO NOTHING", [new_id("install"), org_id, digest, image_id])
             row = await (await conn.execute(
                 "SELECT id, status FROM installs WHERE org_id = %s AND digest = %s AND image_id = %s",
                 [org_id, digest, image_id])).fetchone()
-        assert row is not None
-        return row["id"], row["status"] == "ready"
-
-    async def end_install(self, org_id: str, install_id: str, *, ready: bool, log: str) -> None:
-        await self._db.run(org_id, "UPDATE installs SET status = %s, log = %s, updated_at = now() "
-                                   "WHERE org_id = %s AND id = %s",
-                           ["ready" if ready else "failed", log[-LOG_MAX:], org_id, install_id])
+            assert row is not None
+            yield Install(row["id"], row["status"] == "ready", conn)
 
     async def unused_installs(self) -> list[str]:
         """Forget the packages no harness has been made from for an hour. The ids of their installs, whose

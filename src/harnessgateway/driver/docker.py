@@ -24,7 +24,7 @@ _NEVER_STARTED = "0001-01-01T00:00:00Z"        # what Docker reports as the star
 _PROXY_ADDRESS_S = 5.0                         # how long the proxy's address is believed: a restarted one moved
 
 
-def command(plan: SandboxPlan, *, name: str, label: str, volume: str, network: str, runtime: str | None = None,
+def command(plan: SandboxPlan, *, name: str, volume: str, network: str, runtime: str | None = None,
             proxy_address: str | None = None) -> list[str]:
     """The command that runs a sandbox. `--quiet` so that what it prints is the container's output and nothing
     else. The sandbox is told the proxy's address: under gVisor it has a network stack of its own, which
@@ -36,7 +36,7 @@ def command(plan: SandboxPlan, *, name: str, label: str, volume: str, network: s
     tmp = (["--tmpfs", f"/tmp:rw,exec,size={plan.tmp_mb}m"] if plan.tmp_mb is not None  # noqa: S108
            else ["--volume", "/tmp"])  # noqa: S108
     return [
-        "docker", "run", "--quiet", "--name", name, "--label", label, "--init",
+        "docker", "run", "--quiet", "--name", name, "--init",
         "--network", network if plan.networked else "none",
         *(["--add-host", f"{PROXY_HOST}:{proxy_address}"] if plan.networked and proxy_address else []),
         *(["--runtime", runtime] if runtime else []),
@@ -94,7 +94,7 @@ class DockerDriver:
     name = "docker"
 
     def __init__(self, *, namespace: str, data: Path, runtime: str = "auto") -> None:
-        self._namespace = namespace                # names every container it makes, and labels each
+        self._namespace = namespace                # names every container it makes
         self._volume = f"{namespace}-data"         # the data volume, as Docker knows it
         self._network = f"{namespace}-sandbox"     # internal: its only other member is the egress proxy
         self._folders = LocalFolders(data / FOLDERS)
@@ -178,7 +178,7 @@ class DockerDriver:
 
     async def run(self, plan: SandboxPlan, on_stdout: OnLine, on_stderr: OnLine) -> SandboxExit:
         name = self._container(plan.name)
-        argv = command(plan, name=name, label=self._namespace, volume=self._volume, network=self._network,
+        argv = command(plan, name=name, volume=self._volume, network=self._network,
                        runtime=await self._isolating_runtime(),
                        proxy_address=await self._proxy_address() if plan.networked else None)
         process = await asyncio.create_subprocess_exec(*argv, stdout=PIPE, stderr=PIPE)
@@ -209,9 +209,5 @@ class DockerDriver:
     async def stop(self, name: str, grace_s: int) -> None:
         await self._docker("stop", "--time", str(grace_s), self._container(name))
 
-    async def reap(self) -> list[str]:
-        left = (await self._checked("ps", "--all", "--filter", f"label={self._namespace}",
-                                    "--format", "{{.Names}}")).split()
-        if left:
-            await self._docker("rm", "--force", "--volumes", *left)
-        return left
+    async def discard(self, name: str) -> None:
+        await self._docker("rm", "--force", "--volumes", self._container(name))

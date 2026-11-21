@@ -169,3 +169,9 @@ CREATE TABLE platform (
     name   text PRIMARY KEY,
     value  jsonb NOT NULL
 );
+
+-- Work one process does on a timer though several may run: when each kind was last done.
+CREATE TABLE rounds (
+    name  text PRIMARY KEY,
+    at    timestamptz NOT NULL
+);

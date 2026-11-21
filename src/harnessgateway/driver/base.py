@@ -80,5 +80,5 @@ class Driver(Protocol):
     async def stop(self, name: str, grace_s: int) -> None:
         """Stop a sandbox by its plan's name. Stopping what is not running is not an error."""
 
-    async def reap(self) -> list[str]:
-        """Remove every sandbox this installation left behind. Their names."""
+    async def discard(self, name: str) -> None:
+        """Remove whatever is left of a sandbox whose runner is gone, running or not."""
