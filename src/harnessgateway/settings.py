@@ -49,6 +49,7 @@ class Settings:
     max_turns: int                             # how many turns one process runs at once
     idle_s: int                                # how long a session's folders are kept warm after its last turn
     extensions: tuple[str, ...]                # `module:Class`, in the order they are asked
+    console: bool                              # whether the console's pages are served beside the API
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -61,13 +62,17 @@ class Settings:
         runtime = _text(env, "HG_RUNTIME", "auto")
         if runtime not in ("auto", "runsc", "runc"):
             raise SettingsError(f"HG_RUNTIME is auto, runsc or runc: {runtime!r}")
+        console = _text(env, "HG_CONSOLE", "on")
+        if console not in ("on", "off"):
+            raise SettingsError(f"HG_CONSOLE is on or off: {console!r}")
         data = Path(_text(env, "HG_DATA", "/data"))
         return cls(
             database_url=_text(env, "HG_DATABASE_URL"), secret_key=key, proxy_key=_text(env, "HG_PROXY_KEY"),
             data=data, blobs=_text(env, "HG_BLOBS", str(data / "blobs")), namespace=_text(env, "HG_NAMESPACE", "hg"),
             driver=_text(env, "HG_DRIVER", "docker"), runtime=runtime, port=_number(env, "HG_PORT", 8000),
             internal_port=_number(env, "HG_INTERNAL_PORT", 8001), max_turns=_number(env, "HG_MAX_TURNS", 8),
-            idle_s=_number(env, "HG_IDLE_S", 3600), extensions=_listed(env, "HG_EXTENSIONS"))
+            idle_s=_number(env, "HG_IDLE_S", 3600), extensions=_listed(env, "HG_EXTENSIONS"),
+            console=console == "on")
 
 
 @dataclass(frozen=True)

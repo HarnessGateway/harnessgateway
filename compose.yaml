@@ -38,6 +38,7 @@ services:
       HG_RUNTIME: ${HG_RUNTIME:-auto}
       HG_MAX_TURNS: ${HG_MAX_TURNS:-8}
       HG_EXTENSIONS: ${HG_EXTENSIONS:-}
+      HG_CONSOLE: ${HG_CONSOLE:-on}
       HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock      # how it starts sandboxes, and measures them
