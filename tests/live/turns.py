@@ -3,7 +3,8 @@ limits, secrets on the wire). Standard library only.
 
     HG_URL=http://127.0.0.1:8000 HG_KEY=hg_... python3 tests/live/turns.py
 
-It adds a `shell` harness and a few environments to the installation, and runs about twenty-five short turns.
+It adds a provider and a few environments named live-… to the installation, runs about twenty-five short turns on
+the `shell` harness, and removes what it added and the sessions it made.
 """
 import io
 import json
@@ -16,8 +17,8 @@ import urllib.error
 import urllib.request
 
 KEY, URL = os.environ["HG_KEY"], os.environ.get("HG_URL", "http://127.0.0.1:8000").rstrip("/")
-SHELL = pathlib.Path(__file__).parent.parent.parent / "examples" / "shell"
-results = []
+SHELL = pathlib.Path(__file__).parent.parent.parent / "src" / "harnessgateway" / "defaults" / "shell"
+results, sessions_made = [], set()
 
 
 def call(method, path, body=None, raw=False):
@@ -32,7 +33,9 @@ def call(method, path, body=None, raw=False):
 
 
 def turn(line, text, **more):
-    return call("POST", "/v1/responses", {"model": line, "input": text, **more})[1]
+    response = call("POST", "/v1/responses", {"model": line, "input": text, **more})[1]
+    sessions_made.add(response.get("metadata", {}).get("hg_session"))
+    return response
 
 
 def said(response):
@@ -80,16 +83,16 @@ with tarfile.open(fileobj=archive, mode="w:gz") as tar:
 status, made = call("PUT", "/v1/harnesses/shell", archive.getvalue())
 check("a package a user brings becomes a harness", status == 200 and made["manifest"]["name"] == "shell", made.get("digest", made)[:12] if status == 200 else made)
 base = {"image": "node:22", "harnesses": ["shell"]}
-for name, more in (("default", {}), ("py", {"image": "python:3.13-slim"}), ("tiny", {"disk_mb": 64}), ("quick", {"timeout_s": 5}),
-                   ("small", {"image": "python:3.13-slim", "memory_mb": 256, "tmp_mb": 64}), ("closed", {"network": {"mode": "closed"}}),
-                   ("scripted", {"variables": {"TEAM": "demo"}, "scripts": {"startup": "echo \"ready for $TEAM\" > READY.txt"}}),
-                   ("broken", {"scripts": {"startup": "echo it broke; exit 3"}})):
+for name, more in (("live", {}), ("live-py", {"image": "python:3.13-slim"}), ("live-tiny", {"disk_mb": 64}), ("live-quick", {"timeout_s": 5}),
+                   ("live-small", {"image": "python:3.13-slim", "memory_mb": 256, "tmp_mb": 64}), ("live-closed", {"network": {"mode": "closed"}}),
+                   ("live-scripted", {"variables": {"TEAM": "demo"}, "scripts": {"startup": "echo \"ready for $TEAM\" > READY.txt"}}),
+                   ("live-broken", {"scripts": {"startup": "echo it broke; exit 3"}})):
     status, made = call("PUT", f"/v1/environments/{name}", {**base, **more})
     assert status == 200, made
 status, refused = call("PUT", "/v1/environments/none", {"harnesses": ["shell"]})
 check("an environment without an image is refused", status == 400 and refused["error"]["param"] == "image", refused["error"]["message"])
 
-a = turn("default/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls /harness/kit; ls /")
+a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls /harness/kit; ls /")
 out = said(a)
 check("a turn runs as user 10000 on a read-only root, with home /mind, in /work, and sees only its own folders",
       a["status"] == "completed" and out.startswith("10000") and "Read-only file system" in out and "/mind /work" in out
@@ -97,10 +100,10 @@ check("a turn runs as user 10000 on a read-only root, with home /mind, in /work,
 if a["status"] != "completed":
     sys.exit(1)
 session = a["metadata"]["hg_session"]
-b = turn("py/shell/none/none", "cat hello.txt; python3 --version; node --version || echo no-node", previous_response_id=a["id"])
+b = turn("live-py/shell/none/none", "cat hello.txt; python3 --version; node --version || echo no-node", previous_response_id=a["id"])
 check("the next turn, on another image, continues the same folders", b["status"] == "completed" and said(b).startswith("hello")
       and "no-node" in said(b) and b["metadata"]["hg_session"] == session, repr(said(b)))
-c = turn("default/shell/none/none", "cat hello.txt; echo fork > fork.txt; ls", previous_response_id=a["id"])
+c = turn("live/shell/none/none", "cat hello.txt; echo fork > fork.txt; ls", previous_response_id=a["id"])
 check("continuing from an earlier turn forks a new session from its snapshot", c["status"] == "completed"
       and c["metadata"]["hg_session"] != session and "hello" in said(c))
 check("a session's work is read as an OpenAI container", content(b, "/work/hello.txt") == b"hello\n"
@@ -108,22 +111,22 @@ check("a session's work is read as an OpenAI container", content(b, "/work/hello
 kept = turns_of(b)
 check("a session is the requests and responses it is made of", [each["response"]["id"] for each in kept] == [a["id"], b["id"]]
       and kept[1]["request"]["previous_response_id"] == a["id"] and kept[1]["response"]["output"] == b["output"])
-d = turn("scripted/shell/none/none", "cat READY.txt")
+d = turn("live-scripted/shell/none/none", "cat READY.txt")
 check("an environment's startup script runs before the harness, with its variables", said(d) == "ready for demo\n", repr(said(d)))
-e = turn("broken/shell/none/none", "echo never")
+e = turn("live-broken/shell/none/none", "echo never")
 check("a startup script that fails fails the turn, and the log says how", reason(e) == ("failed", "startup_failed")
       and "the startup script exited with code 3" in turns_of(e)[0]["log"], turns_of(e)[0]["log"][-80:])
 
-f = turn("default/shell/none/none", "for u in https://example.com https://pypi.org/simple/ ; do curl -s -o /dev/null -w \"%{http_code} \" $u; done; echo; "
+f = turn("live/shell/none/none", "for u in https://example.com https://pypi.org/simple/ ; do curl -s -o /dev/null -w \"%{http_code} \" $u; done; echo; "
          "curl -s https://example.com 2>&1 | head -c 0; curl -s -m 5 --noproxy '*' -o /dev/null https://pypi.org/simple/ || echo direct-failed")
 check("the network is the proxy's: an unlisted host is refused, a registry answers, and nothing goes direct",
       said(f).startswith("000 200") and "direct-failed" in said(f), repr(said(f)))
-g = turn("closed/shell/none/none", "curl -s -m 5 -o /dev/null https://pypi.org/simple/ || echo no-network; env | grep -c -i proxy || true")
+g = turn("live-closed/shell/none/none", "curl -s -m 5 -o /dev/null https://pypi.org/simple/ || echo no-network; env | grep -c -i proxy || true")
 check("a closed environment with no model to call has no network at all", "no-network" in said(g) and said(g).strip().endswith("0"), repr(said(g)))
-status, _ = call("PUT", "/v1/environments/withsecret", {**base, "image": "python:3.13-slim", "network": {"allow": ["httpbin.org"]}, "secrets": {
+status, _ = call("PUT", "/v1/environments/live-secret", {**base, "image": "python:3.13-slim", "network": {"allow": ["httpbin.org"]}, "secrets": {
     "DEMO_TOKEN": {"hosts": ["httpbin.org"], "value": "real-value-for-httpbin"},
     "DEMO_HEADER": {"hosts": ["httpbin.org"], "header": "X-Demo", "prefix": "Key ", "value": "injected-value"}}})
-h = turn("withsecret/shell/none/none", "echo in-sandbox=$DEMO_TOKEN; python3 -c \"import urllib.request, os, ssl; "
+h = turn("live-secret/shell/none/none", "echo in-sandbox=$DEMO_TOKEN; python3 -c \"import urllib.request, os, ssl; "
          "print('strict', bool(ssl.create_default_context().verify_flags & ssl.VERIFY_X509_STRICT)); "
          "print(urllib.request.urlopen(urllib.request.Request('https://httpbin.org/headers', headers={'Authorization': 'Bearer ' + os.environ['DEMO_TOKEN']})).read().decode())\"")
 check("a secret is a placeholder inside the sandbox and the real value on the wire, for a client that verifies strictly",
@@ -131,35 +134,37 @@ check("a secret is a placeholder inside the sandbox and the real value on the wi
       repr(said(h)[:120]) + turns_of(h)[0]["log"][-200:] if "Bearer real" not in said(h) else "")
 
 request = urllib.request.Request(URL + "/v1/responses", headers={"Authorization": f"Bearer {KEY}"}, data=json.dumps(
-    {"model": "default/shell/none/none", "input": "for i in 1 2 3; do echo $i; sleep 1; done", "stream": True}).encode())
+    {"model": "live/shell/none/none", "input": "for i in 1 2 3; do echo $i; sleep 1; done", "stream": True}).encode())
 kinds, stamps = [], []
 with urllib.request.urlopen(request, timeout=120) as stream:
     for line in stream:
         if line.startswith(b"event: "):
             kinds.append(line[7:].strip().decode())
             stamps.append(time.time())
+        elif line.startswith(b"data: ") and kinds[-1] == "response.created":
+            sessions_made.add(json.loads(line[6:])["response"]["metadata"]["hg_session"])
 deltas = [stamp for kind, stamp in zip(kinds, stamps, strict=True) if kind == "response.output_text.delta"]
 check("a stream gives events as they happen", kinds[0] == "response.created" and kinds[-1] == "response.completed"
       and len(deltas) == 3 and deltas[-1] - deltas[0] > 1.5, f"{len(kinds)} events, text over {deltas[-1] - deltas[0]:.1f} s")
-i = turn("default/shell/none/none", "echo started > partial.txt; echo begun; sleep 120", background=True)
+i = turn("live/shell/none/none", "echo started > partial.txt; echo begun; sleep 120", background=True)
 time.sleep(6)
 call("POST", f"/v1/responses/{i['id']}/cancel")
 i = wait(i["id"])
 check("a cancelled turn stops and keeps what it did", i["status"] == "cancelled" and content(i, "/work/partial.txt") == b"started\n", i["status"])
-busy = turn("default/shell/none/none", "sleep 8", background=True)
-status, second = call("POST", "/v1/responses", {"model": "default/shell/none/none", "input": "echo x", "previous_response_id": busy["id"]})
+busy = turn("live/shell/none/none", "sleep 8", background=True)
+status, second = call("POST", "/v1/responses", {"model": "live/shell/none/none", "input": "echo x", "previous_response_id": busy["id"]})
 check("a session with a turn in progress refuses another", status == 409, second.get("error", {}).get("message"))
-j = turn("quick/shell/none/none", "echo before > t.txt; sleep 60")
+j = turn("live-quick/shell/none/none", "echo before > t.txt; sleep 60")
 check("a turn past its time limit is stopped and saved", reason(j) == ("failed", "timed_out") and content(j, "/work/t.txt") == b"before\n", j["error"]["message"])
-k = turn("tiny/shell/none/none", "dd if=/dev/zero of=big bs=1M count=300 2>&1 | tail -1; sleep 60")
+k = turn("live-tiny/shell/none/none", "dd if=/dev/zero of=big bs=1M count=300 2>&1 | tail -1; sleep 60")
 check("a session past its disk limit is stopped", reason(k) == ("failed", "out_of_disk"), k["error"]["message"])
-m = turn("small/shell/none/none", "python3 -c \"x = bytearray(1 << 30); print(len(x))\"; sleep 1")
+m = turn("live-small/shell/none/none", "python3 -c \"x = bytearray(1 << 30); print(len(x))\"; sleep 1")
 check("a turn past its memory limit says so", reason(m) == ("failed", "out_of_memory"), m["error"]["message"])
-n = turn("default/shell/none/none", "exit 3")
+n = turn("live/shell/none/none", "exit 3")
 check("a harness that reports failure is a failed response with its code", (n["status"], n["metadata"].get("hg_code")) == ("failed", "command_failed"), n["error"]["message"])
-status, o = call("POST", "/v1/responses", {"model": "default/shell/live-check/a-model", "input": "x"})
+status, o = call("POST", "/v1/responses", {"model": "live/shell/live-check/a-model", "input": "x"})
 check("a line that cannot run is refused before anything starts", status == 400 and o["error"]["param"] == "model", o["error"]["message"])
-p = turn("default/shell/none/none", "echo gone", store=False)
+p = turn("live/shell/none/none", "echo gone", store=False)
 check("a response that is not to be stored is gone once it has answered", p["status"] == "completed" and call("GET", f"/v1/responses/{p['id']}")[0] == 404)
 status, items = call("GET", f"/v1/responses/{a['id']}/input_items")
 check("a response's input is listed, and a response can be deleted", status == 200 and items["data"][0]["content"][0]["type"] == "input_text"
@@ -170,5 +175,11 @@ check("usage is the organization's processor time, memory, network and storage",
       and usage["network_out_bytes"] > 0 and usage["network_in_bytes"] > 0 and usage["storage_bytes"] > 0, usage)
 sessions = call("GET", "/v1/sessions?limit=5")[1]
 check("sessions are listed, most recent first, in pages", len(sessions["data"]) == 5 and sessions["has_more"] and "/shell/" in sessions["data"][0]["model"])
+for session in sessions_made - {None}:
+    call("DELETE", f"/v1/sessions/{session}")
+for environment in call("GET", "/v1/environments?limit=100")[1]["data"]:
+    if environment["name"].startswith("live"):
+        call("DELETE", f"/v1/environments/{environment['name']}")
+call("DELETE", "/v1/providers/live-check")
 print(f"{sum(results)} of {len(results)} passed")
 sys.exit(0 if all(results) else 1)
