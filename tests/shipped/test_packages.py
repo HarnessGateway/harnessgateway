@@ -155,8 +155,8 @@ for tool in request.get("tools", []):
     say({"type": "mcp_call", "server_label": tool["server_label"], "name": "secret_number", "arguments": "{}", "status": "completed", "output": got})
     said = "The number is " + got
 FIRST
-marker = re.search(r"the word (\\w+)", told or "")
-say({"type": "response.output_text.delta", "delta": (said or "Hello.") + (" " + marker[1] if marker else "")})
+marker = re.search(r"marker for this turn is (\\w+)", told or "")
+say({"type": "response.output_text.delta", "delta": marker[1] if marker and "marker" in text else said or "Hello."})
 say({"type": "response.completed"})
 """
 

@@ -277,18 +277,20 @@ def suite(package: Path, manifest: dict[str, Any], given: tuple[str, ...]) -> bo
     """What a caller relies on, each proven by a marker in a real turn. Whether all of it held."""
     results: list[tuple[str, bool, str]] = []
 
-    def tried(what: str, request: dict[str, Any], marker: str, **how: Any) -> Read:
+    def tried(what: str, request: dict[str, Any], marker: str, never: str = "", **how: Any) -> Read:
         print(f"\n--- {what}")
         read = turn(package, manifest, request, given=given, **how)
-        held = not read.wrong and read.finished and marker in read.said
+        held = not read.wrong and read.finished and marker in read.said and not (never and never in read.said)
         results.append((what, held, "; ".join(read.wrong) or f"it said: {read.said.strip()[:160] or '(nothing)'}"))
         return read
 
+    # Each turn is told a marker of its own and asked for it, so that what is tried is which instructions the
+    # agent was given, and not whether a model drops a habit its earlier replies show.
+    marked = "What is the marker for this turn? Reply with the marker only."
     tried("instructions, on a session's first turn",
-          {"instructions": "End your reply with the word ALPHA.", "input": HELLO}, "ALPHA", new=True)
+          {"instructions": "The marker for this turn is ALPHA.", "input": marked}, "ALPHA", new=True)
     tried("instructions, on a continued turn",            # a CLI may keep the first turn's for the whole session
-          {"instructions": "End your reply with the word BRAVO.", "input": "Say hello again, in one short sentence."},
-          "BRAVO")
+          {"instructions": "The marker for this turn is BRAVO.", "input": marked}, "BRAVO", never="ALPHA")
     tried("memory: it is told a thing", {"input": "Remember this: the codeword is HERON. Reply with OK."}, "", new=True)
     tried("memory: it knows the thing a turn later", {"input": "What is the codeword?"}, "HERON")
 
