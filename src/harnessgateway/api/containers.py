@@ -2,6 +2,7 @@
 agent made is fetched, by any client that already speaks that API."""
 
 import hashlib
+from collections import OrderedDict
 from typing import Any
 
 from starlette.requests import Request
@@ -13,13 +14,35 @@ from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.snapshot import Entry
 from harnessgateway.errors import NotFound
 from harnessgateway.ids import container_of, is_id, session_of
+from harnessgateway.platform import Platform
 from harnessgateway.store.sessions import Session
 
 _WORK = "work/"                                # a container shows the work folder; the mind is the agent's own
+_KEPT = 16
+
+
+class Work:
+    """A session's work, as its latest saved turn left it: its files by path. A snapshot never changes and a
+    client asks for many files of one, so the last few that were read are kept."""
+
+    def __init__(self, platform: Platform) -> None:
+        self._platform = platform
+        self._read: OrderedDict[str, dict[str, Entry]] = OrderedDict()
+
+    async def files(self, org_id: str, session_id: str) -> dict[str, Entry]:
+        saved = await self._platform.sessions.saved(org_id, session_id)
+        if saved is None:
+            return {}
+        if saved not in self._read:
+            self._read[saved] = (await self._platform.snapshots.manifest(org_id, saved)).files(_WORK)
+            while len(self._read) > _KEPT:
+                self._read.popitem(last=False)
+        self._read.move_to_end(saved)
+        return self._read[saved]
 
 
 def routes(api: Api) -> list[Route]:
-    sessions, snapshots = api.platform.sessions, api.platform.snapshots
+    sessions, snapshots, made = api.platform.sessions, api.platform.snapshots, Work(api.platform)
 
     def file_id(path: str) -> str:
         """A file's id in a container: made from its path, so it is the same for as long as the path is there."""
@@ -32,8 +55,7 @@ def routes(api: Api) -> list[Route]:
             session = await sessions.get(org_id, session_of(container))
         except NotFound:
             raise NotFound(f"there is no container {container}") from None
-        saved = await sessions.saved(org_id, session.id)
-        return session, (await snapshots.manifest(org_id, saved)).files(_WORK)
+        return session, await made.files(org_id, session.id)
 
     def shown(container: str, path: str, entry: Entry) -> dict[str, Any]:
         return {"id": file_id(path), "object": "container.file", "container_id": container,

@@ -1,6 +1,7 @@
 """The public API, over HTTP, with a runner running beside it."""
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 
 import httpx
@@ -130,3 +131,27 @@ async def test_sessions_are_their_requests_and_responses_and_usage_is_the_organi
     assert len((await http.get("/v1/keys")).json()["data"]) == 2 and (await http.get("/v1/platform", headers=theirs)).status_code == 200
     assert (await http.delete(f"/v1/keys/{another['id']}")).json()["revoked"]
     assert (await http.get("/v1/platform", headers=theirs)).status_code == 401
+
+
+async def test_a_link_opens_a_sessions_files_to_a_browser_sandboxed_and_for_a_time(http: httpx.AsyncClient, platform: Platform, monkeypatch: pytest.MonkeyPatch):
+    await setup(http)
+    platform.driver.writes = {"site/index.html": b"<h1>made</h1>", "data.bin": 9 * 1024 * 1024, "empty.txt": b""}
+    done = (await http.post("/v1/responses", json={"model": LINE, "input": "build"})).json()
+    container, nobody = "cntr_" + done["metadata"]["hg_session"][5:], {"Authorization": ""}
+    assert (await http.post(f"/v1/containers/{container}/view", headers=nobody)).status_code == 401       # a link is asked for with a key
+    assert (await http.post("/v1/containers/cntr_" + "0" * 26 + "/view")).status_code == 404
+    link = (await http.post(f"/v1/containers/{container}/view")).json()
+    assert link["url"].startswith("/view/") and link["expires_at"] > time.time() + 3000
+    page = await http.get(link["url"] + "site/index.html", headers=nobody)                                # and opened without one
+    assert page.status_code == 200 and page.text == "<h1>made</h1>" and page.headers["content-type"] == "text/html; charset=utf-8"
+    assert page.headers["content-security-policy"].startswith("sandbox ") and page.headers["x-content-type-options"] == "nosniff"
+    assert "attachment" in (await http.get(link["url"] + "site/index.html?download", headers=nobody)).headers["content-disposition"]
+    part = await http.get(link["url"] + "data.bin", headers={**nobody, "Range": "bytes=4194300-4194309"})     # across two chunks
+    assert part.status_code == 206 and len(part.content) == 10 and part.headers["content-range"] == "bytes 4194300-4194309/9437184"
+    assert (await http.get(link["url"] + "data.bin", headers={**nobody, "Range": "bytes=99999999-"})).status_code == 416
+    empty = await http.get(link["url"] + "empty.txt", headers=nobody)
+    assert empty.status_code == 200 and empty.content == b""
+    for wrong in (link["url"] + "nope.txt", link["url"] + "../mind/x", "/view/not-a-token/site/index.html", link["url"][:-3] + "0a/site/index.html"):
+        assert (await http.get(wrong, headers=nobody)).status_code == 404, wrong
+    monkeypatch.setattr(time, "time", lambda: link["expires_at"] + 1)                                     # past its time
+    assert (await http.get(link["url"] + "site/index.html", headers=nobody)).status_code == 404

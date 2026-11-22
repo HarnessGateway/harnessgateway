@@ -10,7 +10,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from harnessgateway.api import console, containers, files, organization, resources, responses, sessions
+from harnessgateway.api import console, containers, files, organization, resources, responses, sessions, views
 from harnessgateway.api.http import Api, answered, read_body
 from harnessgateway.errors import NotFound, Unauthorized
 from harnessgateway.platform import Platform
@@ -34,7 +34,7 @@ def public_app(platform: Platform) -> Starlette:
 
     return Starlette(routes=[
         Route("/healthz", healthz), Route("/readyz", readyz),
-        *responses.routes(api), *files.routes(api), *containers.routes(api), *resources.routes(api),
+        *responses.routes(api), *files.routes(api), *containers.routes(api), *views.routes(api), *resources.routes(api),
         *sessions.routes(api), *organization.routes(api), *platform.extensions.routes(api),
         *(console.routes(platform.extensions.console()) if platform.settings.console else ()),
     ])
