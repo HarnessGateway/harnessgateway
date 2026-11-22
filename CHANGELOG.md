@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.0.2
+
+This version arranges the repository so that what ships beside the program can one day live in a repository of
+its own. One thing changes in an installation: every install of a harness now holds the package contract beside
+the kit.
+
+- The kit is `kit/hgkit.py`, at the top of the repository beside `packages/` and `environments/`. None of the
+  three is the server's code: they know the platform only by its contract, the server reaches them in one place
+  only (`shipped.py`), and their tests are `tests/shipped/`.
+- The package contract is the core's own document again, `docs/PACKAGES.md`. The platform puts it beside the kit
+  in every install, at `/harness/kit/PACKAGES.md`, which is where `harness-package-builder` (now `2.1.330-3`) reads
+  it. A harness that is already installed is not installed again for this.
+
 ## 5.0.1
 
 This version changes where things are in the repository, and nothing a running installation does.
