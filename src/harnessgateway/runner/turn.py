@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, replace
 
 from harnessgateway.domain.contract import STARTUP_FAILED
 from harnessgateway.domain.egress import Policy
-from harnessgateway.domain.events import Event, LineError, Log, RunOutput, storable
+from harnessgateway.domain.events import LineError, RunOutput, storable
 from harnessgateway.domain.handover import handover_line, unseen
 from harnessgateway.domain.outcome import Observed, decide
 from harnessgateway.domain.request import file_ids
@@ -39,8 +39,8 @@ _MEASURE_EVERY_S = 2.0
 
 
 class _Log:
-    """The end of everything said about a turn: what its harness and its environment's startup script printed to
-    standard error, and what the platform noted."""
+    """The end of everything said about a turn: what its sandbox printed to standard error (its harness, the
+    agent, the environment's startup script), and what the platform noted."""
 
     def __init__(self) -> None:
         self._lines: deque[str] = deque()
@@ -180,7 +180,7 @@ class TurnRunner:
         proxy_token = new_token()
         await platform.grants.put(Policy(org_id, turn.id, line.environment, turn_policy(resolved), bound), proxy_token)
         plan = turn_plan(session_id=turn.session_id, turn_id=turn.id, install_id=install_id, image_id=image_id,
-                         resolved=resolved, handover=handover, proxy_token=proxy_token, provider_key=provider_key,
+                         resolved=resolved, proxy_token=proxy_token, provider_key=provider_key,
                          placeholders=placeholders)
         return _Ready(turn, resolved, plan, parent_snapshot)
 
@@ -196,14 +196,12 @@ class TurnRunner:
             if invalid:
                 return
             try:
-                read = output.read(text)
+                events = output.read(text)
             except LineError as error:
                 invalid.append(str(error))
                 return stop.ask("invalid_output")
-            if isinstance(read, Event):
-                await platform.turns.add_event(turn, read.data)
-            elif isinstance(read, Log):
-                record.add(read.text)
+            for event in events:
+                await platform.turns.add_event(turn, event)
 
         async def on_stderr(text: str) -> None:
             record.add(text)

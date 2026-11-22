@@ -1,8 +1,8 @@
 """A turn as the Responses API returns it: the response object, and the response-level events of its stream."""
 
-from typing import Any
+from typing import Any, get_args
 
-from openai.types.responses import Response
+from openai.types.responses import Response, ResponseError
 
 from harnessgateway.domain.outcome import Outcome
 from harnessgateway.domain.request import OURS
@@ -13,20 +13,22 @@ _ECHOED = ("instructions", "previous_response_id", "background", "temperature", 
 _LAST_EVENT = {"completed": "response.completed", "failed": "response.failed", "incomplete": "response.incomplete",
                "cancelled": "response.incomplete"}       # the stream has no event of its own for a cancelled turn
 LAST_EVENTS = frozenset(_LAST_EVENT.values())
+_ERROR_CODES = get_args(ResponseError.model_fields["code"].annotation)     # the codes that API has
 
 
 def response_object(*, id: str, session_id: str, created_at: int, status: str, model: str, request: dict[str, Any],
                     output: list[dict[str, Any]], usage: dict[str, Any] | None, outcome: Outcome | None,
                     ) -> dict[str, Any]:
     """A turn as an OpenAI response object. What the platform has to say that the object has no field for goes
-    in `metadata`, under keys of its own: the session, and why a turn did not complete."""
+    in `metadata`, under keys of its own: the session, and why a turn did not complete. A harness's own code
+    for a failure is the error's code when it is one the API has, and is in `metadata` either way."""
     ours = {"session": session_id, "reason": outcome.reason if outcome and outcome.status != "completed" else None,
             "code": outcome.code if outcome else None}
     body: dict[str, Any] = {
         "id": id, "object": "response", "created_at": created_at, "status": status, "model": model,
         "output": output, "usage": usage,
         "metadata": {**(request.get("metadata") or {}), **{OURS + key: value for key, value in ours.items() if value}},
-        "error": {"code": "server_error", "message": outcome.message}
+        "error": {"code": outcome.code if outcome.code in _ERROR_CODES else "server_error", "message": outcome.message}
         if outcome and outcome.status == "failed" else None,
         "incomplete_details": {"reason": outcome.incomplete_reason} if outcome and outcome.incomplete_reason else None,
         "parallel_tool_calls": request.get("parallel_tool_calls", True),

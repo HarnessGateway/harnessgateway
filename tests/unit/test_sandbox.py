@@ -31,7 +31,7 @@ def test_a_turns_plan_gives_the_sandbox_its_folders_its_variables_and_placeholde
     assert [(secret.value, secret.hosts, secret.header) for secret in bound] == [
         ("sk-real", ("api.example.com:8443",), None), ("db-secret", ("db.example.com",), "X-Key"), ("tool-secret", ("tool.example.com",), None)]
     plan = turn_plan(session_id="sess_1", turn_id="resp_1", install_id="inst_1", image_id="sha256:abc", resolved=found,
-                     handover="Handover from codex.", proxy_token="tok", provider_key=key, placeholders=placeholders)
+                     proxy_token="tok", provider_key=key, placeholders=placeholders)
     assert (plan.name, plan.command, plan.args, plan.workdir, plan.networked) == ("sess_1", "/harness/run", (), "/work", True)
     assert [(mount.folder, mount.path, mount.read_only) for mount in plan.mounts] == [
         ("sessions/sess_1/mind", "/mind", False), ("sessions/sess_1/work", "/work", False), ("turns/resp_1", "/turn", True),
@@ -42,7 +42,7 @@ def test_a_turns_plan_gives_the_sandbox_its_folders_its_variables_and_placeholde
     assert env["HTTPS_PROXY"] == "http://resp_1:tok@egress:8080" and env["SSL_CERT_FILE"] == "/etc/hg/ca.pem"
     assert not {"sk-real", "db-secret", "tool-secret"} & set(env.values())
     scripted = turn_plan(session_id="s", turn_id="t", install_id="i", image_id="x", resolved=resolved(scripts={"startup": "true"}),
-                         handover="", proxy_token="tok", provider_key="", placeholders={})
+                         proxy_token="tok", provider_key="", placeholders={})
     assert scripted.command == "/bin/sh" and scripted.args[0] == "-c" and scripted.args[1].endswith("exec /harness/run")
     install = install_plan(install_id="inst_1", image_id="x", environment=found.environment, manifest=found.harness.manifest, proxy_token="tok")
     assert (install.command, install.workdir, install.tmp_mb) == ("/harness/install", "/harness", None) and "TEAM" not in install.env
@@ -64,10 +64,10 @@ def test_an_environment_decides_what_a_turn_may_reach_and_a_package_decides_noth
 
 def test_every_sandbox_is_hardened_the_same_way():
     plan = turn_plan(session_id="sess_1", turn_id="resp_1", install_id="inst_1", image_id="sha256:abc", resolved=resolved(),
-                     handover="", proxy_token="tok", provider_key="", placeholders={})
+                     proxy_token="tok", provider_key="", placeholders={})
     argv = command(plan, **HOW, runtime="runsc", proxy_address="172.20.0.2")
     text = " ".join(argv)
-    for flag in ("--name hg-sess_1", "--init", "--read-only", "--cap-drop ALL", "--security-opt no-new-privileges",
+    for flag in ("--name hg-sess_1", "--init --env TINI_KILL_PROCESS_GROUP=1", "--read-only", "--cap-drop ALL", "--security-opt no-new-privileges",
                  "--user 10000:10000", "--cpus 2", "--memory 4096m", "--memory-swap 4096m", "--pids-limit 512",
                  "--network hg-sandbox", "--tmpfs /tmp:rw,exec,size=1024m", "--env HOME=/mind", "--workdir /work",
                  "--mount type=volume,source=hg-data,target=/work,volume-subpath=folders/sessions/sess_1/work,volume-nocopy ",

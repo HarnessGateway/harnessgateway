@@ -1,5 +1,6 @@
 """A Responses request: what is accepted, and what the platform reads out of it. Nothing is added to the API: a
-body is checked against the OpenAI SDK's own description of the request."""
+body is checked against the OpenAI SDK's own description of the request, and reaches the harness as it was sent,
+which makes of each field what its agent can."""
 
 import json
 from typing import Any
@@ -42,9 +43,6 @@ def validate(body: object) -> dict[str, Any]:
         if first["type"] == "extra_forbidden":
             raise Invalid(f"{field} is not a field of the Responses API", param=field) from None
         raise Invalid(f"{'.'.join(str(part) for part in first['loc'])}: {first['msg']}", param=field) from None
-    if any(tool.get("type") != "mcp" for tool in body.get("tools") or []):
-        raise Invalid("only tools of type mcp are supported: a turn runs to its end in a sandbox, so a tool "
-                      "call cannot be handed back to the caller in the middle of one", param="tools")
     metadata = body.get("metadata") or {}
     if len(metadata) > METADATA_MAX or any(key.startswith(OURS) for key in metadata):
         raise Invalid(f"metadata is at most {METADATA_MAX} pairs, none with a key beginning {OURS}: those are "

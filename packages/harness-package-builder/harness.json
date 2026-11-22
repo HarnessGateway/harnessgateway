@@ -1,7 +1,7 @@
 {
   "contract": 1,
   "name": "harness-package-builder",
-  "version": "2.1.330-3",
+  "version": "2.1.330-4",
   "description": "Writes harness packages. It is Claude Code, taught this platform's package contract: ask it for a package for an agent CLI, try what it wrote, and add it from its session under Harnesses.",
   "apis": ["anthropic"],
   "mind": ".claude",

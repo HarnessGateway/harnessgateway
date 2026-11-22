@@ -44,7 +44,7 @@ def test_what_tar_makes_is_a_package_and_the_same_files_are_the_same_package():
     (tar(("./harness.json", json.dumps({**MANIFEST, "contract": 2}).encode(), 0o644), *GOOD[1:]), "harness.json: contract"),
     (tar(*GOOD, ("../outside", b"x", 0o644)), "not inside it"),
     (tar(*GOOD, ("/etc/passwd", b"x", 0o644)), "not inside it"),
-    (tar(*GOOD, ("kit/hgkit.py", b"x", 0o644)), "platform puts its kit"),
+    (tar(*GOOD, ("contract/PACKAGES.md", b"x", 0o644)), "platform puts the contract"),
     (tar(*GOOD, ("link", b"", 0o644), kind=tarfile.SYMTYPE), "plain files"),
 ])
 def test_an_archive_that_is_not_a_whole_safe_package_is_refused(archive: bytes, why: str):

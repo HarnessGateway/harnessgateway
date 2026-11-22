@@ -78,7 +78,8 @@ class Driver(Protocol):
         """Run a sandbox to its end, handing over each line it prints as it prints it."""
 
     async def stop(self, name: str, grace_s: int) -> None:
-        """Stop a sandbox by its plan's name. Stopping what is not running is not an error."""
+        """Stop a sandbox by its plan's name: its program and everything that program started are told to end,
+        and are ended after `grace_s` seconds if they have not. Stopping what is not running is not an error."""
 
     async def discard(self, name: str) -> None:
         """Remove whatever is left of a sandbox whose runner is gone, running or not."""

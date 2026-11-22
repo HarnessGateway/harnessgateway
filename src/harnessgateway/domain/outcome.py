@@ -9,11 +9,11 @@ _KILLED = 128 + 9                              # the exit code of a process sent
 
 @dataclass(frozen=True)
 class Terminal:
-    """The one line a harness's `run` ends with."""
+    """How a harness's `run` said it ended: the last line it prints."""
 
-    kind: Literal["done", "incomplete", "failed"]
-    reason: str | None = None                  # incomplete: max_output_tokens | content_filter
-    code: str | None = None                    # failed: the harness's own code
+    status: Literal["completed", "incomplete", "failed"]
+    reason: str | None = None                  # incomplete: why, as the Responses API names it
+    code: str | None = None                    # failed: the harness's own code, if it gave one
     message: str | None = None                 # failed: the harness's own words
     usage: dict[str, Any] | None = None        # the tokens it reports, in the Responses usage shape
 
@@ -73,9 +73,9 @@ def decide(seen: Observed) -> Outcome:
     if not seen.saved:
         return failed("save_failed", "what the turn left could not be saved")
     said = seen.terminal
-    if said and said.kind == "failed":
+    if said and said.status == "failed":
         return Outcome("failed", "harness_failed", said.message, said.code)
-    if said and said.kind == "incomplete":
+    if said and said.status == "incomplete":
         return Outcome("incomplete", said.reason, f"the turn stopped early: {said.reason}",
                        incomplete_reason=said.reason)
     if said and seen.exit_code == 0:

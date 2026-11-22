@@ -36,7 +36,8 @@ def command(plan: SandboxPlan, *, name: str, volume: str, network: str, runtime:
     tmp = (["--tmpfs", f"/tmp:rw,exec,size={plan.tmp_mb}m"] if plan.tmp_mb is not None  # noqa: S108
            else ["--volume", "/tmp"])  # noqa: S108
     return [
-        "docker", "run", "--quiet", "--name", name, "--init",
+        "docker", "run", "--quiet", "--name", name,
+        "--init", "--env", "TINI_KILL_PROCESS_GROUP=1",     # a stop reaches everything the sandbox's program started
         "--network", network if plan.networked else "none",
         *(["--add-host", f"{PROXY_HOST}:{proxy_address}"] if plan.networked and proxy_address else []),
         *(["--runtime", runtime] if runtime else []),

@@ -9,7 +9,7 @@ from harnessgateway.errors import Invalid
 
 DEFAULT_ORG = "org_default"                    # the one organization a community installation has
 PREFIXES = {"response": "resp", "session": "sess", "container": "cntr", "snapshot": "snap", "file": "file",
-            "key": "key", "install": "inst"}
+            "key": "key", "install": "inst", "item": "item"}
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 _ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"          # Crockford base32, as a ULID is written
 _BODY = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")

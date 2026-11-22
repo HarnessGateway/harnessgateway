@@ -73,7 +73,7 @@ jobs:
           docker run --rm harnessgateway:ci python -c "
           from harnessgateway import defaults, shipped
           from harnessgateway.domain.package import read_archive
-          for found in ('console/index.html', 'kit/hgkit.py', 'docs/PACKAGES.md', 'environments/default.json'):
+          for found in ('console/index.html', 'docs/PACKAGES.md', 'environments/default.json'):
               folder, _, name = found.partition('/')
               assert (shipped.folder(folder) / name).is_file(), found
           print({name: read_archive(defaults.archive(name)).manifest.version for name in ('shell', 'harness-package-builder')})"

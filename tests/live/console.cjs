@@ -431,8 +431,8 @@ const api = async (method, path, body) => {
     const reply = await say([`mkdir -p ${WRITTEN} && cd ${WRITTEN}`,
       `echo '{"contract": 1, "name": "${WRITTEN}", "version": "1.0-1", "description": "Greets.", "apis": []}' > harness.json`,
       "printf '#!/bin/sh\\ntrue\\n' > install",
-      "cat > run <<'RUN'", "#!/usr/bin/env python3", "import os, sys", 'sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))', "import hgkit",
-      "emit = hgkit.Emitter()", 'emit.say("hello from the package")', "emit.done()", "RUN",
+      "cat > run <<'RUN'", "#!/bin/sh", `echo '{"type": "response.output_text.delta", "delta": "hello from the package"}'`,
+      `echo '{"type": "response.completed"}'`, "RUN",
       `chmod +x install run && echo "Ready: [Add it as a harness](/console/#/harnesses/add/${WRITTEN})"`].join("\n"));
     made.sessions.add((await stored())[0].session);
     await reply.locator(`a.tile.package:has-text("Add ${WRITTEN} as a harness")`).waitFor();              // the chat's own offer

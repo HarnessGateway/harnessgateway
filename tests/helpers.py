@@ -14,15 +14,14 @@ from harnessgateway.driver.folders import LocalFolders
 
 MANIFEST = {"contract": 1, "name": "echo", "version": "1.0", "apis": []}
 TEXT = [
-    {"type": "response.output_item.added", "output_index": 0,
+    {"type": "response.output_item.added",
      "item": {"id": "msg_1", "type": "message", "role": "assistant", "status": "in_progress", "content": []}},
-    {"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": "hel",
-     "logprobs": []},
-    {"type": "response.output_item.done", "output_index": 0,
+    {"type": "response.output_text.delta", "item_id": "msg_1", "content_index": 0, "delta": "hel", "logprobs": []},
+    {"type": "response.output_item.done",
      "item": {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed",
               "content": [{"type": "output_text", "text": "hello", "annotations": []}]}},
 ]
-DONE = {"type": "hg.done", "usage": {"input_tokens": 3, "output_tokens": 2}}
+DONE = {"type": "response.completed", "response": {"usage": {"input_tokens": 3, "output_tokens": 2}}}
 
 
 def package(manifest: dict = MANIFEST, **more: bytes) -> bytes:

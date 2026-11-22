@@ -41,7 +41,9 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
     assert [(mount.path, mount.read_only) for mount in sandbox.mounts] == [
         ("/mind", False), ("/work", False), ("/turn", True), ("/harness", True), ("/etc/hg", True)]
     laid = driver.folder(sandbox, "/harness")
-    assert (laid / "run").stat().st_mode & 0o100 and (laid / "kit" / "hgkit.py").is_file()
+    assert (laid / "run").stat().st_mode & 0o100                   # beside the package: the contract, and its schema
+    assert "# Harness packages" in (laid / "contract" / "PACKAGES.md").read_text()
+    assert len(json.loads((laid / "contract" / "output.schema.json").read_text())["anyOf"]) > 80
     given = driver.found[0]                                   # what the sandbox found under /turn
     assert json.loads(given["request.json"])["input"] == "hi" and given["startup.sh"] == "echo ready\n" and given["history.json"] == "[]"
     used = await platform.usage.total(ORG)                    # what the install and the turn used, added up
@@ -69,7 +71,7 @@ async def test_a_session_continues_forks_and_changes_harness(platform: Platform)
     driver.writes = {}
     changed = await run(platform, model="default/other/none/none", previous_response_id=second.id)
     assert changed.session_id == first.session_id and changed.harness == "other"
-    assert driver.plans[-1].env["HG_HANDOVER"] == "Handover from echo." and len(json.loads(driver.found[-1]["history.json"])) == 2
+    assert driver.found[-1]["handover.txt"] == "Handover from echo." and len(json.loads(driver.found[-1]["history.json"])) == 2
     assert await work_files(platform, changed) == {"a.txt": b"one", "b.txt": b"two"}
     assert [row["refs"] for row in await chunk_rows(platform)] == [1, 2, 4]     # a chunk is kept once, however often named
     waiting = await accept(platform, WHO, {"model": LINE, "input": "x"})

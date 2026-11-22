@@ -11,7 +11,8 @@ BODY = {"model": "a/b/c/d", "input": "hello"}
 def test_what_the_responses_api_accepts_is_accepted_as_it_was_sent():
     full = {**BODY, "instructions": "be brief", "stream": True, "background": False, "store": True, "metadata": {"k": "v"},
             "reasoning": {"effort": "low"}, "previous_response_id": "resp_x", "temperature": 0.5, "max_output_tokens": 100,
-            "tools": [{"type": "mcp", "server_label": "docs", "server_url": "https://mcp.example.com"}]}
+            "tools": [{"type": "mcp", "server_label": "docs", "server_url": "https://mcp.example.com"},
+                      {"type": "function", "name": "f", "parameters": {}, "strict": True}]}       # the harness's to act on
     assert validate(full) is full
     listed = {**BODY, "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}, {"type": "input_file", "file_id": "file_1"}]}]}
     assert validate(listed) is listed and file_ids(listed) == ["file_1"] and file_ids(BODY) == []
@@ -20,7 +21,6 @@ def test_what_the_responses_api_accepts_is_accepted_as_it_was_sent():
 @pytest.mark.parametrize(("change", "param"), [
     ({"temperatur": 1}, "temperatur"), ({"stream": "yes"}, "stream"), ({"input": None}, "input"), ({"model": None}, "model"),
     ({"conversation": "conv_1"}, "conversation"), ({"prompt": {"id": "p"}}, "prompt"),
-    ({"tools": [{"type": "function", "name": "f", "parameters": {}, "strict": True}]}, "tools"),
     ({"metadata": {"hg_session": "x"}}, "metadata"), ({"metadata": {str(n): "v" for n in range(17)}}, "metadata"),
     ({"store": False, "background": True}, "store"),
 ])

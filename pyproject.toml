@@ -34,14 +34,12 @@ packages = ["src/harnessgateway"]
 [tool.hatch.build.targets.wheel.force-include]
 # What ships beside the program travels inside the package: shipped.py finds each there.
 "console" = "harnessgateway/console"
-"kit" = "harnessgateway/kit"
 "packages" = "harnessgateway/packages"
 "environments" = "harnessgateway/environments"
 "docs/PACKAGES.md" = "harnessgateway/docs/PACKAGES.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/shipped", "tests/integration"]
-pythonpath = ["kit"]                                 # the kit is imported as a package's run imports it: by its folder
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-q -ra"
@@ -56,7 +54,6 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S"]
 ignore = ["S101"]                # assert states what must hold; it guards nothing a caller can reach
 
 [tool.ruff.lint.per-file-ignores]
-"kit/hgkit.py" = ["UP", "S603"]                      # runs in any image on Python 3.9; starting a CLI is its job
 "src/harnessgateway/store/**" = ["S608"]                # queries are built from constants; every value is a parameter
 "tests/**" = ["E501", "S"]                            # a test reads better with its assertion on one line
 "packages/**" = ["S603", "S108"]                     # the builder's verifier runs a package's programs: that is its job
@@ -64,4 +61,4 @@ ignore = ["S101"]                # assert states what must hold; it guards nothi
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "kit", "packages"]
+files = ["src", "packages"]

@@ -12,7 +12,6 @@ WORKDIR /src
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 COPY console ./console
-COPY kit ./kit
 COPY packages ./packages
 COPY environments ./environments
 COPY docs/PACKAGES.md ./docs/PACKAGES.md

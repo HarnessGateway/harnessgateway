@@ -7,7 +7,7 @@ from harnessgateway.domain.handover import handover_line, unseen
 from harnessgateway.domain.outcome import Observed, Outcome, Terminal, decide
 from harnessgateway.domain.response import envelope_event, response_object
 
-DONE, FAILED = Terminal("done"), Terminal("failed", code="no_auth", message="the key was refused")
+DONE, FAILED = Terminal("completed"), Terminal("failed", code="no_auth", message="the key was refused")
 
 
 @pytest.mark.parametrize(("seen", "status", "reason"), [
@@ -41,10 +41,12 @@ def test_a_turn_is_always_a_valid_response_object():
     assert queued["metadata"] == {"mine": "1", "hg_session": "sess_1"} and queued["instructions"] == "be brief" and queued["error"] is None
     failed = response_object(**common, status="failed", outcome=Outcome("failed", "harness_failed", "the key was refused", "no_auth"))
     assert failed["metadata"] == {"mine": "1", "hg_session": "sess_1", "hg_reason": "harness_failed", "hg_code": "no_auth"}
-    assert failed["error"] == {"code": "server_error", "message": "the key was refused"}
+    assert failed["error"] == {"code": "server_error", "message": "the key was refused"}     # its own code is in metadata
+    limited = response_object(**common, status="failed", outcome=Outcome("failed", "harness_failed", "slow down", "rate_limit_exceeded"))
+    assert limited["error"]["code"] == limited["metadata"]["hg_code"] == "rate_limit_exceeded"      # a code the API has
     cut = response_object(**common, status="incomplete", outcome=Outcome("incomplete", "max_output_tokens", "", incomplete_reason="max_output_tokens"))
     assert cut["incomplete_details"] == {"reason": "max_output_tokens"}
-    for response in (queued, failed, cut):
+    for response in (queued, failed, limited, cut):
         Response.model_validate(response)
     assert envelope_event(failed, 7)["type"] == "response.failed" and envelope_event(queued, 0, "response.created")["sequence_number"] == 0
     cancelled = response_object(**common, status="cancelled", outcome=Outcome("cancelled", "cancelled", "the turn was cancelled"))

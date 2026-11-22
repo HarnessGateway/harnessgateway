@@ -84,7 +84,7 @@ def bind_secrets(resolved: Resolved, *, provider_key: str | None, environment_se
     return tuple(bound), variables, key_placeholder
 
 
-def turn_plan(*, session_id: str, turn_id: str, install_id: str, image_id: str, resolved: Resolved, handover: str,
+def turn_plan(*, session_id: str, turn_id: str, install_id: str, image_id: str, resolved: Resolved,
               proxy_token: str, provider_key: str, placeholders: Mapping[str, str]) -> SandboxPlan:
     """One turn's sandbox. Its variables are the contract's, then the environment's, then the harness's settings,
     then a placeholder for each secret: a later one of the same name wins."""
@@ -97,7 +97,7 @@ def turn_plan(*, session_id: str, turn_id: str, install_id: str, image_id: str, 
         "HG_RESPONSE": turn_id, "HG_HARNESS_NAME": manifest.name, "HG_HARNESS_VERSION": manifest.version,
         "HG_ENVIRONMENT": line.environment, "HG_PROVIDER": line.provider if resolved.provider else "",
         "HG_PROVIDER_API": resolved.api or "", "HG_PROVIDER_URL": resolved.url, "HG_PROVIDER_KEY": provider_key,
-        "HG_MODEL": resolved.model, "HG_HANDOVER": handover,
+        "HG_MODEL": resolved.model,
         **(_through_the_proxy(turn_id, proxy_token) if networked else {}),
         **environment.variables, **resolved.harness.values(), **placeholders,
     }

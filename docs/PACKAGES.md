@@ -4,8 +4,12 @@ A harness is an agent CLI made runnable on the platform by a package. The platfo
 one is in its package, and every package is run the same way. An organization starts with two, `shell` and
 `harness-package-builder`, and owns every package it has.
 
-This is the whole contract. The platform puts it beside the kit in every install, at `/harness/kit/PACKAGES.md`:
-it is what `harness-package-builder` reads before it writes a package.
+The platform speaks one schema, the OpenAI Responses API's. A caller sends a Responses request; the package's `run`
+reads that request, exactly as it was sent, and prints Responses output; the caller receives it. A package uses as
+much of the request and of the response as its agent can: nothing stands between the two but this page.
+
+This is the whole contract. The platform puts it beside every installed package, at `/harness/contract/PACKAGES.md`,
+with the schema of what a `run` may print, `/harness/contract/output.schema.json`.
 
 ## A package is a folder
 
@@ -17,8 +21,9 @@ run               runs once a turn
 ```
 
 It travels as a gzip-compressed tar archive of that folder: `tar -czf agent.tar.gz -C agent .`, then
-`PUT /v1/harnesses/agent --data-binary @agent.tar.gz`. `install` and `run` must be executable. A folder named
-`kit` is the platform's: a package may not hold one. The `shell` package is the smallest that works.
+`PUT /v1/harnesses/agent --data-binary @agent.tar.gz`. `install` and `run` must be executable, and may be written
+in any language the environment's image can run. A folder named `contract` is the platform's: a package may not
+hold one. The `shell` package is the smallest that works.
 
 ## harness.json
 
@@ -46,7 +51,7 @@ It travels as a gzip-compressed tar archive of that folder: `tar -czf agent.tar.
 | `apis` | The provider APIs its CLI speaks, the preferred first: `anthropic`, `openai-responses`, `openai-chat`, `gemini`. The platform picks the first the request's provider speaks too, and tells `run` which (`$HG_PROVIDER_API`). Empty: it calls no model |
 | `mind` | Where under `$HOME` its CLI keeps its session. A later harness on the same session is told where to look |
 | `cache` | Folders under `$HOME` not worth saving between turns |
-| `install.timeout_s`, `run.stop_grace_s` | How long `install` may take (900), and how long `run` is given to end once it is told to (10) |
+| `install.timeout_s`, `run.stop_grace_s` | How long `install` may take (900), and how long a stopped turn is given to end (10) |
 | `settings` | Values the organization may set. Each reaches `run` as a variable of that name; `default` and `required` are optional |
 | `secrets` | Values the organization sets that must not enter the sandbox. `run` sees a placeholder in a variable of that name; the egress proxy puts the value into requests to `hosts`, and nowhere else |
 
@@ -78,64 +83,141 @@ once for each image; after that `/harness` is read-only.
 
 ## run
 
-Runs once a turn, in `/work`.
+Runs once a turn, in `/work`. It reads the request, starts its CLI, prints what the CLI does as Responses output
+while it works, prints the stream's last event, and exits 0.
 
-**What it finds**
+### What it finds
 
 | | |
 |---|---|
-| `/turn/request.json` | The Responses request, as it was sent |
-| `/turn/history.json` | Earlier turns of the session this harness has not seen (another harness ran them) |
-| `/turn/handover.txt` | One line naming those harnesses and where they kept their notes, or nothing |
-| `/turn/files/<id>/<name>` | Each uploaded file the request names |
-| `/mind` (`$HOME`), `/work` | The session's two folders: they persist from turn to turn |
-| `$HG_HARNESS` | `/harness`: the installed package, with the kit in `kit/` |
-| `$HG_MODEL`, `$HG_PROVIDER_URL`, `$HG_PROVIDER_API`, `$HG_PROVIDER_KEY` | The model to call, where, which API to speak, and a placeholder for its key |
-| `$HG_STATE` | A folder under the mind for small values of the package's own |
+| `$HG_TURN/request.json` | The Responses request, as it was sent: every field of it |
+| `$HG_TURN/files/<id>/<name>` | Each uploaded file the request's input names by `file_id` |
+| `$HG_TURN/history.json` | Earlier turns of the session this harness has not seen (another harness ran them), each with its `input` and its `output` |
+| `$HG_TURN/handover.txt` | One line naming those harnesses and where they kept their notes, or nothing |
+| `$HG_MIND` (`$HOME`), `$HG_WORK` | `/mind` and `/work`, the session's two folders: they persist from turn to turn |
+| `$HG_HARNESS` | `/harness`: the installed package, with the contract in `contract/` |
+| `$HG_STATE` | A folder under the mind for small values of the package's own: its CLI's session id, to resume it |
+| `$HG_MODEL`, `$HG_PROVIDER_URL`, `$HG_PROVIDER_API`, `$HG_PROVIDER_KEY` | The model to call, the provider's base URL for that API as the organization wrote it, which API to speak, and a placeholder for its key |
+| `$HG_PROVIDER`, `$HG_ENVIRONMENT`, `$HG_HARNESS_NAME`, `$HG_HARNESS_VERSION` | The names in the request's `model`, and the package's own |
 | `$HG_SESSION`, `$HG_RESPONSE` | The ids of the session and of this turn's response |
 
-**What it prints**, one JSON object a line, on standard output:
+### The request
 
-- **Responses stream events**, without `sequence_number` and never a `response.*` envelope event
-  (`response.created`, `response.completed` and the like): those are the platform's. Each is checked against the
-  OpenAI SDK's model of that event, and the first one that is wrong fails the turn.
-- **`{"type": "hg.log", "text": "…"}`** for the turn's log. So is everything on standard error.
-- **One terminal line**, last, then exit 0:
-  `{"type": "hg.done"}`, `{"type": "hg.incomplete", "reason": "max_output_tokens"}` or
-  `{"type": "hg.failed", "code": "short_name", "message": "what went wrong"}`, each optionally with
-  `"usage": {"input_tokens": n, "output_tokens": n}`.
+`request.json` is the caller's body, checked only for being a Responses request. `model` is
+`environment/harness/provider/model`, which the platform has acted on already, as it has on `stream`, `background`,
+`store` and `previous_response_id`: streaming, storing and continuing a session are the same to `run` whichever
+the caller chose. Everything else is the package's to make of what its CLI can:
 
-A session continues when `run` gives its CLI the CLI's own session id from the turn before: save it in the state
-the moment the CLI reports it, and resume with it. When the turn is stopped, `run` is sent `SIGTERM` and has
-`run.stop_grace_s` seconds to end; it prints no terminal line then. What it left is saved, and the next turn carries
-on from it.
+| In the request | What a package does with it |
+|---|---|
+| `input` | The task. A string, or a list of items: messages (`user`, `developer`, `system`, `assistant`) with `input_text`, `input_image` and `input_file` parts, and the items that answer what an earlier turn ended on (`function_call_output`, `mcp_approval_response`, …) |
+| `instructions` | The CLI's system prompt for this turn |
+| `reasoning` | `effort`: how hard the CLI thinks. `summary`: whether its reasoning is printed |
+| `text` | `format`: a JSON schema the final answer must fit. `verbosity` |
+| `tools` | What the agent may use beyond its own tools. `mcp`: servers to connect its CLI to. `function` and `custom`: tools the caller runs (see "Asking the caller"). The rest (`web_search`, `shell`, `apply_patch`, …) name tools a CLI has of its own, to switch on or set up |
+| `tool_choice`, `parallel_tool_calls`, `max_tool_calls` | Which tools it may call, and how many steps it may take |
+| `max_output_tokens`, `temperature`, `top_p`, `truncation`, `context_management` | Passed to the CLI or its provider, where the CLI has a setting for it |
+| `metadata`, `user`, `safety_identifier` | The caller's own labels |
 
-## hgkit
+A field the CLI has no use for is left alone. Say in the package's README which fields it honours.
 
-`/harness/kit/hgkit.py` is the mapping, for a `run` written in Python (3.9 or later, standard library only). Using
-it is optional, and with it every line printed is one the platform takes.
+### What it prints
+
+One JSON object a line, on standard output. Every line is a piece of an OpenAI response, in one of three forms.
+Standard error is the turn's log, with whatever the CLI prints there.
+
+**An output item, whole**: any item of the Responses API. The platform gives it its place in the output and, if
+it has none, its `id`, and writes the stream's events for it.
+
+```json
+{"type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "Done.", "annotations": []}]}
+{"type": "shell_call", "call_id": "c1", "status": "completed", "action": {"commands": ["ls"]}}
+{"type": "shell_call_output", "call_id": "c1", "status": "completed", "output": [{"stdout": "a.txt\n", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}]}
+```
+
+**A stream event**, for what arrives in pieces: any event of the Responses stream but the ones about the response
+as a whole, which are the platform's (`response.created`, `response.queued`, `response.in_progress`, `error`).
+
+- A piece of text is `{"type": "response.output_text.delta", "delta": "…"}`, and a piece of reasoning
+  `{"type": "response.reasoning_summary_text.delta", "delta": "…"}`. Printed like that, naming no item, each goes
+  on a message (or a reasoning) the platform keeps: it begins with the first piece that has text and ends when
+  anything else is printed.
+- For anything else that arrives in pieces, print the item's own events: `response.output_item.added` with the
+  item and an `id` of your making, the events that name it by `item_id`, then `response.output_item.done` with the
+  item as it ended.
+
+**The stream's last event**, once, last: how the run ended, with only what the package knows of the response.
+
+```json
+{"type": "response.completed", "response": {"usage": {"input_tokens": 1200, "output_tokens": 80}}}
+{"type": "response.incomplete", "response": {"incomplete_details": {"reason": "max_output_tokens"}}}
+{"type": "response.failed", "response": {"error": {"code": "no_auth", "message": "The provider refused the key."}}}
+```
+
+`usage` is optional in each, and may carry `input_tokens_details` (`cached_tokens`) and `output_tokens_details`
+(`reasoning_tokens`). The `response` of `response.completed` may be left out. An error's `message` tells a person
+what went wrong; its `code` is a short name of the package's own, which the caller finds in `metadata.hg_code`.
+Whatever is printed after this event is ignored.
+
+The bookkeeping is the platform's. It numbers the events and places the items, so a `sequence_number` or an
+`output_index` in a line is replaced. Each line is checked against the OpenAI SDK's model of that item or event,
+and the first one that is wrong fails the turn, with a message naming the field.
+
+### What an agent does, as output items
+
+| The agent | The item |
+|---|---|
+| Says something | `message`. Its `phase` tells narration between steps (`commentary`) from the answer (`final_answer`); a `refusal` part is a refusal; an `output_text` part's `annotations` cite a web page (`url_citation`) or a file it made (`container_file_citation`) |
+| Thinks | `reasoning`, with `summary` parts |
+| Runs a command | `shell_call`, then `shell_call_output` with the same `call_id` |
+| Creates, changes or deletes a file | `apply_patch_call` (`operation.type`: `create_file`, `update_file`, `delete_file`), then `apply_patch_call_output` |
+| Connects to an MCP server, and calls one of its tools | `mcp_list_tools` (with `error` when it could not connect), `mcp_call` |
+| Searches the web, runs code, makes an image, uses a browser | `web_search_call`, `code_interpreter_call`, `image_generation_call`, `computer_call` |
+| Shortens its own context | `compaction` |
+| Uses any other tool of its own | `custom_tool_call`, then `custom_tool_call_output` |
+
+`output.schema.json` has every item and event, with every field: it is the SDK's own description, as a JSON Schema.
+
+### Asking the caller
+
+The Responses API has no status for a response that waits. A turn that needs its caller ends as any other does,
+`response.completed`, with the question as its last item; the answer comes in the next request's `input`, with
+`previous_response_id`, and the CLI carries on from the session it saved.
+
+| The agent needs | The turn's last item | The next request's input holds |
+|---|---|---|
+| A tool the caller runs (a `function` or `custom` tool of the request) | `function_call`, or `custom_tool_call` | `function_call_output`, or `custom_tool_call_output`, with the same `call_id` |
+| Leave to call an MCP tool | `mcp_approval_request` | `mcp_approval_response` |
+
+### Sessions and stopping
+
+A session continues when `run` gives its CLI the CLI's own session id from the turn before: save it under
+`$HG_STATE` the moment the CLI reports it, and resume with it. When it cannot be resumed, start a new session and
+say so on standard error.
+
+When a turn is stopped (cancelled, or past its environment's time limit), `SIGTERM` is sent to `run` and to
+everything it started, at once, and they have `run.stop_grace_s` seconds to end. The sandbox ends when `run` does,
+so `run` must outlive its CLI: take the signal, do nothing with it, and go on reading until the CLI has ended,
+which is what gives the CLI the time to save its session. Then exit; the platform says how a stopped turn ended,
+whatever `run` printed. What it left is saved, and the next turn carries on from it.
+
+### The smallest `run`
 
 ```python
 #!/usr/bin/env python3
-import json, os, sys
-sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))
-import hgkit
+import json, os, signal, subprocess
 
-request, emit, state = hgkit.Request(), hgkit.Emitter(), hgkit.State()
-cli = hgkit.Cli(["my-agent", "--json", "--resume", state.get("session") or "new"], stdin=request.brief())
-for line in cli.lines():                    # the CLI's output, a line at a time
+request = json.load(open(os.path.join(os.environ["HG_TURN"], "request.json")))
+signal.signal(signal.SIGTERM, lambda *_: None)          # outlive the CLI when the turn is stopped
+cli = subprocess.Popen(["my-agent", "--json"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+cli.stdin.write(request["input"])                       # a string here: an input may also be a list of items
+cli.stdin.close()
+for line in cli.stdout:                                 # the CLI's output, a line at a time
     event = json.loads(line)
-    if event["type"] == "session":   state.set("session", event["id"])
-    elif event["type"] == "text":    emit.say(event["text"])
-    elif event["type"] == "command": emit.ran(event["command"], event["stdout"], event["stderr"], event["exit_code"])
-emit.done() if cli.exit_code == 0 else emit.failed("agent_failed", f"my-agent exited with code {cli.exit_code}")
+    if event["type"] == "text":
+        print(json.dumps({"type": "response.output_text.delta", "delta": event["text"]}), flush=True)
+    elif event["type"] == "command":
+        print(json.dumps({"type": "shell_call", "call_id": event["id"], "status": "completed",
+                          "action": {"commands": [event["command"]]}}), flush=True)
+print(json.dumps({"type": "response.completed"}), flush=True)
 ```
-
-| | |
-|---|---|
-| `Request` | `body`, `prompt`, `instructions`, `effort`, `mcp_servers`, `files`, `history`, `handover`, `model`, `provider_url`, `provider_api`, `provider_key`, `brief()` |
-| `State` | `get(name)`, `set(name, value)`, `clear(name)`: kept with the session |
-| `Cli(command, env=, cwd=, stdin=)` | `lines()`, `exit_code`; it forwards a stop to the CLI and everything the CLI started, and ends `run` there |
-| `Emitter` | `say(text)`, `think(text)`, `ran(command, stdout, stderr, exit_code)`, `wrote(path, diff)`, `edited(path, diff)`, `deleted(path)`, `called(server, tool, arguments, output, error)`, `used(name, given, output)`, `log(text)`, `done(usage)`, `incomplete(reason, usage)`, `failed(code, message, usage)` |
-
-The kit's own file says the rest: read it.
