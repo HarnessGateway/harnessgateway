@@ -107,8 +107,7 @@ const PARTS = {
           draft.working.harnesses = event.target.checked ? [...draft.working.harnesses, harness.name].sort() : draft.working.harnesses.filter(name => name !== harness.name);
           option.classList.toggle("on", event.target.checked); changed();
         } }),
-        h("div", { class: "grow" }, h("b", {}, harness.name), " ", mono(harness.manifest.version), h("div", { class: "muted small" }, harness.manifest.description.slice(0, 120))),
-        mono(`${draft.name || "…"}/${harness.name}/${harness.manifest.apis.length ? "provider/model" : "none/none"}`));
+        h("div", { class: "grow" }, h("b", {}, harness.name)), mono(`${draft.name || "…"}/${harness.name}/provider/model`));
       return option;
     }) : h("div", { class: "empty" }, "No harness yet. Add one under Harnesses, then tick it here.")],
 };

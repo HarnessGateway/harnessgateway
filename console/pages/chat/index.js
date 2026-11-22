@@ -56,7 +56,7 @@ export async function chat(main, params) {
   const turns = [], nodes = [];                    // each exchange's reply as it stands, and where it is drawn
   const streams = new Set();                       // the turns this page is following
   main.leave = () => { left = true; for (const controller of streams) controller.abort(); };       // they run on; the page stops listening
-  const line = modelLine({ environments, harnesses, providers });
+  const line = modelLine({ environments, providers });
   const panel = sidePanel({ session: () => current && current.session, refresh: () => listFiles() });
   const composer = makeComposer({ onSend: send, onStop: stop });
   const list = h("div", { class: "rows" }), log = h("div", { class: "log" }), sessionLabel = h("span", { class: "session mono" });
@@ -197,7 +197,7 @@ export async function chat(main, params) {
     }
     const before = current.exchanges.length ? current.model.split("/")[1] : "", index = current.exchanges.length;
     current.exchanges.push({ text, attachments, response: null, note: before && before !== line.harness
-      ? `Handed over to ${line.harness}: it has the same files, and is told where ${before} kept its notes.` : "" });
+      ? `Handed over to ${line.harness}: it has the same files, and is told ${before} worked on them before it.` : "" });
     Object.assign(current, { model, note: "" });
     save(); drawList();
     log.querySelector(".chat-note")?.remove();
@@ -255,8 +255,10 @@ export async function chat(main, params) {
   add(clear(main), add(layout, h("div", { class: "list" }, h("div", { class: "list-head" },
       h("button", { onclick: fresh }, icon("plus"), "New chat"), h("button", { class: "quiet square", title: "Hide chats", onclick: toggleList }, icon("side"))), list),
     middle, panel.node));
-  const [, environment, harness] = params[0] === "with" ? params : [];     // #/chat/with/<environment>/<harness>: a new chat on it
-  line.set(harness ? `${environment}/${harness}/` : (current || chats[0] || {}).model || `${environments.find(found => found.harnesses.length).name}/`);
+  const [, environment, harness] = params[0] === "with" ? params : [];     // #/chat/with/<environment>/<harness>: a new chat on it,
+  const lately = (chats[0] || {}).model || "";                             // with the provider and model the last chat ran with
+  line.set(harness ? `${environment}/${harness}/${lately.split("/").slice(2).join("/")}` : (current || {}).model || lately
+    || `${environments.find(found => found.harnesses.length).name}/`);
   sessionLabel.textContent = (current && current.session) || "";
   drawList();
   if (takenBack || harness) { composer.set(takenBack || HELLO); takenBack = ""; } else composer.focus();

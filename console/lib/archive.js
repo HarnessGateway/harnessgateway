@@ -54,13 +54,3 @@ export async function pack(files) {
   blocks.push(new Uint8Array(BLOCK * 2));
   return new Blob([await through(new Blob(blocks), new CompressionStream("gzip"))], { type: "application/gzip" });
 }
-
-/** A package's harness.json, read; or null, and why it cannot be. */
-export function manifestOf(files) {
-  const file = files.get("harness.json");
-  if (!file || file.text === undefined) return [null, "The package has no harness.json."];
-  try {
-    const manifest = JSON.parse(file.text);
-    return manifest && typeof manifest === "object" && !Array.isArray(manifest) ? [manifest, ""] : [null, "harness.json is not an object."];
-  } catch (error) { return [null, `harness.json is not JSON: ${error.message}`]; }
-}

@@ -6,6 +6,7 @@
 // in it (HG_IMAGE, default python:3.13-slim). Everything it makes is named console-check-… and removed at the end.
 const { chromium } = require("playwright");
 const fs = require("fs");
+const zlib = require("zlib");
 
 const URL = (process.env.HG_URL || "http://127.0.0.1:8000").replace(/\/$/, ""), KEY = process.env.HG_KEY || "";
 const IMAGE = process.env.HG_IMAGE || "python:3.13-slim", SHOTS = process.env.HG_SHOTS || "";
@@ -105,21 +106,19 @@ const api = async (method, path, body) => {
     await page.fill(".dialog [name=name]", HARNESS);
     await page.click(".dialog button.primary");
     await page.waitForSelector(".tree a[title='run']");
-    expect(await page.locator(".tree a").count() === 3, "the template is not harness.json, install and run");
-    expect((await page.inputValue(".code textarea")).includes(`"name": "${HARNESS}"`), "harness.json does not name the harness");
+    expect(await page.locator(".tree a").count() === 2, "the template is not install and run");
+    expect((await page.textContent(".head h1")).includes(HARNESS) && (await page.inputValue(".code textarea")).includes("response.completed"),
+      "the editor is not open on the new harness's run");
     expect((await api("GET", "/v1/harnesses")).data.every(each => each.name !== HARNESS), "it exists before it was created");
   });
   await check("its files are edited, and the working copy is kept between tabs", async () => {
-    const manifest = JSON.parse(await page.inputValue(".code textarea"));
-    manifest.description = "Made by the console's own check.";
-    manifest.settings = { GREETING: { description: "What it says first.", default: "hi" } };
-    await page.fill(".code textarea", JSON.stringify(manifest, null, 2) + "\n");
-    await tab("Settings");
-    await page.waitForSelector(labelled("GREETING"));
+    await page.fill(".code textarea", (await page.inputValue(".code textarea")) + "# Made by the console's own check.\n");
+    await tab("Environments");
+    await page.waitForSelector(".panel");
     await tab("Files");
     expect((await page.inputValue(".code textarea")).includes("Made by the console"), "the edit was lost on the way to another tab");
-    await page.click(".tree a[title='run']");
     expect(await page.isChecked(".pane .check input"), "run is not marked executable");
+    expect(await page.locator(".tabs a").count() === 2, "a harness has more to it than its files and the environments that carry it");
     await shot("07-harness-new");
   });
   await check("it is created, and the platform holds the package", async () => {
@@ -127,7 +126,9 @@ const api = async (method, path, body) => {
     await toast(`Created ${HARNESS}`);
     await page.waitForSelector(`h1:has-text("${HARNESS}")`);
     const stored = await api("GET", `/v1/harnesses/${HARNESS}`);
-    expect(stored.manifest.description === "Made by the console's own check." && "GREETING" in stored.manifest.settings, "the manifest stored is not the one edited");
+    expect(/^[0-9a-f]{64}$/.test(stored.digest) && Object.keys(stored).sort().join() === "created_at,digest,name,secrets_set,updated_at", "a harness is not its package and nothing else");
+    const kept = await fetch(`${URL}/v1/harnesses/${HARNESS}/package`, { headers: { Authorization: `Bearer ${KEY}` } });
+    expect(zlib.gunzipSync(Buffer.from(await kept.arrayBuffer())).includes("Made by the console's own check."), "the package stored is not the one edited");
     expect(await page.isDisabled(".head button.primary"), "Save is offered with nothing to save");
   });
   await check("a file is added and edited, and saving replaces the package", async () => {
@@ -139,24 +140,20 @@ const api = async (method, path, body) => {
     await page.keyboard.press("Control+s");
     await toast("Saved");
     await page.waitForSelector(".tree a[title='docs/NOTES.md']");
-    expect(await page.locator(".tree a").count() === 4, "the package does not hold four files");
-  });
-  await check("a setting is set on the harness", async () => {
-    await tab("Settings");
-    await page.fill(labelled("GREETING"), "hello there");
-    await page.click(".head button.primary");
-    await toast("Saved");
-    expect((await api("GET", `/v1/harnesses/${HARNESS}`)).settings.GREETING === "hello there", "the setting was not stored");
+    expect(await page.locator(".tree a").count() === 3, "the package does not hold three files");
   });
   let archive = "";
   await check("a harness is exported as its package archive, and imported again", async () => {
     const [download] = await Promise.all([page.waitForEvent("download"), page.click(".head button:has-text('Export')")]);
-    expect(download.suggestedFilename() === `${HARNESS}-0.1.tar.gz`, `the file is called ${download.suggestedFilename()}`);
+    expect(download.suggestedFilename() === `${HARNESS}.tar.gz`, `the file is called ${download.suggestedFilename()}`);
     archive = await download.path();
     expect(fs.readFileSync(archive).subarray(0, 2).equals(Buffer.from([0x1f, 0x8b])), "the export is not gzip");
     await go("#/harnesses");
     const chooser = await picked(() => page.click(".top button:has-text('Import')"));
     await chooser.setFiles({ name: `${HARNESS}.tar.gz`, mimeType: "application/gzip", buffer: fs.readFileSync(archive) });
+    await page.waitForSelector(".dialog [name=answer]");                     // a package says nothing of its name: the file's is offered
+    expect(await page.inputValue(".dialog [name=answer]") === HARNESS, "the import is not offered the file's name");
+    await page.click(".dialog button.primary");
     await toast(`Saving replaces ${HARNESS}`);
     await page.waitForSelector(".tree a[title='docs/NOTES.md']");
     await page.click(".head button:has-text('Discard')");
@@ -240,30 +237,23 @@ const api = async (method, path, body) => {
   });
 
   // chat
-  await check("the chat offers what can run, and a harness that calls no model needs no provider", async () => {
+  await check("the chat offers an environment's harnesses, and a harness that calls no model is run with no provider", async () => {
     await go("#/chat");
     await page.selectOption("select[title=Environment]", ENVIRONMENT);
     expect(await page.inputValue("select[title=Harness]") === HARNESS, "the environment's harness is not offered");
-    expect(await page.isHidden("select[title=Provider]") && await page.isHidden("input[title=Model]"), "a provider is asked for by a harness that calls none");
+    const offered = await page.locator("select[title=Provider] option").allTextContents();
+    expect(offered.includes(PROVIDER) && offered.at(-1) === "none", `the providers offered are ${offered}`);
+    await page.selectOption("select[title=Provider]", "none");
+    expect(await page.isHidden("input[title=Model]"), "a model is asked for with no provider");
   });
-  await check("a harness no provider can serve says which provider to add, and is not what a new chat starts on", async () => {
+  await check("with no provider to name, the line names none", async () => {
     await page.route("**/v1/providers?*", route => route.fulfill({ json: { object: "list", data: [], has_more: false } }));
     await go("#/sessions"); await go("#/chat");
-    const speaking = (await api("GET", "/v1/harnesses")).data.find(each => each.manifest.apis.length);
-    const carrying = speaking && (await api("GET", "/v1/environments")).data.find(each => each.harnesses.includes(speaking.name) && each.harnesses.length > 1);
-    if (carrying) {                                // the installation has a harness that calls a model
-      await page.selectOption("select[title=Environment]", carrying.name);
-      expect(await page.inputValue("select[title=Harness]") !== speaking.name, "a new chat starts on a harness that cannot run yet");
-      await page.selectOption("select[title=Harness]", speaking.name);
-      await page.waitForSelector(".line-bar .needs:visible");
-      expect((await page.textContent(".line-bar .needs")).includes(speaking.manifest.apis[0]), "it does not say which API a provider must speak");
-      await page.fill(".composer textarea", "hello"); await page.press(".composer textarea", "Enter");
-      await toast("Add a provider");
-      await shot("09-chat-needs-provider");
-    }
+    expect(await page.inputValue("select[title=Provider]") === "none" && await page.isHidden("input[title=Model]"), "a provider is asked for when there is none");
     await page.unroute("**/v1/providers?*");
     await go("#/sessions"); await go("#/chat");
     await page.selectOption("select[title=Environment]", ENVIRONMENT);
+    await page.selectOption("select[title=Provider]", "none");
   });
   await check("a message runs in a sandbox and its reply arrives", async () => {
     const reply = await say("echo hello from the console > note.txt; cat note.txt; cat .started");
@@ -429,7 +419,6 @@ const api = async (method, path, body) => {
     await go("#/chat");
     await page.selectOption("select[title=Environment]", ENVIRONMENT);
     const reply = await say([`mkdir -p ${WRITTEN} && cd ${WRITTEN}`,
-      `echo '{"contract": 1, "name": "${WRITTEN}", "version": "1.0-1", "description": "Greets.", "apis": []}' > harness.json`,
       "printf '#!/bin/sh\\ntrue\\n' > install",
       "cat > run <<'RUN'", "#!/bin/sh", `echo '{"type": "response.output_text.delta", "delta": "hello from the package"}'`,
       `echo '{"type": "response.completed"}'`, "RUN",
@@ -441,7 +430,6 @@ const api = async (method, path, body) => {
       "the agent's link, which names no session, does not lead to this session's folder");
     await link.click();
     await page.waitForSelector(`.dialog h3:has-text("Add ${WRITTEN} as a harness")`);
-    expect((await page.textContent(".dialog p")).includes("Version 1.0-1 · calls no model · Greets."), "the dialog does not say what the package is");
     expect(await page.inputValue(".dialog [name=name]") === WRITTEN && await page.inputValue(".dialog [name=environment]") === ENVIRONMENT, "the name or the environment is not filled in");
     await shot("09-add-harness");
     await page.click(".dialog button.primary");

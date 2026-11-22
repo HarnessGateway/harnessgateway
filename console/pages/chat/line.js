@@ -1,61 +1,57 @@
-// The model line, as four choices: environment / harness / provider / model. Each offers only what can follow the
-// one before it: the harnesses an environment carries, the providers that speak an API the harness speaks. A
-// harness that calls no model has no provider and no model: none/none.
+// The model line, as four choices: environment / harness / provider / model. An environment offers the harnesses it
+// carries; a provider is any the organization has, or none, for a harness that calls no model. Whether a harness
+// can use a provider is the harness's own to say when it runs, so each harness is offered what it last ran with.
 import { add, clear, h } from "../../lib/dom.js";
 import { keep, kept } from "../../lib/storage.js";
 
 const MODELS = "hg.models", REMEMBERED = 12;     // the models used with each provider lately, in this browser
+const WITH = "hg.providers";                     // and the provider each harness was last used with
+const NONE = "none";
 
-export function modelLine({ environments, harnesses, providers }) {
+export function modelLine({ environments, providers }) {
   const environmentPick = h("select", { title: "Environment" }), harnessPick = h("select", { title: "Harness" }), providerPick = h("select", { title: "Provider" });
   const known = h("datalist", { id: "models-used" }), modelPick = h("input", { title: "Model", placeholder: "model", list: "models-used", spellcheck: "false", autocomplete: "off" });
-  const calls = h("span", { style: "display:contents" }, "/", providerPick, "/", modelPick, known);
-  const needs = h("a", { class: "needs", href: "#/providers" });       // in their place, when no provider can serve the harness
+  const model = h("span", { style: "display:contents" }, "/", modelPick, known);
   const used = () => kept(MODELS, {}), lately = provider => [].concat(used()[provider] || []);
+  const alone = () => providerPick.value === NONE;
 
-  const manifest = name => (harnesses.find(found => found.name === name) || { manifest: { apis: [] } }).manifest;
-  const alone = () => !manifest(harnessPick.value).apis.length;
-  const serving = name => providers.filter(found => manifest(name).apis.some(api => api in found.apis)).map(found => found.name);
   const offer = (select, names, wanted) => add(clear(select), names.map(name => h("option", { value: name, selected: name === wanted }, name)));
-  const offerModels = model => {
+  const offerModels = wanted => {
+    model.hidden = alone();
     add(clear(known), lately(providerPick.value).map(name => h("option", { value: name })));
-    modelPick.value = model || lately(providerPick.value)[0] || "";
+    modelPick.value = wanted || lately(providerPick.value)[0] || "";
   };
-  const offerProviders = (wanted, model) => {
-    const able = serving(harnessPick.value);
-    offer(providerPick, able, wanted);
-    calls.hidden = alone() || !able.length;
-    needs.hidden = alone() || able.length > 0;
-    needs.textContent = alone() ? "" : `Add a provider that speaks ${manifest(harnessPick.value).apis.join(" or ")}`;
-    offerModels(model);
+  const offerProviders = (wanted, ...rest) => {
+    const names = [...providers.map(found => found.name), NONE];
+    offer(providerPick, names, names.includes(wanted) ? wanted : kept(WITH, {})[harnessPick.value]);
+    offerModels(...rest);
   };
   const offerHarnesses = (wanted, ...rest) => {
-    const carried = (environments.find(found => found.name === environmentPick.value) || { harnesses: [] }).harnesses;
-    const runs = name => !manifest(name).apis.length || serving(name).length > 0;
-    offer(harnessPick, carried, carried.includes(wanted) ? wanted : carried.find(runs));       // unasked: one that can run now
+    offer(harnessPick, (environments.find(found => found.name === environmentPick.value) || { harnesses: [] }).harnesses, wanted);
     offerProviders(...rest);
   };
   environmentPick.onchange = () => offerHarnesses(harnessPick.value, providerPick.value);
-  harnessPick.onchange = () => offerProviders(providerPick.value);
+  harnessPick.onchange = () => offerProviders();
   providerPick.onchange = () => offerModels();
 
   return {
-    node: h("div", { class: "line-bar" }, environmentPick, "/", harnessPick, calls, needs),
+    node: h("div", { class: "line-bar" }, environmentPick, "/", harnessPick, "/", providerPick, model),
     get harness() { return harnessPick.value; },
     /** The line as a request names it. */
-    value: () => [environmentPick.value, harnessPick.value, alone() ? "none" : providerPick.value, alone() ? "none" : modelPick.value.trim()].join("/"),
+    value: () => [environmentPick.value, harnessPick.value, providerPick.value, alone() ? NONE : modelPick.value.trim()].join("/"),
     /** Why a message cannot be sent on this line, or nothing. */
-    wrong: () => !needs.hidden ? `${needs.textContent}, under Providers.` : !alone() && !modelPick.value.trim() ? "Name the model: any model the provider serves." : "",
+    wrong: () => !alone() && !modelPick.value.trim() ? "Name the model: any model the provider serves." : "",
     set(line) {
-      const [environment, harness, provider, ...rest] = String(line || "").split("/"), model = rest.join("/");
+      const [environment, harness, provider, ...rest] = String(line || "").split("/"), wanted = rest.join("/");
       offer(environmentPick, environments.map(found => found.name), environment);
-      offerHarnesses(harness, provider, model === "none" ? "" : model);
+      offerHarnesses(harness, provider, wanted === NONE ? "" : wanted);
     },
-    /** Keep the model that was just used with its provider, to be offered again. */
+    /** Keep what was just used, to be offered again: the provider with this harness, and the model with it. */
     remember() {
+      keep(WITH, { ...kept(WITH, {}), [harnessPick.value]: providerPick.value });
       if (alone()) return;
-      const model = modelPick.value.trim();
-      keep(MODELS, { ...used(), [providerPick.value]: [model, ...lately(providerPick.value).filter(name => name !== model)].slice(0, REMEMBERED) });
+      const name = modelPick.value.trim();
+      keep(MODELS, { ...used(), [providerPick.value]: [name, ...lately(providerPick.value).filter(other => other !== name)].slice(0, REMEMBERED) });
     },
   };
 }

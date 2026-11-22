@@ -32,9 +32,9 @@ export async function filesOf(session) {
   return { files, more };
 }
 
-/** The harness packages among a session's files: each top-level folder that holds harness.json, install and run. */
+/** The harness packages among a session's files: each top-level folder that holds install and run. */
 export const packagesIn = files => {
   const paths = new Set(files.map(file => file.path));
-  return files.map(file => /^([^./][^/]*)\/harness\.json$/.exec(file.path)).filter(Boolean).map(found => found[1])
-    .filter(folder => paths.has(`${folder}/install`) && paths.has(`${folder}/run`));
+  return files.map(file => /^([^./][^/]*)\/run$/.exec(file.path)).filter(Boolean).map(found => found[1])
+    .filter(folder => paths.has(`${folder}/install`));
 };

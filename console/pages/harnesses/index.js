@@ -1,37 +1,35 @@
-// Harnesses: a card for each, and an editor like an environment's. A harness is a package of files, so its first
-// tab is the files themselves, edited here; the others are what the organization sets on it and which environments
-// carry it. Edits are a working copy, packed and saved once. Out of the console and back in, a harness is its
-// package archive.
+// Harnesses: a card for each, and an editor like an environment's. A harness is a package of files and nothing
+// else, so its first tab is the files themselves, edited here; the other is which environments carry it, since
+// everything about where it runs is an environment's to say. Edits are a working copy, packed and saved once. Out
+// of the console and back in, a harness is its package archive.
 import { code } from "../../components/code.js";
 import { drafts, frame, NEW } from "../../components/editor.js";
 import { ask, confirm, dialog, fail, toast } from "../../components/feedback.js";
 import { field, mono, pill, top } from "../../components/layout.js";
 import { all, call, del, get, put } from "../../lib/api.js";
-import { manifestOf, pack, unpack } from "../../lib/archive.js";
+import { pack, unpack } from "../../lib/archive.js";
 import { add, clear, h, icon } from "../../lib/dom.js";
 import { download, pickFile } from "../../lib/files.js";
-import { ensureView, viewUrl } from "../../lib/work.js";
 import { bytes } from "../../lib/format.js";
 import { again } from "../../lib/route.js";
 import { definition } from "../environments.js";
 import { template } from "./template.js";
 
-const TABS = ["Files", "Settings", "Secrets", "Environments"];
+const TABS = ["Files", "Environments"];
+const NAME = "[a-z0-9][a-z0-9\\-]*";
 const at = name => `/v1/harnesses/${encodeURIComponent(name)}`;
 const page = (name, tab = "") => `#/harnesses/${encodeURIComponent(name)}${tab && `/${tab.toLowerCase()}`}`;
 const carrying = (environments, name) => environments.filter(e => e.harnesses.includes(name)).map(e => e.name);
-const begun = (files, more = {}) => ({ files, filesChanged: true, settings: {}, settingsBefore: {}, secrets: {}, kept: [], carried: [], carriedBefore: [],
-                                       open: "harness.json", dirty: true, ...more });
+const begun = (files, more = {}) => ({ files, filesChanged: true, carried: [], carriedBefore: [], open: "run", dirty: true, ...more });
 
 async function draftOf(name, environments) {
   const key = `harnesses/${name}`, held = drafts.get(key);
   if (name !== NEW && held && !held.dirty) drafts.delete(key);                 // nothing unsaved: show what is there now
   if (!drafts.has(key)) {
     if (name === NEW) throw new Error("Start a harness from the Harnesses page: New harness, or Import.");
-    const [shown, archive] = await Promise.all([get(at(name)), call("GET", `${at(name)}/package`, undefined, { raw: true })]);
-    drafts.set(key, begun(await unpack(await archive.arrayBuffer()), {
-      filesChanged: false, dirty: false, settings: { ...shown.settings }, settingsBefore: { ...shown.settings }, kept: shown.secrets_set,
-      carried: carrying(environments, name), carriedBefore: carrying(environments, name), open: (held || {}).open || "harness.json" }));
+    const archive = await call("GET", `${at(name)}/package`, undefined, { raw: true });
+    drafts.set(key, begun(await unpack(await archive.arrayBuffer()), { filesChanged: false, dirty: false, name,
+      carried: carrying(environments, name), carriedBefore: carrying(environments, name), open: (held || {}).open || "run" }));
   }
   return drafts.get(key);
 }
@@ -63,8 +61,6 @@ function filesTab(draft, changed) {
   const drawPane = () => {
     const path = draft.open, file = draft.files.get(path);
     if (!file) return add(clear(pane), h("div", { class: "empty" }, "Pick a file."));
-    const [manifest, wrong] = manifestOf(draft.files);
-    const named = manifest && draft.name && manifest.name !== draft.name && `harness.json names "${manifest.name}", and this harness is "${draft.name}": a harness's name is its package's.`;
     add(clear(pane),
       h("div", { class: "bar" }, h("b", {}, path), h("span", { class: "muted small" }, file.text === undefined ? `binary · ${bytes(file.bytes.length)}` : `${file.text.split("\n").length} lines`),
         h("div", { class: "acts" },
@@ -78,7 +74,6 @@ function filesTab(draft, changed) {
           h("button", { class: "quiet danger", onclick: () => confirm(`Delete ${path} from the package? It is gone once the harness is saved.`, () => {
             draft.files.delete(path); draft.open = [...draft.files.keys()].sort()[0]; touched(); draw();
           }) }, "Delete"))),
-      path === "harness.json" && (wrong || named) && h("div", { class: "note bad" }, wrong || named),
       file.text === undefined ? h("div", { class: "empty" }, "A binary file: it is kept as it is.")
         : code({ value: file.text, onInput: text => { file.text = text; touched(); } }));
   };
@@ -87,23 +82,8 @@ function filesTab(draft, changed) {
   return h("div", { class: "files" }, tree, pane);
 }
 
-const declaredTab = (what, says, each) => (draft, changed, manifest) => {
-  const declared = Object.entries((manifest || {})[what] || {});
-  return h("div", { class: "panel" }, h("p", { class: "muted" }, says),
-    declared.length ? declared.map(([name, about]) => each(draft, changed, name, about))
-      : h("div", { class: "empty" }, `This package declares no ${what}. Declare one under "${what}" in harness.json.`));
-};
-const settingsTab = declaredTab("settings", "The settings the package declares, as this organization sets them. A sandbox is given each as a variable; an empty one takes the package's default.",
-  (draft, changed, name, setting) => field(name + (setting.required ? " *" : ""), h("input", { value: draft.settings[name] ?? "", placeholder: setting.default ?? "", autocomplete: "off",
-    oninput: event => { event.target.value ? draft.settings[name] = event.target.value : delete draft.settings[name]; changed(); } }), setting.description));
-const secretsTab = declaredTab("secrets", "The secrets the package declares. A value never enters a sandbox: the sandbox holds a placeholder, and the egress proxy puts the value into requests to the hosts the package names.",
-  (draft, changed, name, secret) => field(name + (secret.required ? " *" : ""), h("input", { type: "password", autocomplete: "off",
-    placeholder: draft.kept.includes(name) ? "Set. Leave empty to keep it" : "Write-only",
-    oninput: event => { event.target.value ? draft.secrets[name] = event.target.value : delete draft.secrets[name]; changed(); } }),
-    `${secret.description || ""} Goes to ${(secret.hosts || []).join(", ")}.`));
-
-function environmentsTab(draft, changed, manifest, environments) {
-  return h("div", { class: "panel" }, h("p", { class: "muted" }, "The environments that carry this harness. It is installed on an environment's image the first time a request names it there."),
+function environmentsTab(draft, changed, environments) {
+  return h("div", { class: "panel" }, h("p", { class: "muted" }, "The environments that carry this harness. An environment is where everything about a turn is decided: the image, the limits, the network, and the variables and secrets the package reads. The package is installed on an environment's image the first time a request names it there."),
     environments.length ? environments.map(environment => {
       const carried = draft.carried.includes(environment.name);
       const option = h("label", { class: `option${carried ? " on" : ""}` },
@@ -112,7 +92,7 @@ function environmentsTab(draft, changed, manifest, environments) {
           option.classList.toggle("on", event.target.checked); changed();
         } }),
         h("div", { class: "grow" }, h("b", {}, environment.name), h("div", { class: "muted small mono" }, environment.image)),
-        mono(`${environment.name}/${(manifest || {}).name || draft.name}/${((manifest || {}).apis || []).length ? "provider/model" : "none/none"}`));
+        mono(`${environment.name}/${draft.name}/provider/model`));
       return option;
     }) : h("div", { class: "empty" }, "No environment yet. Add one under Environments."));
 }
@@ -120,19 +100,13 @@ function environmentsTab(draft, changed, manifest, environments) {
 async function harness(main, [name, tab = "files"]) {
   const isNew = name === NEW, key = `harnesses/${name}`;
   const environments = await all("/v1/environments", "name");
-  const draft = await draftOf(name, environments);
-  draft.name = isNew ? "" : name;
-  const [manifest, wrong] = manifestOf(draft.files);
+  const draft = await draftOf(name, environments), target = draft.name;
   const save = async () => {
     try {
-      const [read, why] = manifestOf(draft.files);
-      if (!read) throw new Error(why);
-      const target = isNew ? String(read.name) : name;
+      for (const program of ["install", "run"]) {
+        if (!(draft.files.get(program) || {}).executable) throw new Error(`A package needs an executable ${program}.`);
+      }
       if (isNew || draft.filesChanged) await call("PUT", at(target), await pack(draft.files));
-      const settings = Object.fromEntries([...new Set([...Object.keys(draft.settingsBefore), ...Object.keys(draft.settings)])]
-        .filter(setting => setting in (read.settings || {})).map(setting => [setting, draft.settings[setting] ?? null]));
-      const secrets = Object.keys(draft.secrets).length ? { secrets: draft.secrets } : {};
-      if (secrets.secrets || JSON.stringify(draft.settings) !== JSON.stringify(draft.settingsBefore)) await put(at(target), { settings, ...secrets });
       for (const environment of environments) {            // carried by an environment, or no longer
         const carries = environment.harnesses.includes(target), wanted = draft.carried.includes(environment.name);
         if (carries !== wanted) await put(`/v1/environments/${encodeURIComponent(environment.name)}`, { ...definition(environment),
@@ -143,53 +117,51 @@ async function harness(main, [name, tab = "files"]) {
       isNew ? location.hash = page(target) : again();
     } catch (error) { fail(error); }
   };
-  const version = (manifest || {}).version || "", counts = { files: draft.files.size, settings: Object.keys((manifest || {}).settings || {}).length,
-                                                            secrets: Object.keys((manifest || {}).secrets || {}).length, environments: draft.carried.length };
   const view = frame(main, {
-    back: "#/harnesses", backLabel: "Harnesses", title: isNew ? (manifest || {}).name || "New harness" : name, isNew,
-    subtitle: wrong || [version && `version ${version}`, (manifest.apis || []).length ? `speaks ${manifest.apis.join(", ")}` : "calls no model", manifest.description].filter(Boolean).join(" · "),
-    tabs: TABS.map(label => [label.toLowerCase(), label, counts[label.toLowerCase()]]), tab, href: id => page(name, id), onSave: save,
+    back: "#/harnesses", backLabel: "Harnesses", title: target, isNew,
+    subtitle: "A package: install runs once for each environment image, and run once a turn.",
+    tabs: [["files", "Files", draft.files.size], ["environments", "Environments", draft.carried.length]], tab, href: id => page(name, id), onSave: save,
     onDiscard: () => { drafts.delete(key); isNew ? location.hash = "#/harnesses" : again(); },
-    more: [["Export", async () => download(`${(manifest || {}).name || name}${version && `-${version}`}.tar.gz`, await pack(draft.files))],
+    more: [["Export", async () => download(`${target}.tar.gz`, await pack(draft.files))],
            !isNew && ["Delete", () => confirm(`Delete harness ${name}? It is taken off every environment that carries it.`,
              async () => { await del(at(name)); drafts.delete(key); location.hash = "#/harnesses"; }), true]].filter(Boolean),
   });
   const changed = () => {
-    draft.dirty = isNew || draft.filesChanged || JSON.stringify(draft.settings) !== JSON.stringify(draft.settingsBefore)
-      || Object.keys(draft.secrets).length > 0 || draft.carried.join() !== draft.carriedBefore.join();
+    draft.dirty = isNew || draft.filesChanged || draft.carried.join() !== draft.carriedBefore.join();
     view.changed(draft.dirty);
   };
-  view.body.append({ files: filesTab, settings: settingsTab, secrets: secretsTab, environments: environmentsTab }[TABS.map(label => label.toLowerCase()).includes(tab) ? tab : "files"](
-    draft, changed, manifest, environments));
+  view.body.append(tab === "environments" ? environmentsTab(draft, changed, environments) : filesTab(draft, changed));
   view.changed(draft.dirty);
 }
 
 function create() {
   dialog("New harness", [
-    h("p", { class: "muted" }, "It starts as the smallest package that works: harness.json, install and run, each saying what a real agent CLI's package puts there. Change them in the editor, then create it."),
-    field("Name", h("input", { name: "name", pattern: "[a-z0-9][a-z0-9\\-]*", required: true, placeholder: "my-agent", autocomplete: "off" }), "As a request names it: environment/harness/provider/model"),
+    h("p", { class: "muted" }, "It starts as the smallest package that works: install and run, each saying what a real agent CLI's package puts there. Change them in the editor, then create it."),
+    field("Name", h("input", { name: "name", pattern: NAME, required: true, placeholder: "my-agent", autocomplete: "off" }), "As a request names it: environment/harness/provider/model"),
   ], "Open the editor", form => {
-    drafts.set(`harnesses/${NEW}`, begun(template(form.elements.name.value.trim())));
+    drafts.set(`harnesses/${NEW}`, begun(template(), { name: form.elements.name.value.trim() }));
     location.hash = page(NEW);
   });
 }
 
+/** Bring in a package archive. A package says nothing of its name, so the person gives it: the file's, unless
+ *  they say otherwise. Under a name that is taken it replaces that harness, once it is saved. */
 async function importArchive(existing) {
   const file = await pickFile(".gz,.tgz,application/gzip");
-  try {
-    const files = await unpack(await file.arrayBuffer()), [manifest, wrong] = manifestOf(files);
-    if (!manifest) throw new Error(wrong);
-    const name = String(manifest.name);
-    if (existing.includes(name)) {                           // it replaces the harness of that name, once it is saved
-      Object.assign(await draftOf(name, await all("/v1/environments", "name")), { files, filesChanged: true, dirty: true, open: "harness.json" });
+  let files;
+  try { files = await unpack(await file.arrayBuffer()); } catch (error) { return toast(`${file.name} is not a harness package: ${error.message}`, true); }
+  ask("Import a harness", "Its name", file.name.replace(/\.(tar\.gz|tgz|gz)$/, "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, ""), async name => {
+    if (!new RegExp(`^${NAME}$`).test(name)) throw new Error("A name is lower-case letters, digits and '-'.");
+    if (existing.includes(name)) {
+      Object.assign(await draftOf(name, await all("/v1/environments", "name")), { files, filesChanged: true, dirty: true, open: "run" });
       location.hash = page(name);
       toast(`Imported. Saving replaces ${name} with it`);
     } else {
-      drafts.set(`harnesses/${NEW}`, begun(files));
+      drafts.set(`harnesses/${NEW}`, begun(files, { name }));
       location.hash = page(NEW);
       toast("Imported. Look it over, and create it");
     }
-  } catch (error) { toast(`${file.name} is not a harness package: ${error.message}`, true); }
+  }, "Import");
 }
 
 /** Take a folder of a session's work as a harness. `given` is {session, path} when the way here named them (a link
@@ -197,15 +169,10 @@ async function importArchive(existing) {
 async function fromSession(given = {}) {
   const [environments, recent, started] = await Promise.all([all("/v1/environments", "name"), get("/v1/sessions?limit=50"),
     given.session ? get(`/v1/sessions/${encodeURIComponent(given.session)}`).catch(() => null) : null]);
-  // What the folder says it is, read from the session's files: the name a harness takes is its package's.
-  const manifest = given.session && await ensureView(given.session).then(() => fetch(viewUrl(given.session, `${given.path}/harness.json`)))
-    .then(response => response.ok ? response.json() : null).catch(() => null);
   const ranIn = started && String(started.model || "").split("/")[0];
-  dialog(manifest ? `Add ${manifest.name} as a harness` : "Harness from a session", [
-    manifest ? h("p", { class: "muted" }, [manifest.version && `Version ${manifest.version}`, (manifest.apis || []).length ? `speaks ${manifest.apis.join(", ")}` : "calls no model",
-        manifest.description].filter(Boolean).join(" · "))
-      : h("p", { class: "muted" }, "Takes a folder of a session's work, as it was last saved, and makes it a harness: how a package an agent wrote is brought in. Under a name that is taken, it replaces that harness."),
-    field("Name", h("input", { name: "name", value: (manifest || {}).name || given.path || "", pattern: "[a-z0-9][a-z0-9\\-]*", required: true, autocomplete: "off" })),
+  dialog(given.path ? `Add ${given.path} as a harness` : "Harness from a session", [
+    h("p", { class: "muted" }, "Takes a folder of a session's work, as it was last saved, and makes it a harness: how a package an agent wrote is brought in. Under a name that is taken, it replaces that harness."),
+    field("Name", h("input", { name: "name", value: given.path || "", pattern: NAME, required: true, autocomplete: "off" })),
     field("Session", [h("input", { name: "session", value: given.session || "", placeholder: "sess_…", required: true, list: "recent", autocomplete: "off" }),
       h("datalist", { id: "recent" }, recent.data.map(found => h("option", { value: found.id }, `${found.model || ""} · ${found.turns} turns`)))]),
     field("Folder in /work", h("input", { name: "path", value: given.path || "", placeholder: "The same as the name, usually", autocomplete: "off" })),
@@ -232,11 +199,10 @@ export async function harnesses(main, params) {
     h("button", { class: "quiet", onclick: () => fromSession().catch(fail) }, "From a session"), h("button", { onclick: () => importArchive(found.map(each => each.name)) }, "Import"),
     h("button", { class: "primary", onclick: create }, icon("plus"), "New harness")),
     h("div", { class: "cards" }, found.map(each => h("a", { class: "card", href: page(each.name) },
-      h("div", { class: "name" }, each.name, mono(each.manifest.version), (drafts.get(`harnesses/${each.name}`) || {}).dirty && pill("Unsaved", "warn")),
-      h("div", { class: "two" }, each.manifest.description || "No description."),
-      h("div", { class: "chips" }, each.manifest.apis.length ? each.manifest.apis.map(api => pill(api)) : pill("no model"),
-        carrying(environments, each.name).length ? carrying(environments, each.name).map(name => pill(name, "accent")) : pill("in no environment", "warn"),
-        each.missing.length > 0 && pill(`needs ${each.missing.join(", ")}`, "bad")))),
+      h("div", { class: "name" }, each.name, (drafts.get(`harnesses/${each.name}`) || {}).dirty && pill("Unsaved", "warn")),
+      h("div", { class: "two muted small mono" }, `package ${each.digest.slice(0, 12)}`),
+      h("div", { class: "chips" },
+        carrying(environments, each.name).length ? carrying(environments, each.name).map(name => pill(name, "accent")) : pill("in no environment", "warn")))),
       drafts.has(`harnesses/${NEW}`) ? h("a", { class: "card add", href: page(NEW) }, "Continue the new harness")
         : h("button", { class: "card add", onclick: create }, icon("plus"), "New harness")));
   if (linked) {

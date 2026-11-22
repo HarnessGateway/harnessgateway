@@ -1,7 +1,6 @@
 /** What a new harness starts as: the smallest package that works. Its agent is the shell, so it runs before
  *  anything is changed; each file says what a package for a real agent CLI puts in its place. */
-export const template = name => new Map([
-  ["harness.json", { executable: false, text: JSON.stringify({ contract: 1, name, version: "0.1", description: "", apis: [] }, null, 2) + "\n" }],
+export const template = () => new Map([
   ["install", { executable: true, text: `#!/bin/sh
 # install: runs once for each environment image, before the first turn on it.
 #
