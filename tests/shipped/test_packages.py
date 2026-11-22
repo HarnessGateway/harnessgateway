@@ -1,5 +1,5 @@
-"""What an organization starts with: each is a package or a definition the platform itself would take, and what
-the builder is taught is what the platform has."""
+"""What an organization starts with, held to the contract: each is a package or a definition the platform itself
+would take, what the builder is taught is what the platform has, and none of it leans on the platform's code."""
 
 import json
 import os
@@ -9,14 +9,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import hgkit
 import pytest
 
-import harnessgateway
 from harnessgateway import defaults, shipped
 from harnessgateway.domain import sandbox
 from harnessgateway.domain.package import read_archive
 from harnessgateway.domain.resources import Environment
-from harnessgateway.kit import hgkit
 
 HERE = shipped.folder("packages")
 BUILDER = HERE / "harness-package-builder"
@@ -41,7 +40,7 @@ def test_the_skill_names_only_what_the_kit_and_the_contract_have(tmp_path: Path)
         (tmp_path / name).write_text(content)
     env = {"HG_TURN": str(tmp_path), "HG_STATE": str(tmp_path)}
     kit = {"Request": hgkit.Request(env), "State": hgkit.State(env), "Emitter": hgkit.Emitter()}
-    contract = (SKILL / "PACKAGES.md").read_text()
+    contract = (shipped.folder("docs") / "PACKAGES.md").read_text()
     rows = {row.split("|")[1].strip(" `"): row.split("|")[2] for row in contract.splitlines() if row.startswith("| `")}
     for kind, made in kit.items():
         named = re.findall(r"`(\w+)", rows[kind])
@@ -59,7 +58,7 @@ def verify(tmp_path: Path, *args: str, api: str = "") -> subprocess.CompletedPro
     harness = tmp_path / "builder"                     # the builder as installed: its files, and the kit beside them
     if not harness.exists():
         shutil.copytree(BUILDER, harness)
-        shutil.copytree(Path(harnessgateway.__file__).parent / "kit", harness / "kit")
+        shutil.copytree(shipped.folder("kit"), harness / "kit")
     (tmp_path / "work").mkdir(exist_ok=True)
     env = {"PATH": os.environ["PATH"], "HG_HARNESS": str(harness), "HG_WORK": str(tmp_path / "work"), "HG_CONTRACT": "1", "HG_PROVIDER_API": api}
     return subprocess.run([sys.executable, str(harness / "skills" / SKILL.name / "verify.py"), *args], env=env, capture_output=True, text=True)
@@ -114,3 +113,15 @@ def test_what_the_platform_would_refuse_is_not_verified_and_says_why(tmp_path: P
     assert "NOT VERIFIED: greeter 1.0-1 does not install" in verify(tmp_path, broken, api="anthropic").stdout
     stopped = verify(tmp_path, str(HERE / "shell"), "--say", "sleep 30", "--stop-after", "1")
     assert stopped.returncode == 0 and "stopped, with no terminal line" in stopped.stdout
+
+
+def test_what_ships_stands_apart_from_the_platform():
+    """The kit, the packages and the environments know the platform only by its contract, so they can live in a
+    repository of their own; and the platform's code finds them in one place only."""
+    for folder in ("kit", "packages", "environments"):
+        for file in shipped.folder(folder).rglob("*"):
+            if file.is_file() and file.suffix != ".pyc":
+                assert not re.search(r"^\s*(import|from) harnessgateway\b", file.read_text(errors="replace"), re.M), file
+    source = Path(shipped.__file__).parent
+    reach = sorted(module.relative_to(source).as_posix() for module in source.rglob("*.py") if "shipped.folder(" in module.read_text())
+    assert reach == ["api/console.py", "defaults.py", "runner/installer.py"]       # who serves, gives and installs them

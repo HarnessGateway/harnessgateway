@@ -6,9 +6,10 @@ description: Build a HarnessGateway harness package for an agent CLI - research 
 # Building a HarnessGateway harness package
 
 A harness package is a folder: `harness.json`, `install`, `run`. The platform knows no agent CLI; everything about
-one is in its package. `PACKAGES.md`, beside this file, is the whole contract: read it once before step 2. The
-package you are running from is a complete, working one: `/harness/harness.json`, `/harness/install`,
-`/harness/run`, and the kit every package may use, `/harness/kit/hgkit.py`.
+one is in its package. The platform puts two things beside every installed package, and so beside you:
+`/harness/kit/PACKAGES.md`, the whole contract (read it once before step 2), and `/harness/kit/hgkit.py`, the kit
+a `run` may use. The package you are running from is a complete, working one: `/harness/harness.json`,
+`/harness/install`, `/harness/run`.
 
 Work through the four steps in order. Keep `/work/.notes/<name>.md` as you go: it is how you carry on in the next
 turn without finding everything out again.
@@ -43,7 +44,7 @@ the hand-over which were run and which were not.
 
 In `/work/<name>/`, where `<name>` is the package's name (lower-case letters, digits and `-`):
 
-- **`harness.json`**: only the fields `PACKAGES.md` names. The version is the CLI's, then `-1`.
+- **`harness.json`**: only the fields the contract names. The version is the CLI's, then `-1`.
 - **`install`**: a shell script. It checks the image has what is needed, installs the CLI at the pinned version
   under `$HG_HARNESS/tools` by its makers' method, and checks the version it got. It names no CPU architecture.
 - **`run`**: Python, with the kit. It has the shape of `/harness/run`: the CLI's command; its environment; each

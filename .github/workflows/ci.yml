@@ -30,7 +30,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy
       - run: find console -name "*.js" -exec node --check {} +    # it has no build step to catch one
-      - run: uv run pytest tests/unit tests/integration
+      - run: uv run pytest tests/unit tests/shipped tests/integration
         env:
           HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
 
@@ -73,7 +73,9 @@ jobs:
           docker run --rm harnessgateway:ci python -c "
           from harnessgateway import defaults, shipped
           from harnessgateway.domain.package import read_archive
-          assert (shipped.folder('console') / 'index.html').is_file() and (shipped.folder('environments') / 'default.json').is_file()
+          for found in ('console/index.html', 'kit/hgkit.py', 'docs/PACKAGES.md', 'environments/default.json'):
+              folder, _, name = found.partition('/')
+              assert (shipped.folder(folder) / name).is_file(), found
           print({name: read_archive(defaults.archive(name)).manifest.version for name in ('shell', 'harness-package-builder')})"
       # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
       - name: Scan the image

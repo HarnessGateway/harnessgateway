@@ -10,6 +10,9 @@
 - **Rules are pure.** Anything that can be decided without I/O lives in `domain/` and is decided there.
 - **Validate at every boundary**, and refuse with a message that names what was wrong and what is allowed.
 - **The platform knows no harness.** Anything about one agent CLI belongs in its package.
+- **What ships stands apart.** `kit/`, `packages/` and `environments/` are not the server's code. They know the
+  platform only by its contract (`docs/PACKAGES.md`) and never import it; the server finds them in one place
+  (`shipped.py`); their tests are `tests/shipped/`. Keep it so: any of them can then move to a repository of its own.
 - **The console is a client.** It calls the public API and nothing else: what it needs, the API gives everyone.
   A page is drawn from DOM nodes, never from a string of markup, and what an agent made runs only sandboxed.
 - **The Responses API is not extended.** No request field, no response field, no route under its paths.
@@ -24,7 +27,7 @@
 ```sh
 uv sync --extra dev
 uv run ruff check . && uv run mypy          # lint, and strict types
-uv run pytest tests/unit                    # the rules: no database, no Docker
+uv run pytest tests/unit tests/shipped      # the rules, and what ships: no database, no Docker
 ./install.sh && tests/run.sh                # everything, on a real database
 HG_URL=http://127.0.0.1:8000 HG_KEY=hg_… python3 tests/live/turns.py     # real containers
 HG_URL=http://127.0.0.1:8000 HG_KEY=hg_… node tests/live/console.cjs     # the console, in a real browser

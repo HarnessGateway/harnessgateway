@@ -17,7 +17,7 @@ HARNESS = "/harness"                           # the installed package, read-onl
 TRUST = "/etc/hg"                              # where the certificate bundle is
 CA_BUNDLE = f"{TRUST}/ca.pem"
 STATE_DIR = ".harnessgateway"                  # under the mind: where a package keeps small values of its own
-KIT_DIR = "kit"                                # in an install: where the platform puts hgkit
+KIT_DIR = "kit"                                # in an install: where the platform puts hgkit, and this contract
 STARTUP = f"{TURN}/startup.sh"                 # the environment's startup script, when it has one
 STARTUP_FAILED = 78                            # what a sandbox exits with when that script fails
 

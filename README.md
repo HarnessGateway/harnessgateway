@@ -43,7 +43,7 @@ ships: no provider, and no other agent.
 | | | |
 |---|---|---|
 | **Provider** | `PUT /v1/providers/{name}` | A model endpoint: each API shape it speaks at a base URL, and a key |
-| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([the package contract](packages/harness-package-builder/skills/building-harnessgateway-harness-package/PACKAGES.md)) |
+| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([the package contract](docs/PACKAGES.md)) |
 | **Environment** | `PUT /v1/environments/{name}` | Where turns run: image, limits, network, variables, secrets, a startup script, and the harnesses it carries |
 
 ```sh
@@ -128,7 +128,7 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `src/harnessgateway/proxy/` | The egress proxy: a process of its own with no database and no sealing key |
 | `src/harnessgateway/api/` | The routes |
 | `src/harnessgateway/extensions.py` | The seams an edition builds on |
-| `src/harnessgateway/kit/hgkit.py` | What a package's `run` may import: the mapping between a Responses request and a CLI |
+| `kit/hgkit.py` | What a package's `run` may import: the mapping between a Responses request and a CLI |
 | `packages/`, `environments/` | What an organization starts with: the `shell` and `harness-package-builder` packages, and the `default` environment that carries them |
 | `console/` | The console: plain JavaScript modules, served as they are. `lib/` (the API, the DOM, files), `components/` (what pages are made of), `pages/` (one for each), `styles/` |
 
@@ -138,7 +138,7 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 
 ```sh
 uv run ruff check . && uv run mypy          # lint, and strict types
-uv run pytest tests/unit                    # the rules
+uv run pytest tests/unit tests/shipped      # the rules, and what ships held to the contract
 tests/run.sh                                # everything, on a real database (the installation must be up)
 HG_URL=… HG_KEY=hg_… python3 tests/live/turns.py     # a running installation, in real containers
 HG_URL=… HG_KEY=hg_… node tests/live/console.cjs     # every page of its console, in a real browser (Playwright)

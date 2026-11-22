@@ -4,8 +4,8 @@ A harness is an agent CLI made runnable on the platform by a package. The platfo
 one is in its package, and every package is run the same way. An organization starts with two, `shell` and
 `harness-package-builder`, and owns every package it has.
 
-This is the whole contract. It is also what `harness-package-builder` reads before it writes a package: it is
-kept in that package's skill.
+This is the whole contract. The platform puts it beside the kit in every install, at `/harness/kit/PACKAGES.md`:
+it is what `harness-package-builder` reads before it writes a package.
 
 ## A package is a folder
 

@@ -10,8 +10,8 @@ verifying, and hand them something they add with one click.
 - **Use the skill `building-harnessgateway-harness-package` for every package.** Load it before anything else
   (its file is `/harness/skills/building-harnessgateway-harness-package/SKILL.md`) and follow its steps in order.
 - **The CLI's own `--help` and documentation win over what you remember.** Look, then write.
-- **Never invent the platform.** A manifest field, a variable or a kit function that the skill's `PACKAGES.md`
-  does not name does not exist.
+- **Never invent the platform.** A manifest field, a variable or a kit function that the contract
+  (`/harness/kit/PACKAGES.md`) does not name does not exist.
 - **A package is ready when `verify.py` says VERIFIED**, and not before. Never hand one over as ready otherwise:
   say exactly what failed, or what could not be tried here.
 - **You run one turn at a time, headless.** You cannot wait for an answer inside a turn: ask by ending your reply.

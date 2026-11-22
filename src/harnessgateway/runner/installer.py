@@ -3,8 +3,8 @@ or turn asks first, in whichever process."""
 
 import asyncio
 from dataclasses import asdict
-from pathlib import Path
 
+from harnessgateway import shipped
 from harnessgateway.domain.contract import KIT_DIR
 from harnessgateway.domain.egress import Policy
 from harnessgateway.domain.package import read_archive
@@ -15,7 +15,12 @@ from harnessgateway.errors import Refused
 from harnessgateway.ids import new_token
 from harnessgateway.platform import Platform
 
-_KIT = Path(__file__).parent.parent / "kit" / "hgkit.py"     # what a package's `run` may import, put beside it
+
+def _given() -> dict[str, bytes]:
+    """What the platform puts in every install, beside the package: the kit a `run` may import, and the contract
+    both are written to."""
+    return {f"{KIT_DIR}/{file.name}": file.read_bytes()
+            for file in (shipped.folder("kit") / "hgkit.py", shipped.folder("docs") / "PACKAGES.md")}
 
 
 class InstallFailed(Exception):
@@ -48,7 +53,7 @@ class Installer:
     async def _attempt(self, org_id: str, install_id: str, resolved: Resolved, image_id: str) -> str:
         platform, manifest, environment = self._platform, resolved.harness.manifest, resolved.environment
         package = read_archive(await platform.resources.package(org_id, resolved.harness.digest))
-        files = {**{file.path: file.content for file in package.files}, f"{KIT_DIR}/{_KIT.name}": _KIT.read_bytes()}
+        files = {**{file.path: file.content for file in package.files}, **_given()}
         await platform.driver.fill(install_folder(install_id), files,
                                    executable=[file.path for file in package.files if file.executable])
         token = new_token()
