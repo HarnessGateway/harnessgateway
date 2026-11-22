@@ -17,9 +17,21 @@ version 1, because nothing has been built on it yet.
   printed whole reaches a caller as a stream carries text, deltas included.
 - **A refused line says which field.** Each item is checked against the OpenAI SDK's model of that item, so the
   message names the item and the field (`shell_call: action: Field required`).
-- **The schema is beside every package.** `/harness/contract/output.schema.json` is what the platform checks a line
-  by, as a JSON Schema, with the contract at `/harness/contract/PACKAGES.md`. The folder a package may not hold is
-  now `contract`, not `kit`.
+- **The Responses API is pinned, and kept as schemas.** The OpenAI SDK is pinned to one version (`openai 3.57.0`),
+  which `GET /v1/platform` reports as `sdk`. Four schemas are generated from it and kept in the repository's
+  `contract/`, beside `PACKAGES.md`, which moves there from `docs/`: a request, a response and the stream's events,
+  as OpenAI's SDK describes them, unchanged; and the platform's rule for one line a `run` may print. A test fails
+  when they are not what the pin gives; `harnessgateway schema` writes them.
+- **Every sandbox is given the contract.** It is at `$HG_CONTRACT` (`/etc/hg/contract`), read-only and written when
+  the platform starts, so it is always the running version's. It is no longer copied into each install, and a
+  package may hold a folder of any name. `HG_CONTRACT` was the contract's number and is now this folder.
+- **`/turn/previous.json`** is the response a request continues from, as the API returns it. Its `status` tells a
+  package that the turn before was stopped, and its `output` holds the call a request's answer is for.
+- **A request's credentials are secrets.** The `authorization` and `headers` of an MCP server a request names are
+  kept sealed while the turn runs, bound to that server's host, and gone when it ends. The request is stored,
+  returned and given to its harness with placeholders; the egress proxy puts the values in.
+- **A response says when it ended, and reports back more.** `completed_at` is set, and every field the API's
+  request and response both have is reported where the caller sent it.
 - **Every tool type reaches the package.** A request's `tools` were refused unless they were `mcp`. They are now
   passed on as sent, like every other field: a package offers a `function` tool to its agent and ends the turn
   with the `function_call`, and the caller answers in the next request.
@@ -29,10 +41,15 @@ version 1, because nothing has been built on it yet.
   of the Responses API's (`rate_limit_exceeded`, say), and `server_error` otherwise; `metadata.hg_code` has it
   either way.
 - The handover line is given once, as `/turn/handover.txt`; the variable `HG_HANDOVER` is gone.
-- `shell` and `harness-package-builder` (now `2.1.330-5`) are written this way. The builder designs each package
-  from the request and the response: which fields of the request the CLI can honour, and which output item each
-  thing it reports is. Its verifier holds every line to the schema, sends any request (`--request`), as the first
-  turn of a new session when asked (`--new`), and shows the shape of any item (`--shape`).
+- **`harness-package-builder` is now `hg-fde`**: HG FDE, the forward deployed engineer for the platform. It starts
+  from the agent that is wanted, researches the agent CLI, and writes a package in two parts: the adapter, and an
+  `agent/` folder of instructions, skills, hooks, tool servers and settings. It is given the contract and all four
+  schemas in full on every turn. Its verifier has a suite (`--suite`) that proves by a marker, in real turns:
+  instructions on a first and on a continued turn, memory, a stop and carrying on after it, a tool server the
+  request names, and the size of the home. It also sends any request (`--request`), as the first turn of a new
+  session when asked (`--new`), and shows the shape of any item (`--shape`).
+- The platform names no agent CLI, in its code, its console or its contract, and a test keeps that so.
+- `shell` is written this way too.
 
 ## 5.0.2
 
