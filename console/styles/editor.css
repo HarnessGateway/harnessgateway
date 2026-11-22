@@ -9,6 +9,7 @@
 .tabs .n { font-size: 11px; font-weight: 600; color: var(--muted); background: var(--sunk); border-radius: 99px; padding: 0 6px; }
 .rows .heads, .rows .row { display: flex; gap: 8px; align-items: center; } .rows .row { margin-bottom: 8px; }
 .rows .heads { font-size: 12.5px; font-weight: 600; margin-bottom: 6px; } .rows .heads > *, .rows .row > input { flex: 1; min-width: 0; } .rows .heads > i { flex: 0 0 34px; }
+.rows .row > select { flex: 0 0 190px; }       /* a choice beside what is typed keeps its own width: the rest is the input's */
 .option { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; margin-bottom: 8px; cursor: pointer; font-weight: 400; font-size: 14px; }
 .option:hover { border-color: var(--line-strong); } .option.on { border-color: var(--accent); background: var(--accent-soft); } .option .grow { flex: 1; min-width: 0; }
 .option b { font-weight: 600; }

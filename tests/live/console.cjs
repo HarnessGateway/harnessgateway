@@ -76,6 +76,7 @@ const api = async (method, path, body) => {
     await page.fill(".dialog [name=name]", PROVIDER);
     await page.selectOption(".dialog [data-shape]", "anthropic");
     expect(await page.inputValue(".dialog [data-url]") === "https://api.anthropic.com", "picking a shape did not offer its usual address");
+    expect((await page.locator(".dialog [data-url]").boundingBox()).width > 250, "there is no room to see the base URL as it is typed");
     await page.fill(".dialog [data-url]", "https://api.example.com");
     await page.fill(".dialog [name=key]", "sk-console-check");
     await shot("02-provider-new");
