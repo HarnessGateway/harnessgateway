@@ -71,10 +71,10 @@ jobs:
         run: |
           docker run --rm harnessgateway:ci harnessgateway --version
           docker run --rm harnessgateway:ci python -c "
-          from harnessgateway import defaults
-          from harnessgateway.api import console
-          assert (console.FILES / 'index.html').is_file(), console.FILES
-          print({name: len(defaults.archive(name)) for name in ('shell', 'harness-package-builder')})"
+          from harnessgateway import defaults, shipped
+          from harnessgateway.domain.package import read_archive
+          assert (shipped.folder('console') / 'index.html').is_file() and (shipped.folder('environments') / 'default.json').is_file()
+          print({name: read_archive(defaults.archive(name)).manifest.version for name in ('shell', 'harness-package-builder')})"
       # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
       - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0

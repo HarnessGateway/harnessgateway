@@ -1,6 +1,6 @@
 [project]
 name = "harnessgateway"
-version = "5.0.0"
+version = "5.0.1"
 description = "Agent infrastructure: any agent harness CLI, run in a sandbox, behind the OpenAI Responses API."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -32,7 +32,10 @@ build-backend = "hatchling.build"
 packages = ["src/harnessgateway"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"console" = "harnessgateway/console"      # the console's files travel inside the package: api/console.py serves them
+# What ships beside the program travels inside the package: shipped.py finds each there.
+"console" = "harnessgateway/console"
+"packages" = "harnessgateway/packages"
+"environments" = "harnessgateway/environments"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
@@ -53,9 +56,9 @@ ignore = ["S101"]                # assert states what must hold; it guards nothi
 "src/harnessgateway/kit/hgkit.py" = ["UP", "S603"]   # runs in any image on Python 3.9; starting a CLI is its job
 "src/harnessgateway/store/**" = ["S608"]                # queries are built from constants; every value is a parameter
 "tests/**" = ["E501", "S"]                            # a test reads better with its assertion on one line
-"src/harnessgateway/defaults/**" = ["S603", "S108"]   # the builder's verifier runs a package's programs: that is its job
+"packages/**" = ["S603", "S108"]                     # the builder's verifier runs a package's programs: that is its job
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src"]
+files = ["src", "packages"]

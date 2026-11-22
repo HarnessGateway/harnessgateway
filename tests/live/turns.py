@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 
 KEY, URL = os.environ["HG_KEY"], os.environ.get("HG_URL", "http://127.0.0.1:8000").rstrip("/")
-SHELL = pathlib.Path(__file__).parent.parent.parent / "src" / "harnessgateway" / "defaults" / "shell"
+SHELL = pathlib.Path(__file__).parent.parent.parent / "packages" / "shell"
 results, sessions_made = [], set()
 
 

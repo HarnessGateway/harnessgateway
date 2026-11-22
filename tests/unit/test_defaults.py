@@ -12,16 +12,16 @@ from pathlib import Path
 import pytest
 
 import harnessgateway
-from harnessgateway import defaults
+from harnessgateway import defaults, shipped
 from harnessgateway.domain import sandbox
 from harnessgateway.domain.package import read_archive
 from harnessgateway.domain.resources import Environment
 from harnessgateway.kit import hgkit
 
-HERE = Path(defaults.__file__).parent
+HERE = shipped.folder("packages")
 BUILDER = HERE / "harness-package-builder"
 SKILL = BUILDER / "skills" / "building-harnessgateway-harness-package"
-SHIPPED = json.loads((HERE / "environment.json").read_text())
+SHIPPED = json.loads((shipped.folder("environments") / "default.json").read_text())
 
 
 def test_the_default_environment_is_a_valid_one_and_carries_exactly_the_packages_that_ship():

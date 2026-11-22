@@ -11,12 +11,10 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route
 
+from harnessgateway import shipped
 from harnessgateway.domain import view
 
-_HERE = Path(__file__).resolve()
-# The console is the repository's top-level `console/`. An installed package holds a copy of it beside its modules
-# (pyproject.toml puts it there); a checkout serves the repository's own.
-FILES = next(folder for folder in (_HERE.parents[1] / "console", _HERE.parents[3] / "console") if folder.is_dir())
+FILES = shipped.folder("console")
 # The libraries that highlight code and typeset mathematics in a reply: each pinned to a version by its address
 # here, and to its content by an integrity hash where the console loads it. Without them everything still reads.
 _LIBRARIES = "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/ https://cdn.jsdelivr.net/npm/katex@0.19.1/"
