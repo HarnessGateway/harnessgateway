@@ -8,4 +8,4 @@ docker compose exec -T db sh -c "psql -U hg -d hg -tc \"SELECT 1 FROM pg_databas
 exec docker run --rm --network "${ns:-hg}-control" --volume "$PWD":/repo:ro --workdir /repo \
   --env HG_TEST_DATABASE_URL="postgresql://hg:${password}@db:5432/hg_test" --env PYTHONDONTWRITEBYTECODE=1 \
   --env PYTHONPATH=/repo/src "$(docker compose config --images | grep harnessgateway | head -1)" \
-  sh -c 'uv pip install --system --quiet pytest pytest-asyncio && python -m pytest -p no:cacheprovider "$@"' -- "$@"
+  sh -c 'uv pip install --quiet --python "$(command -v python)" pytest pytest-asyncio && python -m pytest -p no:cacheprovider "$@"' -- "$@"
