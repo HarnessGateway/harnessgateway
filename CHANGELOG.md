@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.1.3
+
+- **A package is its files, however it was packed.** On a Mac, `tar` adds a hidden `._name` entry beside every
+  file, and the platform took each as a file of the package. Those, `.DS_Store`, `__pycache__` and `.git` are now
+  left out wherever a package is read: an uploaded archive, a folder of a session's work, and the packages that
+  ship. A harness's package is kept, and given back, as its files alone, written one way.
+
 ## 5.1.2
 
 `hg-fde` (now `2.1.330-3`) builds a package and hands it over; it no longer verifies it. Its `verify.py` is gone,

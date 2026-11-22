@@ -8,14 +8,13 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from harnessgateway.api.http import Api, page_of, parse_object, read_body
-from harnessgateway.domain.package import PACKED_MAX, UNPACKED_MAX, PackageFile, write_archive
+from harnessgateway.domain.package import PACKED_MAX, UNPACKED_MAX, PackageFile, is_stray, write_archive
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.resources import KINDS
 from harnessgateway.errors import Invalid, TooLarge
 from harnessgateway.ids import is_id
 
 _GZIP = b"\x1f\x8b"                            # how a package archive begins, and a JSON document never does
-_LEFT_OUT = frozenset({".git", "__pycache__", ".DS_Store"})     # what a working folder holds that a package does not
 
 
 def routes(api: Api) -> list[Route]:
@@ -38,7 +37,7 @@ def routes(api: Api) -> list[Route]:
             raise Invalid(f"session names no session: {session_id!r}", param="session")
         saved = await sessions.saved(org_id, (await sessions.get(org_id, str(session_id))).id)
         found = (await snapshots.manifest(org_id, saved)).files(f"work/{path.strip('/')}/")
-        entries = {name: entry for name, entry in found.items() if not _LEFT_OUT & set(name.split("/"))}
+        entries = {name: entry for name, entry in found.items() if not is_stray(name)}
         if not entries:
             raise Invalid(f"the session's saved work has no folder {path.strip('/')!r}", param="path")
         if sum(entry.size for entry in entries.values()) > UNPACKED_MAX:

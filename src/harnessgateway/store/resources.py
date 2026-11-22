@@ -10,7 +10,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from harnessgateway.domain.line import NONE, Line
-from harnessgateway.domain.package import read_archive
+from harnessgateway.domain.package import read_archive, write_archive
 from harnessgateway.domain.resolve import Resolved, resolve
 from harnessgateway.domain.resources import KINDS, SINGULAR, VALUE_MAX, Environment, Harness, Provider
 from harnessgateway.domain.sealing import Sealer
@@ -147,12 +147,14 @@ class Resources:
 
     async def add_package(self, org_id: str, name: str, archive: bytes) -> Resource:
         """Add a package as a harness, or replace the harness of that name with it. The package is checked in
-        full first. A replaced harness keeps each setting and secret the new package still declares."""
+        full first, and kept as its files alone, written one way: not as the archive that happened to carry
+        them. A replaced harness keeps each setting and secret the new package still declares."""
         check_name(name, "name")
         package = read_archive(archive)
         manifest = package.manifest
         if manifest.name != name:
             raise Invalid(f"the package's harness.json names {manifest.name!r}, not {name!r}", param="name")
+        archive = write_archive(package.files)
         await self._blobs.put(package_key(org_id, package.digest), archive)
         async with self._db.tx(org_id) as conn:
             await conn.execute("INSERT INTO packages (org_id, digest, bytes) VALUES (%s, %s, %s) "

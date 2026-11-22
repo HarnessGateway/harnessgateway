@@ -4,6 +4,7 @@ would take, what HG FDE is taught is what the platform has, and none of it leans
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,7 @@ def load_run(tmp_path: Path, **turn_files: str):
 
 def test_hg_fde_is_told_who_it_is_the_contract_and_every_schema_in_full_each_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)          # loading it leaves nothing in the package's folder
     run = load_run(tmp_path)
     known = Path(run.knows({"instructions": "Answer in French."})).read_text()
     assert known.startswith("# HG FDE") and "# Harness packages" in known and known.endswith("Answer in French.")

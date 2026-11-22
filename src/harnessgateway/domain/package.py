@@ -17,6 +17,14 @@ UNPACKED_MAX = 256 * 1024 * 1024
 FILES_MAX = 5000
 MANIFEST = "harness.json"
 PROGRAMS = ("install", "run")                  # what the platform runs: once for an image, and once a turn
+_STRAY = frozenset({".git", "__pycache__", ".DS_Store"})
+
+
+def is_stray(path: str) -> bool:
+    """Whether a path is something a working folder holds, or a Mac's tar adds beside each file (`._name`), that
+    is no part of a package: it is left out wherever a package is read."""
+    parts = path.split("/")
+    return bool(_STRAY & set(parts)) or parts[-1].startswith("._")
 
 
 @dataclass(frozen=True)
@@ -59,7 +67,7 @@ def read_archive(data: bytes) -> Package:
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             for member in archive:
-                if member.isdir():
+                if member.isdir() or is_stray(member.name.removeprefix("./")):
                     continue
                 if not member.isfile():
                     raise Invalid(f"{member.name} is a link or a device: a package holds plain files and folders only")
