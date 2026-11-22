@@ -49,7 +49,7 @@ the process that answers need not be the one that runs the turn.
 | `proxy/` | The sandbox's only way out | A process of its own, with no database and no sealing key: what faces untrusted code holds nothing worth stealing but the secrets of sandboxes running right now |
 | `api/` | HTTP in, HTTP out | It validates and delegates; it decides nothing |
 | `extensions.py` | The seams | So that an edition adds to the core instead of changing it |
-| `kit/`, `packages/`, `environments/` (the repository's, beside `src/`) | The helper a package may use, and what an organization starts with | Given once, at setup, through the same stores as anything an organization adds: the platform still knows no harness |
+| `packages/`, `environments/` (the repository's, beside `src/`) | What an organization starts with | Given once, at setup, through the same stores as anything an organization adds: the platform still knows no harness |
 | `console/` (the repository's, beside `src/`) | The pages people use the platform through | A client of the API, served beside it: it has no route of its own, so the API is whole without it |
 
 Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain`; `store` and `driver` use
@@ -57,12 +57,22 @@ Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain
 
 ## What ships beside the program
 
-Four of the repository's folders are not the server's code: `console/`, `kit/`, `packages/` and `environments/`.
-The last three are on the other side of the contract. They know the platform only by `PACKAGES.md` and import
-nothing of it; the server reaches them only through `shipped.py`, to serve the console, to put the kit and the
-contract beside every installed package, and to give a new organization its packages and its environment. Their
-tests are `tests/shipped/`, which hold them to the contract. So they can be lifted out to a repository of their
-own without the server changing: only where `shipped.py` looks.
+Three of the repository's folders are not the server's code: `console/`, `packages/` and `environments/`. The
+last two are on the other side of the contract. They know the platform only by `PACKAGES.md` and import nothing
+of it; the server reaches them only through `shipped.py`, to serve the console, to put the contract beside every
+installed package, and to give a new organization its packages and its environment. Their tests are
+`tests/shipped/`, which hold them to the contract. So they can be lifted out to a repository of their own without
+the server changing: only where `shipped.py` looks.
+
+## One schema
+
+A package has no library of the platform's to import and no line of the platform's to print. Its `run` reads the
+caller's Responses request as it was sent, and prints pieces of a Responses response: an output item whole, a
+stream event, and last the stream's own last event. `domain/events.py` reads those lines and does the
+bookkeeping a response needs (the events' numbers, the items' places and ids, the item that text arriving by
+itself is kept in), checking each against the OpenAI SDK's model of it. `domain/schema.py` writes the same rules
+as a JSON Schema, which the platform puts beside every installed package with the contract, so that a package in
+any language can check what it prints before the platform does.
 
 ## Sessions and storage
 

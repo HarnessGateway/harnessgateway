@@ -10,7 +10,10 @@
 - **Rules are pure.** Anything that can be decided without I/O lives in `domain/` and is decided there.
 - **Validate at every boundary**, and refuse with a message that names what was wrong and what is allowed.
 - **The platform knows no harness.** Anything about one agent CLI belongs in its package.
-- **What ships stands apart.** `kit/`, `packages/` and `environments/` are not the server's code. They know the
+- **The Responses API is the only schema.** A package reads the request as it was sent and prints output items
+  and stream events as that API has them. Nothing of the platform's own is added to either: no helper to import,
+  no line of its own to print.
+- **What ships stands apart.** `packages/` and `environments/` are not the server's code. They know the
   platform only by its contract (`docs/PACKAGES.md`) and never import it; the server finds them in one place
   (`shipped.py`); their tests are `tests/shipped/`. Keep it so: any of them can then move to a repository of its own.
 - **The console is a client.** It calls the public API and nothing else: what it needs, the API gives everyone.

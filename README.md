@@ -43,7 +43,7 @@ ships: no provider, and no other agent.
 | | | |
 |---|---|---|
 | **Provider** | `PUT /v1/providers/{name}` | A model endpoint: each API shape it speaks at a base URL, and a key |
-| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([the package contract](docs/PACKAGES.md)) |
+| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, and a `run` that reads the Responses request and prints Responses output ([the package contract](docs/PACKAGES.md)) |
 | **Environment** | `PUT /v1/environments/{name}` | Where turns run: image, limits, network, variables, secrets, a startup script, and the harnesses it carries |
 
 ```sh
@@ -128,7 +128,6 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `src/harnessgateway/proxy/` | The egress proxy: a process of its own with no database and no sealing key |
 | `src/harnessgateway/api/` | The routes |
 | `src/harnessgateway/extensions.py` | The seams an edition builds on |
-| `kit/hgkit.py` | What a package's `run` may import: the mapping between a Responses request and a CLI |
 | `packages/`, `environments/` | What an organization starts with: the `shell` and `harness-package-builder` packages, and the `default` environment that carries them |
 | `console/` | The console: plain JavaScript modules, served as they are. `lib/` (the API, the DOM, files), `components/` (what pages are made of), `pages/` (one for each), `styles/` |
 
