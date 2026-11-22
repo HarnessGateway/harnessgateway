@@ -3,29 +3,33 @@
 from typing import Any, get_args
 
 from openai.types.responses import Response, ResponseError
+from openai.types.responses.response_create_params import ResponseCreateParamsBase
+from pydantic import ValidationError
 
 from harnessgateway.domain.outcome import Outcome
 from harnessgateway.domain.request import OURS
 
-# What a caller sent that a response reports back, where the caller sent it.
-_ECHOED = ("instructions", "previous_response_id", "background", "temperature", "top_p", "max_output_tokens",
-           "max_tool_calls", "truncation", "user", "reasoning", "text", "service_tier")
+# What a caller sent that a response reports back, where the caller sent it: every field the API's request and its
+# response both have, but the ones the platform says for itself.
+_OURS = {"model", "metadata", "tools", "tool_choice", "parallel_tool_calls"}
+_ECHOED = sorted((set(ResponseCreateParamsBase.__annotations__) & set(Response.model_fields)) - _OURS)
 _LAST_EVENT = {"completed": "response.completed", "failed": "response.failed", "incomplete": "response.incomplete",
                "cancelled": "response.incomplete"}       # the stream has no event of its own for a cancelled turn
 LAST_EVENTS = frozenset(_LAST_EVENT.values())
 _ERROR_CODES = get_args(ResponseError.model_fields["code"].annotation)     # the codes that API has
 
 
-def response_object(*, id: str, session_id: str, created_at: int, status: str, model: str, request: dict[str, Any],
-                    output: list[dict[str, Any]], usage: dict[str, Any] | None, outcome: Outcome | None,
-                    ) -> dict[str, Any]:
+def response_object(*, id: str, session_id: str, created_at: int, completed_at: int | None, status: str, model: str,
+                    request: dict[str, Any], output: list[dict[str, Any]], usage: dict[str, Any] | None,
+                    outcome: Outcome | None) -> dict[str, Any]:
     """A turn as an OpenAI response object. What the platform has to say that the object has no field for goes
     in `metadata`, under keys of its own: the session, and why a turn did not complete. A harness's own code
     for a failure is the error's code when it is one the API has, and is in `metadata` either way."""
     ours = {"session": session_id, "reason": outcome.reason if outcome and outcome.status != "completed" else None,
             "code": outcome.code if outcome else None}
     body: dict[str, Any] = {
-        "id": id, "object": "response", "created_at": created_at, "status": status, "model": model,
+        "id": id, "object": "response", "created_at": created_at, "completed_at": completed_at, "status": status,
+        "model": model,
         "output": output, "usage": usage,
         "metadata": {**(request.get("metadata") or {}), **{OURS + key: value for key, value in ours.items() if value}},
         "error": {"code": outcome.code if outcome.code in _ERROR_CODES else "server_error", "message": outcome.message}
@@ -36,7 +40,14 @@ def response_object(*, id: str, session_id: str, created_at: int, status: str, m
         "tools": request.get("tools", []),
         **{name: request[name] for name in _ECHOED if name in request},
     }
-    Response.model_validate(body)              # it is the wire format, or it is a fault of the platform's
+    try:
+        Response.model_validate(body)
+    except ValidationError as error:
+        # A few fields the API reports as it resolved them (a default filled in), which a caller's own words need
+        # not be: those are left out. Anything else wrong is a fault of the platform's.
+        for name in {str(wrong["loc"][0]) for wrong in error.errors()} & set(_ECHOED):
+            body.pop(name, None)
+        Response.model_validate(body)
     return body
 
 

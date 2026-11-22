@@ -68,25 +68,30 @@ class Turn:
         """The turn as the Responses API returns it."""
         outcome = Outcome(self.status, self.reason, self.message, self.code,  # type: ignore[arg-type]
                           self.incomplete_reason) if self.final else None
-        return response_object(id=self.id, session_id=self.session_id, created_at=int(self.created_at.timestamp()),
-                               status=self.status, model=str(self.line), request=self.request or {},
-                               output=self.output, usage=self.usage, outcome=outcome)
+        return response_object(
+            id=self.id, session_id=self.session_id, created_at=int(self.created_at.timestamp()),
+            completed_at=int(self.completed_at.timestamp()) if self.completed_at else None, status=self.status,
+            model=str(self.line), request=self.request or {}, output=self.output, usage=self.usage, outcome=outcome)
 
 
 COLUMNS = ", ".join(field.name for field in fields(Turn))
 
 
 class Turns:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, sealer: Sealer) -> None:
         self._db = db
+        self._sealer = sealer
 
     # making and reading
 
     async def create(self, who: Principal, *, resolved: Resolved, request: Mapping[str, Any],
-                     parent: Turn | None) -> Turn:
+                     parent: Turn | None, credentials: Sequence[BoundSecret] = ()) -> Turn:
         """Queue a turn. With no parent it starts a session; with a session's latest turn as its parent it
-        continues that session; with any other parent it starts a session forked from that turn."""
+        continues that session; with any other parent it starts a session forked from that turn. The request's
+        credentials are kept sealed beside it until the turn ends."""
         turn_id, line, org_id = new_id("response"), resolved.line, who.org_id
+        sealed = {secret.placeholder: {"hosts": list(secret.hosts), "value": self._sealer.seal(
+            secret.value, org_id, "turns", turn_id, secret.placeholder)} for secret in credentials}
         async with self._db.tx(org_id) as conn:
             session_id = None
             if parent is not None:
