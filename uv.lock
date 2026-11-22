@@ -277,8 +277,8 @@ wheels = [
 ]
 
 [[package]]
-name = "harnessgateway-core"
-version = "0.1.0"
+name = "harnessgateway"
+version = "5.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

@@ -6,7 +6,7 @@
 name: ${HG_NAMESPACE:-hg}
 
 x-platform: &platform
-  image: ${HG_IMAGE:-harnessgateway-core:0.1.0}
+  image: ${HG_IMAGE:-harnessgateway:local}       # built here by install.sh; a release is ghcr.io/harnessgateway/harnessgateway
   build: .
   restart: unless-stopped
 
