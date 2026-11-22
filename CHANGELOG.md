@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.1.0
+
+The OpenAI Responses API is now the only schema a harness package deals in. A package's `run` reads the caller's
+request as it was sent and prints pieces of a Responses response; there is no helper to import and no line of the
+platform's own to print. **A package written for an earlier version must be rewritten**: the contract is still
+version 1, because nothing has been built on it yet.
+
+- **hgkit is gone.** `run` prints, one JSON object a line: an output item, whole (any of the API's, `message` to
+  `mcp_approval_request`); a stream event, for what arrives in pieces; and last the stream's own last event
+  (`response.completed`, `response.incomplete` or `response.failed`), holding only what the package knows of the
+  response (`usage`, `incomplete_details`, `error`). The lines `hg.done`, `hg.incomplete`, `hg.failed` and `hg.log`
+  no longer exist; the log is standard error.
+- **The bookkeeping is the platform's.** It numbers the events, places the items, names an item that came without
+  an id, and keeps the message (or the reasoning) that a piece of text naming no item belongs to. A message
+  printed whole reaches a caller as a stream carries text, deltas included.
+- **A refused line says which field.** Each item is checked against the OpenAI SDK's model of that item, so the
+  message names the item and the field (`shell_call: action: Field required`).
+- **The schema is beside every package.** `/harness/contract/output.schema.json` is what the platform checks a line
+  by, as a JSON Schema, with the contract at `/harness/contract/PACKAGES.md`. The folder a package may not hold is
+  now `contract`, not `kit`.
+- **Every tool type reaches the package.** A request's `tools` were refused unless they were `mcp`. They are now
+  passed on as sent, like every other field: a package offers a `function` tool to its agent and ends the turn
+  with the `function_call`, and the caller answers in the next request.
+- **A stop reaches everything `run` started.** `SIGTERM` goes to `run` and to its CLI at once, so a package
+  forwards nothing: it takes the signal and waits for its CLI to end.
+- **A failure's code is the API's when the API has it.** `error.code` is the package's own code when that is one
+  of the Responses API's (`rate_limit_exceeded`, say), and `server_error` otherwise; `metadata.hg_code` has it
+  either way.
+- The handover line is given once, as `/turn/handover.txt`; the variable `HG_HANDOVER` is gone.
+- `shell` and `harness-package-builder` (now `2.1.330-4`) are written this way. The builder designs each package
+  from the request and the response: which fields of the request the CLI can honour, and which output item each
+  thing it reports is. Its verifier holds every line to the schema, sends any request (`--request`), and shows the
+  shape of any item (`--shape`).
+
 ## 5.0.2
 
 This version arranges the repository so that what ships beside the program can one day live in a repository of
