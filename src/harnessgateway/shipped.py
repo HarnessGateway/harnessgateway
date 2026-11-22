@@ -4,7 +4,7 @@ top-level folders:
     console/        the pages people use the platform through
     packages/       the harnesses an organization starts with
     environments/   the environments it starts with
-    docs/           of which PACKAGES.md, the package contract, is put beside every installed package
+    contract/       what every package is written to: PACKAGES.md, and the Responses API as schemas
 
 This module is the only place the server finds them, so any of them can come from somewhere else (a repository
 of its own) by changing what this returns. An installed package holds a copy of each beside its modules

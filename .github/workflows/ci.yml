@@ -73,10 +73,10 @@ jobs:
           docker run --rm harnessgateway:ci python -c "
           from harnessgateway import defaults, shipped
           from harnessgateway.domain.package import read_archive
-          for found in ('console/index.html', 'docs/PACKAGES.md', 'environments/default.json'):
+          for found in ('console/index.html', 'contract/PACKAGES.md', 'contract/request.schema.json', 'environments/default.json'):
               folder, _, name = found.partition('/')
               assert (shipped.folder(folder) / name).is_file(), found
-          print({name: read_archive(defaults.archive(name)).manifest.version for name in ('shell', 'harness-package-builder')})"
+          print({name: read_archive(defaults.archive(name)).manifest.version for name in ('shell', 'hg-fde')})"
       # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
       - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0

@@ -35,11 +35,13 @@ def test_a_turns_plan_gives_the_sandbox_its_folders_its_variables_and_placeholde
     assert (plan.name, plan.command, plan.args, plan.workdir, plan.networked) == ("sess_1", "/harness/run", (), "/work", True)
     assert [(mount.folder, mount.path, mount.read_only) for mount in plan.mounts] == [
         ("sessions/sess_1/mind", "/mind", False), ("sessions/sess_1/work", "/work", False), ("turns/resp_1", "/turn", True),
-        ("installs/inst_1", "/harness", True), ("trust", "/etc/hg", True)]
+        ("installs/inst_1", "/harness", True), ("given", "/etc/hg", True)]
     env = plan.env
     assert (env["HOME"], env["HG_MODEL"], env["HG_PROVIDER_URL"], env["HG_PROVIDER_API"]) == ("/mind", "claude-x", "https://api.example.com:8443/v1", "anthropic")
     assert (env["HG_PROVIDER_KEY"], env["DB"], env["TOOL"], env["TEAM"], env["MODE"]) == ("hgs_0", "hgs_1", "hgs_2", "demo", "fast")
     assert env["HTTPS_PROXY"] == "http://resp_1:tok@egress:8080" and env["SSL_CERT_FILE"] == "/etc/hg/ca.pem"
+    assert env["HG_CONTRACT"] == "/etc/hg/contract" == install_plan(
+        install_id="i", image_id="x", environment=found.environment, manifest=found.harness.manifest, proxy_token="t").env["HG_CONTRACT"]
     assert not {"sk-real", "db-secret", "tool-secret"} & set(env.values())
     scripted = turn_plan(session_id="s", turn_id="t", install_id="i", image_id="x", resolved=resolved(scripts={"startup": "true"}),
                          proxy_token="tok", provider_key="", placeholders={})

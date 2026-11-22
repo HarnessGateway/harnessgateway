@@ -14,10 +14,10 @@ MIND = "/mind"                                 # $HOME: where an agent CLI keeps
 WORK = "/work"                                 # the working directory: what the agent is asked to work on
 TURN = "/turn"                                 # this turn's inputs, read-only
 HARNESS = "/harness"                           # the installed package, read-only while a turn runs
-TRUST = "/etc/hg"                              # where the certificate bundle is
-CA_BUNDLE = f"{TRUST}/ca.pem"
+GIVEN = "/etc/hg"                              # what the platform gives every sandbox, read-only:
+CA_BUNDLE = f"{GIVEN}/ca.pem"                  # the certificates it trusts,
+CONTRACT = f"{GIVEN}/contract"                 # and the contract, in words and as schemas
 STATE_DIR = ".harnessgateway"                  # under the mind: where a package keeps small values of its own
-CONTRACT_DIR = "contract"                      # in an install: where the platform puts the contract, to be read
 STARTUP = f"{TURN}/startup.sh"                 # the environment's startup script, when it has one
 STARTUP_FAILED = 78                            # what a sandbox exits with when that script fails
 

@@ -12,7 +12,7 @@ dependencies = [
     "python-multipart>=0.0.9",   # file uploads, as the Files API sends them
     "psycopg[binary,pool]>=3.2", # PostgreSQL
     "pydantic>=2.8",             # validates definitions
-    "openai>=1.60",              # its types are what a request, an event and a response are validated against
+    "openai==3.57.0",            # the pin: its types are the Responses API here. Change it, then: harnessgateway schema
     "cryptography>=43",          # seals secrets, and signs the certificates the egress proxy shows
     "certifi>=2024.8",           # the public roots a sandbox trusts beside the platform's own
     "httpx>=0.27",               # the proxy's calls to the platform, and the Docker daemon's stats
@@ -36,7 +36,7 @@ packages = ["src/harnessgateway"]
 "console" = "harnessgateway/console"
 "packages" = "harnessgateway/packages"
 "environments" = "harnessgateway/environments"
-"docs/PACKAGES.md" = "harnessgateway/docs/PACKAGES.md"
+"contract" = "harnessgateway/contract"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/shipped", "tests/integration"]
@@ -56,7 +56,7 @@ ignore = ["S101"]                # assert states what must hold; it guards nothi
 [tool.ruff.lint.per-file-ignores]
 "src/harnessgateway/store/**" = ["S608"]                # queries are built from constants; every value is a parameter
 "tests/**" = ["E501", "S"]                            # a test reads better with its assertion on one line
-"packages/**" = ["S603", "S108"]                     # the builder's verifier runs a package's programs: that is its job
+"packages/**" = ["S603", "S108"]                     # HG FDE's verifier runs a package's programs: that is its job
 
 [tool.mypy]
 python_version = "3.12"

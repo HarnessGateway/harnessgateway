@@ -14,7 +14,7 @@ Everything else may change. These are what users, packages and editions are writ
    against the SDK's response type. The only field with a meaning of the platform's own is `model`.
 2. **The three definitions** (providers, environments, harnesses) share one shape: a name, a definition, and
    secrets sealed beside it. They have one set of verbs.
-3. **The harness package** is `harness.json`, `install` and `run` ([PACKAGES.md](PACKAGES.md)). The platform knows
+3. **The harness package** is `harness.json`, `install` and `run` ([PACKAGES.md](../contract/PACKAGES.md)). The platform knows
    no agent CLI: everything about one is in its package.
 4. **The sandbox** is what a package finds inside it: `/mind`, `/work`, `/turn`, `/harness`, the variables, the
    proxy. It has a version, which a package names.
@@ -57,10 +57,10 @@ Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain
 
 ## What ships beside the program
 
-Three of the repository's folders are not the server's code: `console/`, `packages/` and `environments/`. The
-last two are on the other side of the contract. They know the platform only by `PACKAGES.md` and import nothing
-of it; the server reaches them only through `shipped.py`, to serve the console, to put the contract beside every
-installed package, and to give a new organization its packages and its environment. Their tests are
+Four of the repository's folders are not the server's code: `console/`, `contract/`, `packages/` and
+`environments/`. The last two are on the other side of the contract. They know the platform only by `contract/`
+and import nothing of it; the server reaches all four only through `shipped.py`, to serve the console, to give
+every sandbox the contract, and to give a new organization its packages and its environment. Their tests are
 `tests/shipped/`, which hold them to the contract. So they can be lifted out to a repository of their own without
 the server changing: only where `shipped.py` looks.
 
@@ -70,9 +70,18 @@ A package has no library of the platform's to import and no line of the platform
 caller's Responses request as it was sent, and prints pieces of a Responses response: an output item whole, a
 stream event, and last the stream's own last event. `domain/events.py` reads those lines and does the
 bookkeeping a response needs (the events' numbers, the items' places and ids, the item that text arriving by
-itself is kept in), checking each against the OpenAI SDK's model of it. `domain/schema.py` writes the same rules
-as a JSON Schema, which the platform puts beside every installed package with the contract, so that a package in
-any language can check what it prints before the platform does.
+itself is kept in), checking each against the OpenAI SDK's model of it.
+
+"The Responses API" means one pinned version of the OpenAI SDK, named in `pyproject.toml` and reported by
+`GET /v1/platform`. `domain/schema.py` writes that version as four JSON Schemas, kept in `contract/` beside the
+contract in words: a request, a response and the stream's events, which are OpenAI's own and unchanged, and the
+platform's rule for one printed line. A test fails when the kept files are not what the pin gives, so a change of
+the pin shows as a change of them: `harnessgateway schema` writes them. Every sandbox is given the folder,
+read-only, written when the platform starts, so a package in any language reads and checks against exactly what
+the platform it runs on is pinned to.
+
+The platform names no agent CLI: not in its code, not in the console, not in the contract. A test keeps that so.
+What is known about any one CLI is in its package, and how packages are built is what `hg-fde` is taught.
 
 ## Sessions and storage
 

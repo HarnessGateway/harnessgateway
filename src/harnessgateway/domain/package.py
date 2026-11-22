@@ -9,7 +9,6 @@ import tarfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from harnessgateway.domain.contract import CONTRACT_DIR
 from harnessgateway.domain.resources import Manifest
 from harnessgateway.errors import Invalid, TooLarge
 
@@ -40,8 +39,6 @@ def _path(name: str) -> str:
     parts = path.split("/")
     if not path or path.startswith("/") or any(part in ("", ".", "..") for part in parts) or "\x00" in path:
         raise Invalid(f"the package holds a path that is not inside it: {name!r}")
-    if parts[0] == CONTRACT_DIR:
-        raise Invalid(f"{CONTRACT_DIR}/ is where the platform puts the contract: a package may not hold it")
     return path
 
 

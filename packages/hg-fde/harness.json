@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "name": "hg-fde",
+  "version": "2.1.330-1",
+  "description": "HG FDE, the forward deployed engineer for this platform. It builds harness packages: tell it the agent you want, and it researches the agent CLI, writes the package, proves what the package does, and hands it over to add under Harnesses.",
+  "apis": ["anthropic"],
+  "mind": ".claude",
+  "cache": [".npm", ".cache"],
+  "install": { "timeout_s": 900 },
+  "run": { "stop_grace_s": 15 }
+}

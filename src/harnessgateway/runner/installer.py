@@ -2,12 +2,8 @@
 or turn asks first, in whichever process."""
 
 import asyncio
-import json
 from dataclasses import asdict
 
-from harnessgateway import shipped
-from harnessgateway.domain import schema
-from harnessgateway.domain.contract import CONTRACT_DIR
 from harnessgateway.domain.egress import Policy
 from harnessgateway.domain.package import read_archive
 from harnessgateway.domain.resolve import Resolved
@@ -16,13 +12,6 @@ from harnessgateway.driver.base import DriverError
 from harnessgateway.errors import Refused
 from harnessgateway.ids import new_token
 from harnessgateway.platform import Platform
-
-
-def placed() -> dict[str, bytes]:
-    """What the platform puts in every install, beside the package: the contract the package is written to, in
-    words, and what its `run` may print, as a schema it can be checked against."""
-    return {f"{CONTRACT_DIR}/PACKAGES.md": (shipped.folder("docs") / "PACKAGES.md").read_bytes(),
-            f"{CONTRACT_DIR}/output.schema.json": json.dumps(schema.lines()).encode()}
 
 
 class InstallFailed(Exception):
@@ -55,8 +44,7 @@ class Installer:
     async def _attempt(self, org_id: str, install_id: str, resolved: Resolved, image_id: str) -> str:
         platform, manifest, environment = self._platform, resolved.harness.manifest, resolved.environment
         package = read_archive(await platform.resources.package(org_id, resolved.harness.digest))
-        files = {**{file.path: file.content for file in package.files}, **placed()}
-        await platform.driver.fill(install_folder(install_id), files,
+        await platform.driver.fill(install_folder(install_id), {file.path: file.content for file in package.files},
                                    executable=[file.path for file in package.files if file.executable])
         token = new_token()
         await platform.grants.put(Policy(org_id, install_id, resolved.line.environment, install_policy(environment)),

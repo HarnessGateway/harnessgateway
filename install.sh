@@ -61,7 +61,7 @@ HarnessGateway is running.
   API:       http://$(kept HG_BIND):${port}/v1
   Settings:  $(pwd)/.env  (it holds the installation's secrets; keep it)
 A new installation starts with the default environment and two harnesses: shell, to try an environment, and
-harness-package-builder, to write packages for other agents. Next: add a provider. README.md walks through the rest.
+hg-fde, the engineer that builds packages for other agents. Next: add a provider. README.md walks through the rest.
 Lost the key: docker compose exec serve harnessgateway init --new-key
 To update it: run this installer again.     To stop it: docker compose down
 DONE

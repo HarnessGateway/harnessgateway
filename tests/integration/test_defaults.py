@@ -15,10 +15,10 @@ async def test_the_defaults_are_an_environment_and_the_two_harnesses_it_carries(
     await defaults.give(platform, ORG)
     environments = await platform.resources.all(ORG, "environments")
     harnesses = {each.name: each.shown() for each in await platform.resources.all(ORG, "harnesses")}
-    assert [each.name for each in environments] == ["default"] and sorted(harnesses) == ["harness-package-builder", "shell"]
-    assert environments[0].shown()["harnesses"] == ["harness-package-builder", "shell"]
-    assert environments[0].shown()["network"]["mode"] == "open"                          # the builder reads a CLI's own pages
-    assert harnesses["shell"]["manifest"]["apis"] == [] and harnesses["harness-package-builder"]["manifest"]["apis"] == ["anthropic"]
+    assert [each.name for each in environments] == ["default"] and sorted(harnesses) == ["hg-fde", "shell"]
+    assert environments[0].shown()["harnesses"] == ["hg-fde", "shell"]
+    assert environments[0].shown()["network"]["mode"] == "open"                          # the engineer reads a CLI's own pages
+    assert harnesses["shell"]["manifest"]["apis"] == [] and harnesses["hg-fde"]["manifest"]["apis"] == ["anthropic"]
     assert (await platform.resources.resolve(ORG, Line.parse("default/shell/none/none"))).provider is None
     assert await platform.resources.all(ORG, "providers") == []            # a provider is the organization's to add
     turn = await run(platform, model="default/shell/none/none", input="anything")     # and a request can name them at once
@@ -36,5 +36,5 @@ async def test_setup_gives_the_defaults_with_the_first_key_and_never_again(db: D
     assert await init(settings) is None                                    # already set up
     assert (await init(settings, new_key=True)) not in (None, key)         # another key, and nothing else
     async with opened(settings) as platform:
-        assert [each.name for each in await platform.resources.all(ORG, "harnesses")] == ["harness-package-builder"]
+        assert [each.name for each in await platform.resources.all(ORG, "harnesses")] == ["hg-fde"]
         assert await platform.resources.all(ORG, "environments") == []

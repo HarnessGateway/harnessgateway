@@ -3,7 +3,10 @@
 
     verify.py <folder>                      the check every package must pass: its `install`, then a hello-world
                                             turn in a new session, on this session's provider
-    verify.py <folder> --say "<prompt>"     one more turn in the same session: to try resuming, a command, a file
+    verify.py <folder> --suite              then what a caller relies on, each proven by a marker: instructions,
+                                            on a first turn and on a continued one; memory; a stop, and carrying
+                                            on after it; a tool server the request names; the size of the home
+    verify.py <folder> --say "<prompt>"     one more turn in the same session: to try a command, a file, a skill
         --request FILE      the Responses request to send, in place of one made from the prompt: any field, any input
         --new               in a new session: nothing a turn before it left (a cache, a config, a session) is there
         --stop-after S      stop that turn after S seconds, the way a cancelled turn is stopped
@@ -12,7 +15,8 @@
 
 It stands in for /harness, /mind, /work and /turn with folders under $HG_WORK/.trial/<name>/, which stay between
 turns of this session. Every line a turn prints is held to the schema the platform checks a `run` by
-($HG_HARNESS/contract/output.schema.json), and to the order the platform takes lines in.
+($HG_CONTRACT/lines.schema.json), and to the order the platform takes lines in. Each turn is given, as
+`previous.json`, the response the trial's turn before it would have been.
 
 Python 3.9 or later, standard library only.
 """
@@ -35,11 +39,12 @@ PASSED = ("PATH", "LANG", "HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_prox
           "NODE_USE_ENV_PROXY", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
           "NODE_EXTRA_CA_CERTS", "PIP_CERT", "HG_CONTRACT")
 PROVIDED = ("HG_ENVIRONMENT", "HG_PROVIDER", "HG_PROVIDER_API", "HG_PROVIDER_URL", "HG_PROVIDER_KEY", "HG_MODEL")
-CONTRACT = Path(os.environ["HG_HARNESS"]) / "contract"         # where the platform puts the contract, in any install
+CONTRACT = Path(os.environ["HG_CONTRACT"])         # the contract, in words and as schemas: every sandbox is given it
 ENDINGS = ("response.completed", "response.incomplete", "response.failed")
 PLATFORMS = ("response.created", "response.queued", "response.in_progress", "error")
 ADDED, DONE = "response.output_item.added", "response.output_item.done"
 HELLO = "Say hello in one short sentence."
+BIG = 5 * 1024 * 1024                              # a folder of the home this large is asked about: is it a cache?
 TYPES: dict[str, type | tuple[type, ...]] = {
     "string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list, "object": dict,
     "null": type(None)}
@@ -53,7 +58,7 @@ class Schema:
     """The schema of a line a `run` may print, as the platform wrote it."""
 
     def __init__(self) -> None:
-        self._all = json.loads((CONTRACT / "output.schema.json").read_text())
+        self._all = json.loads((CONTRACT / "lines.schema.json").read_text())
         self.lines = {self._kind(option): option for option in self._all["anyOf"]}
 
     def _plain(self, schema: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +110,12 @@ class Read:
         self.wrong: list[str] = []
         self.ending: dict[str, Any] | None = None
         self.said = ""                              # the answer's text
+        self.items: list[dict[str, Any]] = []       # the output items it printed whole
         self._added: dict[str, bool] = {}           # the items a stream event added, and whether each is done
+
+    @property
+    def finished(self) -> bool:
+        return self.ending is not None and self.ending["type"] == ENDINGS[0]
 
     def line(self, number: int, text: str) -> None:
         try:
@@ -128,11 +138,13 @@ class Read:
             self.ending = line
         elif kind == "response.output_text.delta":
             self.said += line["delta"]
-        elif kind == "message":
-            self.said += "".join(part.get("text", "") for part in line["content"])
-        elif kind not in (ADDED, "reasoning") and not kind.startswith("response."):
-            did = line.get("action") or line.get("operation") or line.get("name") or ""
-            print(f"  [{kind}] {json.dumps(did)[:200]}")
+        elif not kind.startswith("response."):
+            self.items.append(line)
+            if kind == "message":
+                self.said += "".join(part.get("text", "") for part in line["content"])
+            elif kind != "reasoning":
+                did = line.get("action") or line.get("operation") or line.get("name") or ""
+                print(f"  [{kind}] {json.dumps(did)[:200]}")
 
     def _order(self, kind: str, line: dict[str, Any]) -> str:
         """What is wrong with where a stream event comes: it is about an item that was added, and is not done."""
@@ -146,6 +158,15 @@ class Read:
         elif "item_id" in line and line["item_id"] not in self._added:
             return f"it names an item that has not been added: {line['item_id']!r}"
         return ""
+
+    def response(self, stopped: bool) -> dict[str, Any]:
+        """The response this turn would have been, as far as the next turn is told of it: how it ended, and its
+        output. The platform says a stopped turn was cancelled, whatever it printed."""
+        said = [{"type": "message", "role": "assistant", "status": "completed",
+                 "content": [{"type": "output_text", "text": self.said, "annotations": []}]}] if self.said else []
+        status = "cancelled" if stopped else self.ending["type"].rpartition(".")[2] if self.ending else "failed"
+        output = [{"id": f"item_{place}", **item} for place, item in enumerate([*self.items, *said])]
+        return {"id": "resp_trial", "object": "response", "status": status, "output": output}
 
 
 def manifest_of(package: Path) -> dict[str, Any]:
@@ -164,12 +185,11 @@ def manifest_of(package: Path) -> dict[str, Any]:
 
 
 def laid_out(package: Path, manifest: dict[str, Any]) -> tuple[Path, dict[str, str]]:
-    """The trial's folders for a package, with the package's files as they now are and the contract beside them,
-    and the variables both of its programs are given."""
+    """The trial's folders for a package, with the package's files as they now are, and the variables both of its
+    programs are given."""
     root = Path(os.environ["HG_WORK"]) / ".trial" / str(manifest["name"])
     harness = root / "harness"
     shutil.copytree(package, harness, dirs_exist_ok=True)              # what an install added stays beside them
-    shutil.copytree(CONTRACT, harness / "contract", dirs_exist_ok=True)
     env = {name: os.environ[name] for name in PASSED if name in os.environ}
     env.update(HG_HARNESS=str(harness), HG_HARNESS_NAME=str(manifest["name"]),
                HG_HARNESS_VERSION=str(manifest["version"]))
@@ -185,14 +205,15 @@ def install(package: Path, manifest: dict[str, Any]) -> bool:
     return code == 0
 
 
-def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_after: float | None,
-         given: list[str], new: bool = False) -> tuple[list[str], str]:
-    """Run one turn. Returns what is wrong with it (nothing, when the platform would take it) and what it said."""
+def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_after: float | None = None,
+         given: tuple[str, ...] = (), new: bool = False) -> Read:
+    """Run one turn. What it printed, with what is wrong with it (nothing, when the platform would take it)."""
     root, env = laid_out(package, manifest)
     for folder in ("mind", "work", "turn"):
         if new:
             shutil.rmtree(root / folder, ignore_errors=True)
         (root / folder).mkdir(parents=True, exist_ok=True)
+    last = root / "last.json"                       # the response the turn before this one would have been
     settings = manifest.get("settings") or {}
     env.update({name: str(declared["default"]) for name, declared in settings.items()
                 if declared.get("default") is not None})
@@ -203,14 +224,15 @@ def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_
     for pair in given:
         name, _, env[name] = pair.partition("=")
     model = f"trial/{manifest['name']}/{env.get('HG_PROVIDER') or 'none'}/{env.get('HG_MODEL') or 'none'}"
-    for name, content in (("request.json", json.dumps({"model": model, **request})), ("history.json", "[]"),
-                          ("handover.txt", "")):
+    previous = last.read_text() if last.is_file() and not new else "null"
+    for name, content in (("request.json", json.dumps({"model": model, **request})), ("previous.json", previous),
+                          ("history.json", "[]"), ("handover.txt", "")):
         (root / "turn" / name).write_text(content)
 
     # A group of its own, as a sandbox's program has: a stop is sent to it and to everything it started.
     process = subprocess.Popen([str(root / "harness" / "run")], cwd=root / "work", env=env, stdout=subprocess.PIPE,
                                text=True, start_new_session=True)
-    overdue = threading.Event()
+    overdue, stopped = threading.Event(), threading.Event()
 
     def end() -> None:
         overdue.set()
@@ -218,10 +240,11 @@ def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_
 
     def stop() -> None:
         """Tell it to stop, as the platform does, and end it if it has not ended within its grace."""
+        stopped.set()
         os.killpg(process.pid, signal.SIGTERM)
-        last = threading.Timer(float(manifest.get("run", {}).get("stop_grace_s", 10)), end)
-        last.daemon = True
-        last.start()
+        ender = threading.Timer(float(manifest.get("run", {}).get("stop_grace_s", 10)), end)
+        ender.daemon = True
+        ender.start()
     stopper = threading.Timer(stop_after, stop) if stop_after is not None else None
     if stopper:
         stopper.daemon = True
@@ -235,24 +258,86 @@ def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_
         stopper.cancel()
     if overdue.is_set():
         read.wrong.append("it did not end within its stop grace after it was told to stop")
-    elif stop_after is None and code != 0:
+    elif not stopped.is_set() and code != 0:
         read.wrong.append(f"run exited with code {code}: it exits 0 however the turn ended")
-    if read.ending is None and stop_after is None:
+    if read.ending is None and not stopped.is_set():
         read.wrong.append("it did not print the stream's last event: response.completed, .incomplete or .failed")
+    last.write_text(json.dumps(read.response(stopped.is_set())))
     print(f"\nsaid: {read.said.strip()[:2000] or '(nothing)'}")
     print("end:  " + (json.dumps(read.ending) if read.ending else "none"))
-    if stop_after is not None:
+    if stopped.is_set():
         print(f"      (stopped after {stop_after:g} seconds: the platform says how a stopped turn ended, whatever it "
               "printed)")
-    elif read.ending and read.ending["type"] != ENDINGS[0]:
+    elif read.ending and not read.finished:
         print("      (the turn did not finish: read its message, and what it printed to standard error above)")
-    finished = read.ending is not None and read.ending["type"] == ENDINGS[0]
-    return read.wrong, read.said.strip() if finished else ""
+    return read
+
+
+def suite(package: Path, manifest: dict[str, Any], given: tuple[str, ...]) -> bool:
+    """What a caller relies on, each proven by a marker in a real turn. Whether all of it held."""
+    results: list[tuple[str, bool, str]] = []
+
+    def tried(what: str, request: dict[str, Any], marker: str, **how: Any) -> Read:
+        print(f"\n--- {what}")
+        read = turn(package, manifest, request, given=given, **how)
+        held = not read.wrong and read.finished and marker in read.said
+        results.append((what, held, "; ".join(read.wrong) or f"it said: {read.said.strip()[:160] or '(nothing)'}"))
+        return read
+
+    tried("instructions, on a session's first turn",
+          {"instructions": "End your reply with the word ALPHA.", "input": HELLO}, "ALPHA", new=True)
+    tried("instructions, on a continued turn",            # a CLI may keep the first turn's for the whole session
+          {"instructions": "End your reply with the word BRAVO.", "input": "Say hello again, in one short sentence."},
+          "BRAVO")
+    tried("memory: it is told a thing", {"input": "Remember this: the codeword is HERON. Reply with OK."}, "", new=True)
+    tried("memory: it knows the thing a turn later", {"input": "What is the codeword?"}, "HERON")
+
+    print("\n--- a stop: a turn is stopped, and the session carries on")
+    cut = turn(package, manifest, {"input": "Run this shell command and wait for it to finish: sleep 60"},
+               stop_after=20, given=given)
+    results.append(("a stop: it ends within its grace", not cut.wrong, "; ".join(cut.wrong) or "it ended in time"))
+    tried("a stop: the session carries on, and knows it was stopped",
+          {"input": "Did the last thing I asked you to do finish? Answer yes or no. Then tell me the codeword."},
+          "HERON")
+
+    print("\n--- a tool server the request names")
+    server = subprocess.Popen([sys.executable, str(Path(__file__).with_name("toolserver.py"))],
+                              stdout=subprocess.PIPE, text=True)
+    assert server.stdout is not None
+    port = server.stdout.readline().strip()
+    try:
+        # It is on this machine, where a real one is reached through the egress proxy: so not through the proxy.
+        local = (*given, "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
+        tools = [{"type": "mcp", "server_label": "numbers", "server_url": f"http://127.0.0.1:{port}/mcp",
+                  "require_approval": "never"}]
+        read = turn(package, manifest, {"tools": tools, "input": "Call the tool that returns the secret number, and "
+                                        "reply with the number."}, given=local, new=True)
+    finally:
+        server.terminate()
+    called = [item for item in read.items if item["type"] == "mcp_call"]
+    results.append(("a tool server the request names: its tool is called", "4242" in read.said and not read.wrong,
+                    "; ".join(read.wrong) or f"it said: {read.said.strip()[:160] or '(nothing)'}"))
+    results.append(("a tool server the request names: the call is printed as an mcp_call", bool(called),
+                    f"{len(called)} mcp_call item(s) printed"))
+
+    home = Path(os.environ["HG_WORK"]) / ".trial" / str(manifest["name"]) / "mind"
+    sizes = {top.name: sum(file.stat().st_size for file in top.rglob("*") if file.is_file() and not file.is_symlink())
+             for top in home.iterdir() if top.is_dir()}
+    large = [f"{name} ({size // (1024 * 1024)} MB)" for name, size in sorted(sizes.items()) if size > BIG]
+    declared = manifest.get("cache") or []
+    print("\nverify: SUITE")
+    for what, held, seen in results:
+        print(f"  {'PASS' if held else 'FAIL'}  {what}\n        {seen}")
+    print(f"  NOTE  the home holds {sum(sizes.values()) // (1024 * 1024)} MB after these turns"
+          + (f"; large folders: {', '.join(large)}. Whatever of that is downloads or a cache belongs in `cache` "
+             f"(now {json.dumps(declared)})." if large else "."))
+    return all(held for _, held, _ in results)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("folder", type=Path, nargs="?")
+    parser.add_argument("--suite", action="store_true")
     parser.add_argument("--say", metavar="PROMPT")
     parser.add_argument("--request", type=Path, metavar="FILE")
     parser.add_argument("--new", action="store_true")
@@ -268,15 +353,15 @@ def main() -> int:
         return 0
     if args.folder is None:
         parser.error("the package's folder is needed")
-    package = args.folder.resolve()
+    package, given = args.folder.resolve(), tuple(args.set)
     manifest = manifest_of(package)
     label = f"{manifest['name']} {manifest['version']}"
     if args.say is not None or args.request is not None:
         request = json.loads(args.request.read_text()) if args.request else {"input": args.say}
-        wrong, _ = turn(package, manifest, request, args.stop_after, args.set, args.new)
-        print("verify: " + ("every line is one the platform takes." if not wrong
-                            else "PROBLEMS:\n  " + "\n  ".join(wrong)))
-        return 1 if wrong else 0
+        read = turn(package, manifest, request, args.stop_after, given, args.new)
+        print("verify: " + ("every line is one the platform takes." if not read.wrong
+                            else "PROBLEMS:\n  " + "\n  ".join(read.wrong)))
+        return 1 if read.wrong else 0
 
     if not install(package, manifest):
         print(f"verify: NOT VERIFIED: {label} does not install.")
@@ -287,13 +372,17 @@ def main() -> int:
               f"and the package speaks {', '.join(speaks)}: its hello world cannot run here, and must be run after it "
               f"is added, with a provider that speaks one of those.")
         return 2
-    wrong, said = turn(package, manifest, {"input": HELLO}, None, args.set)
-    if not wrong and not said:
-        wrong.append("its hello world did not finish with an answer")
+    read = turn(package, manifest, {"input": HELLO}, given=given)
+    answered = read.finished and read.said.strip()
+    wrong = read.wrong or ([] if answered else ["its hello world did not finish with an answer"])
     if wrong:
         print(f"verify: NOT VERIFIED: {label}:\n  " + "\n  ".join(wrong))
         return 1
     print(f"verify: VERIFIED: {label} installs, and answered a hello world.")
+    if args.suite and not suite(package, manifest, given):
+        print(f"verify: SUITE NOT PASSED: {label}. Each FAIL above is a thing to fix, or a thing this CLI cannot do: "
+              "find out which, and say which at the hand-over.")
+        return 1
     return 0
 
 

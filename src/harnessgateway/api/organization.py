@@ -8,7 +8,7 @@ from starlette.routing import Route
 
 from harnessgateway import __version__
 from harnessgateway.api.http import Api, listing, parse_object, read_body
-from harnessgateway.domain import contract
+from harnessgateway.domain import contract, schema
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Invalid
 
@@ -44,7 +44,7 @@ def routes(api: Api) -> list[Route]:
         return {"id": request.path_params["id"], "object": "key", "revoked": True}
 
     async def about(request: Request, who: Principal) -> Any:
-        return {"object": "platform", "version": __version__, "contract": contract.VERSION,
+        return {"object": "platform", "version": __version__, "contract": contract.VERSION, "sdk": schema.SDK,
                 "driver": platform.driver.name, "isolation": await platform.driver.isolation()}
 
     return [

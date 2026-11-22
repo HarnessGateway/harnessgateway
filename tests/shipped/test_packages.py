@@ -1,5 +1,5 @@
 """What an organization starts with, held to the contract: each is a package or a definition the platform itself
-would take, what the builder is taught is what the platform has, and none of it leans on the platform's code."""
+would take, what HG FDE is taught is what the platform has, and none of it leans on the platform's code."""
 
 import json
 import os
@@ -16,18 +16,17 @@ from harnessgateway.domain import sandbox
 from harnessgateway.domain.events import ENDINGS, EVENTS, ITEMS, LineError, RunOutput
 from harnessgateway.domain.package import read_archive
 from harnessgateway.domain.resources import Environment
-from harnessgateway.runner.installer import placed
 
 HERE = shipped.folder("packages")
-BUILDER = HERE / "harness-package-builder"
-SKILL = BUILDER / "skills" / "building-harnessgateway-harness-package"
+FDE = HERE / "hg-fde"
+SKILL = FDE / "skills" / "building-harness-packages"
 SHIPPED = json.loads((shipped.folder("environments") / "default.json").read_text())
-CONTRACT = shipped.folder("docs") / "PACKAGES.md"
-PLACED = placed()                                      # what the platform puts beside every installed package
+GIVEN = shipped.folder("contract")                     # what every sandbox is given at $HG_CONTRACT
+CONTRACT = GIVEN / "PACKAGES.md"
 
 
 def test_the_default_environment_is_a_valid_one_and_carries_exactly_the_packages_that_ship():
-    assert Environment.load(SHIPPED).harnesses == ("harness-package-builder", "shell")
+    assert Environment.load(SHIPPED).harnesses == ("hg-fde", "shell")
     assert sorted(SHIPPED["harnesses"]) == sorted(folder.name for folder in HERE.iterdir() if (folder / "harness.json").exists())
 
 
@@ -38,28 +37,28 @@ def test_each_package_that_ships_is_one_the_platform_takes(name: str):
     assert {file.path for file in package.files if file.executable} >= {"install", "run"}
 
 
-def test_what_the_builder_is_taught_is_what_the_platform_has():
+def test_what_hg_fde_is_taught_is_what_the_platform_has():
     given = set(re.findall(r'"(HG_\w+)"', Path(sandbox.__file__).read_text()))        # what a sandbox is given
-    told = CONTRACT.read_text() + (SKILL / "SKILL.md").read_text() + (BUILDER / "AGENTS.md").read_text()
+    told = CONTRACT.read_text() + (SKILL / "SKILL.md").read_text() + (FDE / "AGENTS.md").read_text()
     for variable in re.findall(r"\$(HG_\w+)", told):
         assert variable in given, variable
     for path in re.findall(r"/harness/([\w./-]+\.(?:md|py|json))", told):               # every file it is pointed at is there
-        assert path in PLACED or (BUILDER / path).is_file(), path
+        assert (FDE / path).is_file(), path
+    for name in re.findall(r"`([a-z]+\.schema\.json)`", told):                          # and every schema it is told of
+        assert (GIVEN / name).is_file(), name
     for kind in re.findall(r"`((?:response\.)?[a-z_]+(?:\.[a-z_]+)*)`", CONTRACT.read_text().partition("### What it prints")[2]):
         if kind.startswith("response.") or kind.endswith(("_call", "_call_output")):   # every item and event it names
             assert kind in {*ITEMS, *EVENTS, *ENDINGS, "response.created", "response.queued", "response.in_progress"}, kind
-    assert f"name: {SKILL.name}\n" in (SKILL / "SKILL.md").read_text() and SKILL.name in (BUILDER / "AGENTS.md").read_text()
+    assert f"name: {SKILL.name}\n" in (SKILL / "SKILL.md").read_text() and SKILL.name in (FDE / "AGENTS.md").read_text()
 
 
 def verify(tmp_path: Path, *args: str, api: str = "") -> subprocess.CompletedProcess[str]:
-    harness = tmp_path / "builder"                     # the builder as installed: its files, and the contract beside them
+    harness = tmp_path / "hg-fde"                      # HG FDE as installed, and the contract as a sandbox is given it
     if not harness.exists():
-        shutil.copytree(BUILDER, harness)
-        for path, content in PLACED.items():
-            (harness / path).parent.mkdir(exist_ok=True)
-            (harness / path).write_bytes(content)
+        shutil.copytree(FDE, harness)
     (tmp_path / "work").mkdir(exist_ok=True)
-    env = {"PATH": os.environ["PATH"], "HG_HARNESS": str(harness), "HG_WORK": str(tmp_path / "work"), "HG_CONTRACT": "1", "HG_PROVIDER_API": api}
+    env = {"PATH": os.environ["PATH"], "HG_HARNESS": str(harness), "HG_WORK": str(tmp_path / "work"), "HG_CONTRACT": str(GIVEN),
+           "HG_PROVIDER_API": api}
     return subprocess.run([sys.executable, str(harness / "skills" / SKILL.name / "verify.py"), *args], env=env, capture_output=True, text=True)
 
 
@@ -134,6 +133,76 @@ def test_what_the_platform_would_refuse_is_not_verified_and_says_why(tmp_path: P
     assert stopped.returncode == 0 and "said: begun" in stopped.stdout and "stopped after 1 seconds" in stopped.stdout
 
 
+CAPABLE = """#!/usr/bin/env python3
+# An agent that needs no model: it does what the suite asks for, the way a package for a real agent CLI would.
+import json, os, re, signal, sys, time, urllib.request
+turn, home = os.environ["HG_TURN"], os.environ["HG_STATE"]
+request, previous = json.load(open(f"{turn}/request.json")), json.load(open(f"{turn}/previous.json"))
+def say(line): print(json.dumps(line), flush=True)
+os.makedirs(home, exist_ok=True)
+memory, text, said = os.path.join(home, "memory"), request["input"], ""
+if "codeword is" in text:
+    open(memory, "w").write(re.search(r"codeword is (\\w+)", text)[1]); said = "OK"
+elif "sleep 60" in text:
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); time.sleep(60)
+elif "codeword" in text:
+    cut = previous and previous["status"] != "completed"
+    said = ("No: it was " + previous["status"] + ". " if cut else "") + "The codeword is " + (open(memory).read() if os.path.exists(memory) else "unknown")
+for tool in request.get("tools", []):
+    call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "secret_number", "arguments": {}}}).encode()
+    asked = urllib.request.Request(tool["server_url"], call, {"Content-Type": "application/json"})
+    got = json.load(urllib.request.urlopen(asked))["result"]["content"][0]["text"]
+    say({"type": "mcp_call", "server_label": tool["server_label"], "name": "secret_number", "arguments": "{}", "status": "completed", "output": got})
+    said = "The number is " + got
+FIRST
+marker = re.search(r"the word (\\w+)", told or "")
+say({"type": "response.output_text.delta", "delta": (said or "Hello.") + (" " + marker[1] if marker else "")})
+say({"type": "response.completed"})
+"""
+
+
+def test_the_suite_proves_what_a_caller_relies_on_each_by_a_marker(tmp_path: Path):
+    honours = verify(tmp_path, agent(tmp_path, CAPABLE.replace("FIRST", 'told = request.get("instructions")')), "--suite", api="anthropic")
+    assert honours.returncode == 0 and "verify: SUITE" in honours.stdout and "FAIL" not in honours.stdout, honours.stdout[-3000:]
+    assert honours.stdout.count("PASS  ") == 8 and "No: it was cancelled. The codeword is HERON" in honours.stdout
+    assert "1 mcp_call item(s) printed" in honours.stdout and "NOTE  the home holds" in honours.stdout
+    # What an agent CLI does when it keeps a session's first instructions for good: found, and named.
+    keeps = 'kept = os.path.join(home, "told")\nif not os.path.exists(kept): open(kept, "w").write(request.get("instructions") or "")\ntold = open(kept).read()'
+    stale = verify(tmp_path, agent(tmp_path, CAPABLE.replace("FIRST", keeps)), "--suite", api="anthropic")
+    assert stale.returncode == 1 and "SUITE NOT PASSED" in stale.stdout
+    assert "FAIL  instructions, on a continued turn" in stale.stdout and "PASS  instructions, on a session's first turn" in stale.stdout
+
+
+def load_run(tmp_path: Path, **turn_files: str):
+    """HG FDE's `run`, as a module: with the variables a sandbox gives it, and a turn's inputs in place."""
+    import importlib.machinery
+    import importlib.util
+    (tmp_path / "turn").mkdir(exist_ok=True)
+    for name, text in {"previous.json": "null", "handover.txt": "", **turn_files}.items():
+        (tmp_path / "turn" / name).write_text(text)
+    os.environ.update(HG_HARNESS=str(FDE), HG_TURN=str(tmp_path / "turn"), HG_CONTRACT=str(GIVEN), HG_STATE=str(tmp_path / "state"))
+    loader = importlib.machinery.SourceFileLoader("hg_fde_run", str(FDE / "run"))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("hg_fde_run", loader))
+    loader.exec_module(module)
+    return module
+
+
+def test_hg_fde_is_told_who_it_is_the_contract_and_every_schema_in_full_each_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    run = load_run(tmp_path)
+    known = Path(run.knows({"instructions": "Answer in French."})).read_text()
+    assert known.startswith("# HG FDE") and "# Harness packages" in known and known.endswith("Answer in French.")
+    for name in ("request", "response", "stream", "lines"):
+        whole = json.loads((GIVEN / f"{name}.schema.json").read_text())
+        assert json.dumps(whole, separators=(",", ":")) in known, name            # whole: nothing of it left out
+    args = run.command({"instructions": "x"}, "sess-1")
+    assert args[args.index("--system-prompt-snapshot") + 1] == "off" and args[-2:] == ["--resume", "sess-1"]
+    assert "--append-system-prompt" not in args                    # too long for an argument: it is given as a file
+    assert run.asked({"input": "Carry on."}) == "Carry on."
+    cut = load_run(tmp_path, **{"previous.json": '{"status": "cancelled"}', "handover.txt": "Handover from shell."})
+    assert cut.asked({"input": "Carry on."}) == "Your last turn did not finish: it ended as cancelled.\n\nHandover from shell.\n\nCarry on."
+
+
 def test_the_schema_a_package_is_given_says_what_the_platform_reads(tmp_path: Path):
     """The two are written apart, the schema for any language and the reader for the platform: a line is taken by
     both, or by neither."""
@@ -161,4 +230,4 @@ def test_what_ships_stands_apart_from_the_platform():
                 assert not re.search(r"^\s*(import|from) harnessgateway\b", file.read_text(errors="replace"), re.M), file
     source = Path(shipped.__file__).parent
     reach = sorted(module.relative_to(source).as_posix() for module in source.rglob("*.py") if "shipped.folder(" in module.read_text())
-    assert reach == ["api/console.py", "defaults.py", "runner/installer.py"]       # who serves, gives and installs them
+    assert reach == ["api/console.py", "cli.py", "defaults.py", "serve.py"]        # who serves the console, writes the schemas, gives the defaults, and gives every sandbox the contract

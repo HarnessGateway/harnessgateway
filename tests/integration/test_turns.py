@@ -40,12 +40,12 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
     assert sandbox.env["TEAM"] == "demo" and sandbox.env["HG_SESSION"] == turn.session_id and sandbox.name == turn.session_id
     assert [(mount.path, mount.read_only) for mount in sandbox.mounts] == [
         ("/mind", False), ("/work", False), ("/turn", True), ("/harness", True), ("/etc/hg", True)]
-    laid = driver.folder(sandbox, "/harness")
-    assert (laid / "run").stat().st_mode & 0o100                   # beside the package: the contract, and its schema
-    assert "# Harness packages" in (laid / "contract" / "PACKAGES.md").read_text()
-    assert len(json.loads((laid / "contract" / "output.schema.json").read_text())["anyOf"]) > 80
+    laid = driver.folder(sandbox, "/harness")                  # the package, and nothing of the platform's beside it
+    assert (laid / "run").stat().st_mode & 0o100 and sorted(path.name for path in laid.iterdir()) == ["harness.json", "install", "run"]
+    assert sandbox.env["HG_CONTRACT"] == "/etc/hg/contract"    # the contract is in what every sandbox is given
     given = driver.found[0]                                   # what the sandbox found under /turn
     assert json.loads(given["request.json"])["input"] == "hi" and given["startup.sh"] == "echo ready\n" and given["history.json"] == "[]"
+    assert given["previous.json"] == "null" and response["completed_at"] >= response["created_at"]
     used = await platform.usage.total(ORG)                    # what the install and the turn used, added up
     assert (used["cpu_seconds"], used["memory_byte_seconds"]) == (3.0, 5e9)
     assert not driver.folder(sandbox, "/turn").exists()       # the turn's inputs are gone
@@ -69,6 +69,33 @@ async def test_a_turn_that_needs_its_caller_ends_with_the_question_and_the_next_
     answered = await run(platform, input=answer, tools=tools, previous_response_id=asked.id)
     assert (answered.session_id, answered.response()["output"][0]["content"][0]["text"]) == (asked.session_id, "It is sunny.")
     assert json.loads(driver.found[-1]["request.json"])["input"] == answer
+    previous = json.loads(driver.found[-1]["previous.json"])           # the response this request continues from: the call it answers
+    assert (previous["id"], previous["status"], previous["output"][-1]["call_id"]) == (asked.id, "completed", "call_1")
+
+
+async def test_a_requests_credentials_reach_only_the_proxy(platform: Platform):
+    """A request may carry the credentials of the MCP servers it names. They are sealed beside the turn while it
+    runs, bound to that server's host; the request is kept, shown and given to the harness with placeholders."""
+    await ready(platform)
+    driver = platform.driver
+    tools = [{"type": "mcp", "server_label": "docs", "server_url": "https://mcp.example.com:8443/mcp",
+              "authorization": "tok-secret", "headers": {"X-Key": "key-secret"}}]
+    driver.hold = True
+    running = asyncio.create_task(run(platform, tools=tools))
+    while not driver.found:
+        await asyncio.sleep(0.01)
+    sandbox = driver.plans[-1]
+    token = sandbox.env["HTTPS_PROXY"].split("@")[0].rsplit(":", 1)[1]
+    policy = await platform.grants.policy(sandbox.env["HG_RESPONSE"], token)
+    told = {secret.value: (secret.hosts, secret.placeholder) for secret in policy.secrets}
+    assert set(told) == {"tok-secret", "key-secret"} and {hosts for hosts, _ in told.values()} == {("mcp.example.com:8443",)}
+    given = json.loads(driver.found[-1]["request.json"])["tools"][0]
+    assert (given["authorization"], given["headers"]["X-Key"]) == (told["tok-secret"][1], told["key-secret"][1])
+    driver.stopped.set()
+    turn = await running
+    kept = json.dumps([turn.request, turn.response(), [event async for event in platform.turns.follow(ORG, turn.id)]])
+    assert "secret" not in kept and given["authorization"] in kept
+    assert await platform.turns.credentials(turn) == ()               # and once the turn has ended, they are gone
 
 
 

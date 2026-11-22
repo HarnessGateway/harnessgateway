@@ -2,14 +2,26 @@
 
 A harness is an agent CLI made runnable on the platform by a package. The platform knows no CLI: everything about
 one is in its package, and every package is run the same way. An organization starts with two, `shell` and
-`harness-package-builder`, and owns every package it has.
+`hg-fde`, and owns every package it has.
 
 The platform speaks one schema, the OpenAI Responses API's. A caller sends a Responses request; the package's `run`
 reads that request, exactly as it was sent, and prints Responses output; the caller receives it. A package uses as
 much of the request and of the response as its agent can: nothing stands between the two but this page.
 
-This is the whole contract. The platform puts it beside every installed package, at `/harness/contract/PACKAGES.md`,
-with the schema of what a `run` may print, `/harness/contract/output.schema.json`.
+This is the whole contract. Every sandbox is given it, read-only, in `$HG_CONTRACT` (`/etc/hg/contract`): this
+page, and the Responses API as schemas.
+
+| | |
+|---|---|
+| `PACKAGES.md` | This page |
+| `request.schema.json` | A request, as OpenAI's SDK describes one: what `run` reads |
+| `response.schema.json` | The response a caller receives, as OpenAI's SDK describes it: what the platform makes of what `run` prints |
+| `stream.schema.json` | The events of a response's stream, as OpenAI's SDK describes them |
+| `lines.schema.json` | One line `run` may print: an output item or a stream event of those schemas, with what the platform fills in left optional |
+
+The first three are OpenAI's own, unchanged. All four are generated from one pinned version of the SDK, which each
+names in its first line and `GET /v1/platform` reports as `sdk`: that version is what "the Responses API" means
+here, for a request and for every line.
 
 ## A package is a folder
 
@@ -22,20 +34,19 @@ run               runs once a turn
 
 It travels as a gzip-compressed tar archive of that folder: `tar -czf agent.tar.gz -C agent .`, then
 `PUT /v1/harnesses/agent --data-binary @agent.tar.gz`. `install` and `run` must be executable, and may be written
-in any language the environment's image can run. A folder named `contract` is the platform's: a package may not
-hold one. The `shell` package is the smallest that works.
+in any language the environment's image can run. The `shell` package is the smallest that works.
 
 ## harness.json
 
 ```json
 {
   "contract": 1,
-  "name": "codex",
-  "version": "0.171.0-2",
-  "description": "OpenAI's Codex CLI.",
+  "name": "my-agent",
+  "version": "2.4.0-1",
+  "description": "The My Agent CLI.",
   "apis": ["openai-responses"],
-  "mind": ".codex",
-  "cache": [".codex/tmp"],
+  "mind": ".my-agent",
+  "cache": [".my-agent/tmp"],
   "install": {"timeout_s": 900},
   "run": {"stop_grace_s": 15},
   "settings": {"SANDBOX_MODE": {"description": "…", "default": "workspace-write"}},
@@ -92,10 +103,12 @@ while it works, prints the stream's last event, and exits 0.
 |---|---|
 | `$HG_TURN/request.json` | The Responses request, as it was sent: every field of it |
 | `$HG_TURN/files/<id>/<name>` | Each uploaded file the request's input names by `file_id` |
+| `$HG_TURN/previous.json` | The response this request continues from (what its `previous_response_id` names), as the API returns it; `null` when it continues from none. Its `status` says how that turn ended, and its `output` holds what it asked its caller |
 | `$HG_TURN/history.json` | Earlier turns of the session this harness has not seen (another harness ran them), each with its `input` and its `output` |
 | `$HG_TURN/handover.txt` | One line naming those harnesses and where they kept their notes, or nothing |
 | `$HG_MIND` (`$HOME`), `$HG_WORK` | `/mind` and `/work`, the session's two folders: they persist from turn to turn |
-| `$HG_HARNESS` | `/harness`: the installed package, with the contract in `contract/` |
+| `$HG_HARNESS` | `/harness`: the installed package |
+| `$HG_CONTRACT` | `/etc/hg/contract`: this page, and the schemas |
 | `$HG_STATE` | A folder under the mind for small values of the package's own: its CLI's session id, to resume it |
 | `$HG_MODEL`, `$HG_PROVIDER_URL`, `$HG_PROVIDER_API`, `$HG_PROVIDER_KEY` | The model to call, the provider's base URL for that API as the organization wrote it, which API to speak, and a placeholder for its key |
 | `$HG_PROVIDER`, `$HG_ENVIRONMENT`, `$HG_HARNESS_NAME`, `$HG_HARNESS_VERSION` | The names in the request's `model`, and the package's own |
@@ -106,7 +119,9 @@ while it works, prints the stream's last event, and exits 0.
 `request.json` is the caller's body, checked only for being a Responses request. `model` is
 `environment/harness/provider/model`, which the platform has acted on already, as it has on `stream`, `background`,
 `store` and `previous_response_id`: streaming, storing and continuing a session are the same to `run` whichever
-the caller chose. Everything else is the package's to make of what its CLI can:
+the caller chose. A credential the request carries for an MCP server it names (`authorization`, a value of
+`headers`) is a placeholder here, as every secret in a sandbox is: the egress proxy puts the real one into
+requests to that server's host. Everything else is the package's to make of what its CLI can:
 
 | In the request | What a package does with it |
 |---|---|
@@ -176,13 +191,14 @@ and the first one that is wrong fails the turn, with a message naming the field.
 | Shortens its own context | `compaction` |
 | Uses any other tool of its own | `custom_tool_call`, then `custom_tool_call_output` |
 
-`output.schema.json` has every item and event, with every field: it is the SDK's own description, as a JSON Schema.
+`lines.schema.json` has every item and event, with every field.
 
 ### Asking the caller
 
 The Responses API has no status for a response that waits. A turn that needs its caller ends as any other does,
 `response.completed`, with the question as its last item; the answer comes in the next request's `input`, with
-`previous_response_id`, and the CLI carries on from the session it saved.
+`previous_response_id`, and the CLI carries on from the session it saved. `previous.json` holds the response
+that asked, so a package can match an answer to the call it answers.
 
 | The agent needs | The turn's last item | The next request's input holds |
 |---|---|---|
@@ -199,7 +215,8 @@ When a turn is stopped (cancelled, or past its environment's time limit), `SIGTE
 everything it started, at once, and they have `run.stop_grace_s` seconds to end. The sandbox ends when `run` does,
 so `run` must outlive its CLI: take the signal, do nothing with it, and go on reading until the CLI has ended,
 which is what gives the CLI the time to save its session. Then exit; the platform says how a stopped turn ended,
-whatever `run` printed. What it left is saved, and the next turn carries on from it.
+whatever `run` printed. What it left is saved, and the next turn carries on from it: `previous.json` then has
+`"status": "cancelled"`, which an agent that did not record being stopped can be told.
 
 ### The smallest `run`
 

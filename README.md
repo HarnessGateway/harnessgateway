@@ -6,7 +6,7 @@ own, and answered as a Responses response.
 You build an agent against the Responses API, unmodified. Which agent CLI runs it, where, and with which model is
 one field of the request:
 
-    model = environment / harness / provider / model          dev/codex/deepseek/deepseek-flash
+    model = environment / harness / provider / model          dev/my-agent/deepseek/deepseek-flash
 
 Change any part and the agent built on the API does not change: the same request, the same session, the same
 files. A harness that calls no model is `environment/harness/none/none`.
@@ -33,7 +33,7 @@ installed, sandboxes run under it; without it, isolation is `none`, and the log 
 |---|---|
 | `default` | An environment on a common image (`node:22`), with the default limits and an open network: a sandbox reaches any public host, through the proxy |
 | `shell` | The smallest harness: it runs a request's input as a command. `default/shell/none/none` tries an environment before any agent is set up |
-| `harness-package-builder` | An agent that writes harness packages for other agent CLIs: it researches the CLI, writes the package, verifies it with a hello world, and ends with a link that adds it. It needs a provider that speaks the Anthropic API |
+| `hg-fde` | HG FDE, the forward deployed engineer for the platform: it builds every other harness package. Tell it the agent you want; it researches the agent CLI, writes the package, proves what the package does, and ends with a link that adds it. It needs a provider that speaks the Anthropic API |
 
 They are given once, at setup, and are yours from then on: change them, delete them, add your own. Nothing else
 ships: no provider, and no other agent.
@@ -43,19 +43,19 @@ ships: no provider, and no other agent.
 | | | |
 |---|---|---|
 | **Provider** | `PUT /v1/providers/{name}` | A model endpoint: each API shape it speaks at a base URL, and a key |
-| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, and a `run` that reads the Responses request and prints Responses output ([the package contract](docs/PACKAGES.md)) |
+| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, and a `run` that reads the Responses request and prints Responses output ([the package contract](contract/PACKAGES.md)) |
 | **Environment** | `PUT /v1/environments/{name}` | Where turns run: image, limits, network, variables, secrets, a startup script, and the harnesses it carries |
 
 ```sh
 curl -X PUT $HG/v1/providers/deepseek -H "Authorization: Bearer $KEY" \
      -d '{"apis": {"openai-responses": "https://api.deepseek.com/v1"}, "key": "sk-…"}'
 
-tar -czf codex.tar.gz -C codex . &&
-curl -X PUT $HG/v1/harnesses/codex -H "Authorization: Bearer $KEY" --data-binary @codex.tar.gz
+tar -czf my-agent.tar.gz -C my-agent . &&
+curl -X PUT $HG/v1/harnesses/my-agent -H "Authorization: Bearer $KEY" --data-binary @my-agent.tar.gz
 
 curl -X PUT $HG/v1/environments/dev -H "Authorization: Bearer $KEY" -d '{
   "image": "node:22",
-  "harnesses": ["codex"],
+  "harnesses": ["my-agent"],
   "cpus": 2, "memory_mb": 4096, "disk_mb": 2048, "timeout_s": 900,
   "network": {"mode": "limited", "allow": ["api.github.com"]},
   "variables": {"TEAM": "demo"},
@@ -73,8 +73,8 @@ sandbox; the sandbox holds a placeholder, and the egress proxy puts the value in
 from openai import OpenAI
 client = OpenAI(base_url=f"{HG}/v1", api_key=KEY)
 
-first = client.responses.create(model="dev/codex/deepseek/deepseek-flash", input="Write hello.py and run it.")
-again = client.responses.create(model="dev/codex/deepseek/deepseek-flash", input="Now add a test.",
+first = client.responses.create(model="dev/my-agent/deepseek/deepseek-flash", input="Write hello.py and run it.")
+again = client.responses.create(model="dev/my-agent/deepseek/deepseek-flash", input="Now add a test.",
                                 previous_response_id=first.id)        # the same session: its files and the agent's memory
 ```
 
@@ -128,7 +128,8 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `src/harnessgateway/proxy/` | The egress proxy: a process of its own with no database and no sealing key |
 | `src/harnessgateway/api/` | The routes |
 | `src/harnessgateway/extensions.py` | The seams an edition builds on |
-| `packages/`, `environments/` | What an organization starts with: the `shell` and `harness-package-builder` packages, and the `default` environment that carries them |
+| `contract/` | What every package is written to: `PACKAGES.md`, and the Responses API as schemas generated from the pinned SDK |
+| `packages/`, `environments/` | What an organization starts with: the `shell` and `hg-fde` packages, and the `default` environment that carries them |
 | `console/` | The console: plain JavaScript modules, served as they are. `lib/` (the API, the DOM, files), `components/` (what pages are made of), `pages/` (one for each), `styles/` |
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) says how the parts work together.

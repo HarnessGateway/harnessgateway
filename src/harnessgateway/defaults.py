@@ -2,7 +2,7 @@
 definition in `environments/` as an environment of that file's name.
 
     packages/shell                       the smallest harness package: it runs the request's input as a command
-    packages/harness-package-builder     an agent that writes harness packages for other agent CLIs
+    packages/hg-fde                      HG FDE: the engineer that builds every other harness package
     environments/default.json            an environment on a common image, with an open network, that carries both
 
 They are enough to try an environment before any agent is set up, and to make every other harness. Once given

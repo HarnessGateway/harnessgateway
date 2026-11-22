@@ -11,7 +11,7 @@ from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.resources import Environment, Manifest
 from harnessgateway.domain.snapshot import ROOTS
 
-TRUST_FOLDER = "trust"                         # holds the certificate bundle every sandbox trusts
+GIVEN_FOLDER = "given"                         # holds what every sandbox is given: its certificates, and the contract
 # The startup script first, with what it prints sent to the log (standard output is the harness's events), then
 # the harness in its place.
 _AFTER_STARTUP = (f'{contract.STARTUP} 1>&2 || {{ echo "the startup script exited with code $?" >&2; '
@@ -91,7 +91,7 @@ def turn_plan(*, session_id: str, turn_id: str, install_id: str, image_id: str, 
     environment, manifest, line = resolved.environment, resolved.harness.manifest, resolved.line
     networked = environment.network.mode != "closed" or resolved.provider is not None
     env = {
-        "HOME": contract.MIND, "HG_CONTRACT": str(contract.VERSION), "HG_TURN": contract.TURN,
+        "HOME": contract.MIND, "HG_CONTRACT": contract.CONTRACT, "HG_TURN": contract.TURN,
         "HG_MIND": contract.MIND, "HG_WORK": contract.WORK, "HG_HARNESS": contract.HARNESS,
         "HG_STATE": f"{contract.MIND}/{contract.STATE_DIR}/{manifest.name}", "HG_SESSION": session_id,
         "HG_RESPONSE": turn_id, "HG_HARNESS_NAME": manifest.name, "HG_HARNESS_VERSION": manifest.version,
@@ -108,7 +108,7 @@ def turn_plan(*, session_id: str, turn_id: str, install_id: str, image_id: str, 
         args=("-c", _AFTER_STARTUP) if startup else (), workdir=contract.WORK, env=env,
         mounts=(Mount(folders["mind"], contract.MIND, False), Mount(folders["work"], contract.WORK, False),
                 Mount(turn_folder(turn_id), contract.TURN, True),
-                Mount(install_folder(install_id), contract.HARNESS, True), Mount(TRUST_FOLDER, contract.TRUST, True)),
+                Mount(install_folder(install_id), contract.HARNESS, True), Mount(GIVEN_FOLDER, contract.GIVEN, True)),
         cpus=environment.cpus, memory_mb=environment.memory_mb, pids=environment.pids, tmp_mb=environment.tmp_mb,
         networked=networked, stop_grace_s=manifest.run.stop_grace_s)
 
@@ -119,11 +119,11 @@ def install_plan(*, install_id: str, image_id: str, environment: Environment, ma
     own folder to write into."""
     return SandboxPlan(
         name=install_id, image=image_id, command=f"{contract.HARNESS}/install", args=(), workdir=contract.HARNESS,
-        env={"HOME": "/tmp/home", "HG_CONTRACT": str(contract.VERSION), "HG_HARNESS": contract.HARNESS,  # noqa: S108
+        env={"HOME": "/tmp/home", "HG_CONTRACT": contract.CONTRACT, "HG_HARNESS": contract.HARNESS,  # noqa: S108
              "HG_HARNESS_NAME": manifest.name, "HG_HARNESS_VERSION": manifest.version,
              **_through_the_proxy(install_id, proxy_token)},
         mounts=(Mount(install_folder(install_id), contract.HARNESS, False),
-                Mount(TRUST_FOLDER, contract.TRUST, True)),
+                Mount(GIVEN_FOLDER, contract.GIVEN, True)),
         cpus=environment.cpus, memory_mb=environment.memory_mb, pids=environment.pids, tmp_mb=None,
         networked=True, stop_grace_s=manifest.run.stop_grace_s)
 

@@ -14,7 +14,7 @@ COPY src ./src
 COPY console ./console
 COPY packages ./packages
 COPY environments ./environments
-COPY docs/PACKAGES.md ./docs/PACKAGES.md
+COPY contract ./contract
 RUN apk add --no-cache python-3.13 uv docker-cli ca-certificates-bundle \
  && UV_PROJECT_ENVIRONMENT=/opt/harnessgateway UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
       uv sync --locked --no-dev --no-editable --python /usr/bin/python3.13 \

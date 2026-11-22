@@ -14,7 +14,7 @@
   and stream events as that API has them. Nothing of the platform's own is added to either: no helper to import,
   no line of its own to print.
 - **What ships stands apart.** `packages/` and `environments/` are not the server's code. They know the
-  platform only by its contract (`docs/PACKAGES.md`) and never import it; the server finds them in one place
+  platform only by its contract (`contract/`) and never import it; the server finds them in one place
   (`shipped.py`); their tests are `tests/shipped/`. Keep it so: any of them can then move to a repository of its own.
 - **The console is a client.** It calls the public API and nothing else: what it needs, the API gives everyone.
   A page is drawn from DOM nodes, never from a string of markup, and what an agent made runs only sandboxed.

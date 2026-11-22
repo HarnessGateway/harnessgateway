@@ -92,11 +92,11 @@ for name, more in (("live", {}), ("live-py", {"image": "python:3.13-slim"}), ("l
 status, refused = call("PUT", "/v1/environments/none", {"harnesses": ["shell"]})
 check("an environment without an image is refused", status == 400 and refused["error"]["param"] == "image", refused["error"]["message"])
 
-a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls /harness/contract; ls /")
+a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls $HG_CONTRACT; ls /harness; ls /")
 out = said(a)
 check("a turn runs as user 10000 on a read-only root, with home /mind, in /work, and sees only its own folders",
       a["status"] == "completed" and out.startswith("10000") and "Read-only file system" in out and "/mind /work" in out
-      and "output.schema.json" in out and "data" not in out.split(), repr(out[:80]) + str(a.get("error") or ""))
+      and "request.schema.json" in out and "lines.schema.json" in out and "data" not in out.split(), repr(out[:80]) + str(a.get("error") or ""))
 if a["status"] != "completed":
     sys.exit(1)
 session = a["metadata"]["hg_session"]

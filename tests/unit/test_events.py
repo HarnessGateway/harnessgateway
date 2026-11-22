@@ -90,7 +90,7 @@ def test_text_that_was_cut_short_is_still_the_answer_so_far():
 
 
 def test_every_line_the_contract_shows_is_one_the_platform_takes():
-    shown = re.findall(r"^\{.*\}$", (shipped.folder("docs") / "PACKAGES.md").read_text(), re.M)
+    shown = re.findall(r"^\{.*\}$", (shipped.folder("contract") / "PACKAGES.md").read_text(), re.M)
     output = read(*map(json.loads, shown[:3]))[0]                 # the items, then each way a run ends
     assert len(shown) == 6 and [item["type"] for item in output.output()] == ["message", "shell_call", "shell_call_output"]
     assert [read(json.loads(line))[0].terminal.status for line in shown[3:]] == ["completed", "incomplete", "failed"]
