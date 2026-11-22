@@ -99,13 +99,15 @@ turn.
 
 ## 4. Hand over
 
-End your reply with this, the real values filled in (`$HG_SESSION` is this session's id):
+End your reply with this, the package's own values filled in. Write the link exactly as it is here, with only
+the name changed: it names no session, because the page that shows your reply knows which session it is. Never
+type a session's id: copied by hand, one is easily got wrong.
 
 > **`<name>` `<version>` is ready.** It speaks `<apis>`; verified here on `<the API that was run>`.
 >
-> **[Add `<name>` as a harness](/console/#/harnesses/from/<session id>/<name>)**
+> **[Add `<name>` as a harness](/console/#/harnesses/add/<name>)**
 >
-> Or over the API: `PUT /v1/harnesses/<name>` with `{"session": "<session id>", "path": "<name>"}`.
+> Or over the API: `PUT /v1/harnesses/<name>` with `{"session": "<this response's metadata.hg_session>", "path": "<name>"}`.
 >
 > Then send it a first message: `<environment>/<name>/<provider>/<model>`.
 

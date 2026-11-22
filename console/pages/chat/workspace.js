@@ -12,7 +12,9 @@ export function workLinks(session, folder = "") {
   return {
     link(url) {
       const page = /^(?:\/console\/)?(#\/.+)$/.exec(url);        // a page of the console itself: an agent may point at one
-      if (page) return { page: page[1] };
+      // "Add this folder of my work as a harness" names no session: the page that shows the reply knows which it
+      // is, so an agent never copies an id, and cannot get one wrong.
+      if (page) return { page: session ? page[1].replace(/^#\/harnesses\/add\//, `#/harnesses/from/${session}/`) : page[1] };
       if (/^(https?:|mailto:)/i.test(url)) return { href: url };
       if (url.startsWith("#")) return { anchor: slug(decodeURIComponent(url.slice(1))) };
       return inside(url) ? { open: inside(url) } : null;

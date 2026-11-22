@@ -433,11 +433,12 @@ const api = async (method, path, body) => {
       "printf '#!/bin/sh\\ntrue\\n' > install",
       "cat > run <<'RUN'", "#!/usr/bin/env python3", "import os, sys", 'sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))', "import hgkit",
       "emit = hgkit.Emitter()", 'emit.say("hello from the package")', "emit.done()", "RUN",
-      `chmod +x install run && echo "Ready: [Add it as a harness](/console/#/harnesses/from/$HG_SESSION/${WRITTEN})"`].join("\n"));
+      `chmod +x install run && echo "Ready: [Add it as a harness](/console/#/harnesses/add/${WRITTEN})"`].join("\n"));
     made.sessions.add((await stored())[0].session);
     await reply.locator(`a.tile.package:has-text("Add ${WRITTEN} as a harness")`).waitFor();              // the chat's own offer
     const link = reply.locator(".text a:has-text('Add it as a harness')");
-    expect((await link.getAttribute("href")).startsWith("#/harnesses/from/sess_") && await link.getAttribute("target") === null, "the agent's link does not lead to the console's own page");
+    expect(await link.getAttribute("href") === `#/harnesses/from/${(await stored())[0].session}/${WRITTEN}` && await link.getAttribute("target") === null,
+      "the agent's link, which names no session, does not lead to this session's folder");
     await link.click();
     await page.waitForSelector(`.dialog h3:has-text("Add ${WRITTEN} as a harness")`);
     expect((await page.textContent(".dialog p")).includes("Version 1.0-1 · calls no model · Greets."), "the dialog does not say what the package is");
