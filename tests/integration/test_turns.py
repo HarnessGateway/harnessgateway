@@ -12,7 +12,7 @@ from harnessgateway.platform import Platform
 from harnessgateway.runner import turn as turn_module
 from harnessgateway.runner.housekeeping import housekeep
 from harnessgateway.runner.runner import Runner
-from tests.helpers import DONE, MANIFEST, TEXT, lines, package
+from tests.helpers import DONE, TEXT, lines, package
 from tests.integration.conftest import LINE, ORG, WHO, ready, run, work_files
 
 
@@ -41,7 +41,7 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
     assert [(mount.path, mount.read_only) for mount in sandbox.mounts] == [
         ("/mind", False), ("/work", False), ("/turn", True), ("/harness", True), ("/etc/hg", True)]
     laid = driver.folder(sandbox, "/harness")                  # the package, and nothing of the platform's beside it
-    assert (laid / "run").stat().st_mode & 0o100 and sorted(path.name for path in laid.iterdir()) == ["harness.json", "install", "run"]
+    assert (laid / "run").stat().st_mode & 0o100 and sorted(path.name for path in laid.iterdir()) == ["install", "run"]
     assert sandbox.env["HG_CONTRACT"] == "/etc/hg/contract"    # the contract is in what every sandbox is given
     given = driver.found[0]                                   # what the sandbox found under /turn
     assert json.loads(given["request.json"])["input"] == "hi" and given["startup.sh"] == "echo ready\n" and given["history.json"] == "[]"
@@ -102,7 +102,7 @@ async def test_a_requests_credentials_reach_only_the_proxy(platform: Platform):
 async def test_a_session_continues_forks_and_changes_harness(platform: Platform):
     await ready(platform)
     driver = platform.driver
-    await platform.resources.add_package(ORG, "other", package({**MANIFEST, "name": "other", "mind": ".other"}))
+    await platform.resources.add_package(ORG, "other", package(**{"README.md": b"another package"}))
     await platform.resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "other"]})
     driver.writes = {"a.txt": b"one"}
     first = await run(platform)
@@ -152,7 +152,7 @@ async def test_what_goes_wrong_ends_the_turn_with_its_reason(platform: Platform,
     driver.writes, driver.hold, driver.prints = {}, False, lines(*TEXT, DONE)
     await platform.resources.apply(ORG, "environments", "broken", {"image": "missing:1", "harnesses": ["echo"]})
     assert (await run(platform, model="broken/echo/none/none")).reason == "sandbox_failed"
-    await platform.resources.add_package(ORG, "echo", package({**MANIFEST, "version": "2"}))
+    await platform.resources.add_package(ORG, "echo", package(**{"VERSION": b"2"}))
     driver.install_exit = SandboxExit(True, 1)
     broken = await run(platform)
     assert broken.reason == "install_failed" and "install exited with code 1" in broken.log

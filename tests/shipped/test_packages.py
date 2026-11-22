@@ -6,12 +6,14 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 from harnessgateway import defaults, shipped
 from harnessgateway.domain import sandbox
-from harnessgateway.domain.events import ENDINGS, EVENTS, ITEMS
+from harnessgateway.domain.contract import ApiName
+from harnessgateway.domain.events import ENDINGS, EVENTS, ITEMS, RunOutput
 from harnessgateway.domain.package import read_archive
 from harnessgateway.domain.resources import Environment
 
@@ -25,18 +27,20 @@ CONTRACT = GIVEN / "PACKAGES.md"
 
 def test_the_default_environment_is_a_valid_one_and_carries_exactly_the_packages_that_ship():
     assert Environment.load(SHIPPED).harnesses == ("hg-fde", "shell")
-    assert sorted(SHIPPED["harnesses"]) == sorted(folder.name for folder in HERE.iterdir() if (folder / "harness.json").exists())
+    assert sorted(SHIPPED["harnesses"]) == sorted(folder.name for folder in HERE.iterdir() if (folder / "run").exists())
 
 
 @pytest.mark.parametrize("name", SHIPPED["harnesses"])
 def test_each_package_that_ships_is_one_the_platform_takes(name: str):
     package = read_archive(defaults.archive(name))
-    assert package.manifest.name == name and package.digest == read_archive(defaults.archive(name)).digest
+    assert package.digest == read_archive(defaults.archive(name)).digest
     assert {file.path for file in package.files if file.executable} >= {"install", "run"}
+    assert "harness.json" not in {file.path for file in package.files}        # a package declares nothing
 
 
 def test_what_hg_fde_is_taught_is_what_the_platform_has():
-    given = set(re.findall(r'"(HG_\w+)"', Path(sandbox.__file__).read_text()))        # what a sandbox is given
+    given = set(re.findall(r'"(HG_\w+)"', Path(sandbox.__file__).read_text()))        # what a sandbox is given,
+    given |= {sandbox.provider_variable(api) for api in get_args(ApiName)}             # with a provider's base URLs
     told = CONTRACT.read_text() + (SKILL / "SKILL.md").read_text() + (FDE / "AGENTS.md").read_text()
     for variable in re.findall(r"\$(HG_\w+)", told):
         assert variable in given, variable
@@ -79,6 +83,18 @@ def test_hg_fde_is_told_who_it_is_the_contract_and_every_schema_in_full_each_tur
     assert run.asked({"input": "Carry on."}) == "Carry on."
     cut = load_run(tmp_path, **{"previous.json": '{"status": "cancelled"}', "handover.txt": "Handover from shell."})
     assert cut.asked({"input": "Carry on."}) == "Your last turn did not finish: it ended as cancelled.\n\nHandover from shell.\n\nCarry on."
+
+
+def test_hg_fde_says_so_when_its_provider_does_not_speak_its_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                                 capsys: pytest.CaptureFixture[str]):
+    """A package declares nothing, so the platform cannot refuse a provider for it: its `run` does, in words."""
+    monkeypatch.setattr(os, "environ", {**os.environ, "HG_PROVIDER_OPENAI_CHAT": "https://api.example.com/v1"})
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    os.environ.pop("HG_PROVIDER_ANTHROPIC", None)
+    load_run(tmp_path).main()
+    said = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["type"] for line in said] == ["response.failed"] and "Anthropic API" in said[0]["response"]["error"]["message"]
+    assert RunOutput().read(json.dumps(said[0])) == []                         # and it is a line the platform takes
 
 
 def test_what_ships_stands_apart_from_the_platform():

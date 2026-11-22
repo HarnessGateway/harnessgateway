@@ -11,7 +11,7 @@ from harnessgateway.api.app import public_app
 from harnessgateway.domain.package import read_archive
 from harnessgateway.platform import Platform
 from harnessgateway.runner.runner import Runner
-from tests.helpers import MANIFEST, package
+from tests.helpers import package
 from tests.integration.conftest import LINE, ORG
 
 
@@ -46,11 +46,12 @@ async def test_every_route_needs_a_key_and_a_refusal_is_the_openai_error_envelop
 
 
 async def test_definitions_are_made_read_replaced_and_deleted(http: httpx.AsyncClient):
-    added = await http.put("/v1/harnesses/echo", content=package({**MANIFEST, "settings": {"MODE": {}}}, **{"README.md": b"mine"}))
-    assert added.status_code == 200 and added.json()["manifest"]["name"] == "echo" and added.json()["missing"] == []
-    assert (await http.put("/v1/harnesses/echo", json={"settings": {"MODE": "fast"}})).json()["settings"] == {"MODE": "fast"}
+    added = await http.put("/v1/harnesses/echo", content=package(**{"README.md": b"mine"}))
+    assert added.status_code == 200 and set(added.json()) == {"name", "digest", "secrets_set", "created_at", "updated_at"}
+    refused = await http.put("/v1/harnesses/echo", json={"settings": {"MODE": "fast"}})        # a harness is its package:
+    assert refused.status_code == 400 and "a harness is its package" in refused.json()["error"]["message"]      # nothing is set on it
     exported = await http.get("/v1/harnesses/echo/package")
-    assert read_archive(exported.content).digest == added.json()["digest"] and "echo-1.0.tar.gz" in exported.headers["content-disposition"]
+    assert read_archive(exported.content).digest == added.json()["digest"] and "echo.tar.gz" in exported.headers["content-disposition"]
     assert (await http.put("/v1/harnesses/echo", content=b"\x1f\x8bnot an archive")).status_code == 400
     made = await http.put("/v1/environments/default", json={"image": "node:22", "harnesses": ["echo"]})
     assert made.json()["network"] == {"mode": "limited", "allow": [], "deny": [], "package_managers": True}

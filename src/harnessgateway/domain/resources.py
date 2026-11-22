@@ -17,7 +17,7 @@ from harnessgateway.domain.egress import HostEntry, entries
 from harnessgateway.errors import Invalid
 from harnessgateway.ids import check_name
 
-VALUE_MAX = 16_384                             # the longest a variable, a setting or a secret may be
+VALUE_MAX = 16_384                             # the longest a variable or a secret may be
 _VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _SECRET = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 _SAID = {"extra_forbidden": "is not a known field", "missing": "is required"}
@@ -65,16 +65,8 @@ def _base_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def _under_home(value: str) -> str:
-    parts = value.split("/")
-    if not value or len(value) > 200 or value.startswith("/") or any(part in ("", ".", "..") for part in parts):
-        raise ValueError("a folder under the home directory is needed, written relative to it")
-    return value
-
-
 Hosts = Annotated[tuple[str, ...], AfterValidator(_hosts)]
 Text = Annotated[str, Field(max_length=VALUE_MAX)]
-Home = Annotated[str, AfterValidator(_under_home)]
 
 
 class Provider(Definition):
@@ -155,86 +147,11 @@ class Environment(Definition):
         return tuple(self.secrets)
 
 
-class Setting(Definition):
-    description: Annotated[str, Field(max_length=500)] = ""
-    default: Text | None = None
-    required: bool = False
-
-
-class SecretDeclaration(Definition):
-    description: Annotated[str, Field(max_length=500)] = ""
-    hosts: Annotated[Hosts, Field(min_length=1)]       # where its value may be sent
-    required: bool = False
-
-
-class Install(Definition):
-    timeout_s: Annotated[int, Field(ge=1, le=3600)] = 900
-
-
-class Run(Definition):
-    stop_grace_s: Annotated[int, Field(ge=1, le=300)] = 10     # how long `run` is given to end once it is told to
-
-
-class Manifest(Definition):
-    """A package's `harness.json`: what the package is, and what it asks of whoever runs it."""
-
-    contract: Literal[1]
-    name: str
-    version: Annotated[str, Field(pattern=r"^[A-Za-z0-9._+-]{1,64}$")]
-    description: Annotated[str, Field(max_length=4000)] = ""
-    apis: tuple[ApiName, ...]                          # the provider APIs its CLI speaks; none: it calls no model
-    mind: Home | None = None                           # where under $HOME its CLI keeps its session
-    cache: Annotated[tuple[Home, ...], Field(max_length=16)] = ()      # folders under $HOME not worth saving
-    install: Install = Install()
-    run: Run = Run()
-    settings: dict[str, Setting] = Field(default_factory=dict)
-    secrets: dict[str, SecretDeclaration] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _names_are_usable(self) -> Self:
-        try:
-            check_name(self.name, "name")
-        except Invalid as refusal:
-            raise ValueError(refusal.message) from None
-        if len(set(self.apis)) != len(self.apis):
-            raise ValueError("apis names an API twice")
-        _named(self.settings, _VARIABLE, "a setting")
-        _named(self.secrets, _SECRET, "a secret")
-        if both := sorted(set(self.settings) & set(self.secrets)):
-            raise ValueError(f"{both[0]} is both a setting and a secret")
-        return self
-
-
 class Harness(Definition):
-    """An agent an organization has: a package (by its manifest and digest) and the settings it gave it. Its
-    secrets are the ones its manifest declares."""
+    """An agent an organization has: a package, by the digest of its files. Everything else about how it runs is
+    its environment's to say."""
 
-    manifest: Manifest
     digest: str
-    settings: dict[str, Annotated[str, Field(min_length=1, max_length=VALUE_MAX)]] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _settings_are_declared(self) -> Self:
-        if unknown := sorted(set(self.settings) - set(self.manifest.settings)):
-            raise ValueError(f"settings.{unknown[0]} is not declared by the package")
-        return self
-
-    def values(self) -> dict[str, str]:
-        """Each setting that has a value (the organization's, or else the package's default), as a sandbox is
-        given it."""
-        given = {name: self.settings.get(name, declared.default) for name, declared in self.manifest.settings.items()}
-        return {name: value for name, value in given.items() if value is not None}
-
-    def missing(self, secrets_set: frozenset[str] | set[str]) -> list[str]:
-        """What must still be set before a request can name this harness."""
-        have = self.values()
-        return [*(f"settings.{name}" for name, declared in self.manifest.settings.items()
-                  if declared.required and name not in have),
-                *(f"secrets.{name}" for name, declared in self.manifest.secrets.items()
-                  if declared.required and name not in secrets_set)]
-
-    def secret_names(self) -> tuple[str, ...]:
-        return tuple(self.manifest.secrets)
 
 
 KINDS: dict[str, type[Definition]] = {"providers": Provider, "environments": Environment, "harnesses": Harness}

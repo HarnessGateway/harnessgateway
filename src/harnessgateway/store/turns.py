@@ -45,7 +45,6 @@ class Turn:
     incomplete_reason: str | None
     environment: str
     harness: str
-    mind_dir: str | None
     provider: str | None
     model: str | None
     request: dict[str, Any] | None
@@ -108,10 +107,10 @@ class Turns:
                                    [session_id, org_id, parent.id if parent else None])
             row = await (await conn.execute(
                 "INSERT INTO turns (id, org_id, session_id, parent_id, number, status, environment, harness, "
-                "mind_dir, provider, model, request, credentials, store, principal) "
-                f"VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
+                "provider, model, request, credentials, store, principal) "
+                f"VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
                 [turn_id, org_id, session_id, parent.id if parent else None, parent.number + 1 if parent else 1,
-                 line.environment, line.harness, resolved.harness.manifest.mind,
+                 line.environment, line.harness,
                  line.provider if resolved.provider else None, resolved.model or None, Jsonb(dict(request)),
                  Jsonb(sealed), request.get("store") is not False, who.subject])).fetchone()
             assert row is not None

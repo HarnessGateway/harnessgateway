@@ -6,7 +6,7 @@ import logging
 from collections import deque
 from dataclasses import asdict, dataclass, replace
 
-from harnessgateway.domain.contract import STARTUP_FAILED
+from harnessgateway.domain.contract import CACHE, STARTUP_FAILED
 from harnessgateway.domain.egress import Policy
 from harnessgateway.domain.events import LineError, RunOutput, storable
 from harnessgateway.domain.handover import handover_line, unseen
@@ -149,7 +149,7 @@ class TurnRunner:
         environment = resolved.environment
 
         chain = await platform.turns.chain(org_id, turn.id)
-        pasts = [(earlier.harness, earlier.mind_dir) for earlier in chain]
+        pasts = [earlier.harness for earlier in chain]
         handover = handover_line(pasts, turn.harness)
         parent_snapshot = chain[-1].snapshot_id if chain else None
         session = await platform.sessions.get(org_id, turn.session_id)
@@ -176,8 +176,7 @@ class TurnRunner:
         key = (await resources.secrets(org_id, "providers", line.provider)).get("key") if resolved.provider else None
         bound, placeholders, provider_key = bind_secrets(
             resolved, provider_key=key, new_placeholder=new_placeholder,
-            environment_secrets=await resources.secrets(org_id, "environments", line.environment),
-            harness_secrets=await resources.secrets(org_id, "harnesses", line.harness))
+            environment_secrets=await resources.secrets(org_id, "environments", line.environment))
         bound += await platform.turns.credentials(turn)        # the request's own, bound to where it said they go
         proxy_token = new_token()
         await platform.grants.put(Policy(org_id, turn.id, line.environment, turn_policy(resolved), bound), proxy_token)
@@ -256,10 +255,9 @@ class TurnRunner:
         platform, turn, environment = self._platform, ready.turn, ready.resolved.environment
         org_id = turn.org_id
         try:
-            caches = await platform.resources.caches(org_id, environment.harnesses)
             manifest = await platform.driver.save(
                 session_folders(turn.session_id), await platform.snapshots.manifest(org_id, ready.parent_snapshot),
-                frozenset(f"mind/{cache}" for cache in caches), platform.snapshots.chunks(org_id))
+                frozenset({f"mind/{CACHE}"}), platform.snapshots.chunks(org_id))
             if manifest.size() > environment.disk_mb * _MIB:
                 record.add(f"not saved: the session's folders hold {manifest.size() // _MIB} MiB, and the "
                            f"environment's disk limit is {environment.disk_mb} MiB")

@@ -75,8 +75,8 @@ def test_a_response_reports_back_what_its_request_asked_for():
 
 
 def test_a_harness_is_told_who_worked_on_the_session_since_it_last_did():
-    pasts = [("codex", ".codex"), ("claude-code", ".claude"), ("goose", None), ("goose", None)]
-    assert handover_line(pasts, "codex") == "Handover from goose. Before it: claude-code. Review /mind/.claude."
-    assert (handover_line(pasts, "goose"), handover_line([], "codex")) == ("", "")
-    assert handover_line(pasts[:1], "shell") == "Handover from codex. Review /mind/.codex."
-    assert (unseen(pasts, "codex"), unseen(pasts, "goose"), unseen(pasts, "new")) == (3, 0, 4)
+    pasts = ["first", "second", "third", "third"]
+    assert handover_line(pasts, "first") == "Handover from third. Before it: second."
+    assert (handover_line(pasts, "third"), handover_line([], "first")) == ("", "")
+    assert handover_line(pasts[:1], "shell") == "Handover from first."
+    assert (unseen(pasts, "first"), unseen(pasts, "third"), unseen(pasts, "new")) == (3, 0, 4)

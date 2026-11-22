@@ -4,6 +4,7 @@ or turn asks first, in whichever process."""
 import asyncio
 from dataclasses import asdict
 
+from harnessgateway.domain.contract import INSTALL_TIMEOUT_S
 from harnessgateway.domain.egress import Policy
 from harnessgateway.domain.package import read_archive
 from harnessgateway.domain.resolve import Resolved
@@ -42,28 +43,27 @@ class Installer:
         return install.id
 
     async def _attempt(self, org_id: str, install_id: str, resolved: Resolved, image_id: str) -> str:
-        platform, manifest, environment = self._platform, resolved.harness.manifest, resolved.environment
+        platform, environment = self._platform, resolved.environment
         package = read_archive(await platform.resources.package(org_id, resolved.harness.digest))
         await platform.driver.fill(install_folder(install_id), {file.path: file.content for file in package.files},
                                    executable=[file.path for file in package.files if file.executable])
         token = new_token()
         await platform.grants.put(Policy(org_id, install_id, resolved.line.environment, install_policy(environment)),
                                   token)
-        plan = install_plan(install_id=install_id, image_id=image_id, environment=environment, manifest=manifest,
-                            proxy_token=token)
+        plan = install_plan(install_id=install_id, image_id=image_id, environment=environment, proxy_token=token)
         lines: list[str] = []
 
         async def keep(line: str) -> None:
             lines.append(line)
 
         running = asyncio.create_task(platform.driver.run(plan, keep, keep))
-        done, _ = await asyncio.wait({running}, timeout=manifest.install.timeout_s)
+        done, _ = await asyncio.wait({running}, timeout=INSTALL_TIMEOUT_S)
         if not done:
             await platform.driver.stop(plan.name, plan.stop_grace_s)
         result, log = await running, "\n".join(lines)
         await platform.usage.add(org_id, **asdict(result.measured))
         if not done:
-            raise InstallFailed(f"{log}\ninstall did not finish in {manifest.install.timeout_s} seconds".strip())
+            raise InstallFailed(f"{log}\ninstall did not finish in {INSTALL_TIMEOUT_S} seconds".strip())
         if not result.started:
             raise InstallFailed(f"{log}\nthe install could not be started: {result.error}".strip())
         if result.exit_code != 0:

@@ -28,7 +28,7 @@ def archive(name: str) -> bytes:
 async def give(platform: Platform, org_id: str) -> None:
     """Give an organization the defaults. Giving them again puts each back as it ships."""
     for package in sorted(shipped.folder("packages").iterdir()):       # the harnesses first: an environment names them
-        if (package / "harness.json").is_file():
+        if (package / "run").is_file():
             await platform.resources.add_package(org_id, package.name, archive(package.name))
     for definition in sorted(shipped.folder("environments").glob("*.json")):
         await platform.resources.apply(org_id, "environments", definition.stem, json.loads(definition.read_text()))

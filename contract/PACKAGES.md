@@ -26,55 +26,44 @@ here, for a request and for every line.
 ## A package is a folder
 
 ```
-harness.json      what the package is
 install           runs once for each environment image
 run               runs once a turn
 …                 anything else your install or run needs
 ```
 
-It travels as a gzip-compressed tar archive of that folder: `tar -czf agent.tar.gz -C agent .`, then
-`PUT /v1/harnesses/agent --data-binary @agent.tar.gz`. `install` and `run` must be executable, and may be written
-in any language the environment's image can run. The `shell` package is the smallest that works.
+Two programs are a whole package. It travels as a gzip-compressed tar archive of that folder:
+`tar -czf agent.tar.gz -C agent .`, then `PUT /v1/harnesses/agent --data-binary @agent.tar.gz`. The name in the
+address is the harness's name (lower-case letters, digits and `-`), which a request names in `model`. `install`
+and `run` must be executable, and may be written in any language the environment's image can run. The `shell`
+package is the smallest that works.
 
-## harness.json
+## A package declares nothing
 
-```json
-{
-  "contract": 1,
-  "name": "my-agent",
-  "version": "2.4.0-1",
-  "description": "The My Agent CLI.",
-  "apis": ["openai-responses"],
-  "mind": ".my-agent",
-  "cache": [".my-agent/tmp"],
-  "install": {"timeout_s": 900},
-  "run": {"stop_grace_s": 15},
-  "settings": {"SANDBOX_MODE": {"description": "…", "default": "workspace-write"}},
-  "secrets": {"TOOL_TOKEN": {"description": "…", "hosts": ["tool.example.com"], "required": true}}
-}
-```
+A package is what installs and runs an agent, and no more. Everything about where it runs is its environment's to
+say, and an environment is the only door:
 
-| Field | Meaning |
+| The environment's | What it decides |
 |---|---|
-| `contract` | The sandbox contract the package is written against: `1` |
-| `name`, `version` | The name is the harness's name (lower-case letters, digits and `-`); a request names it in `model`. The version is the CLI's, with a number of the package's own after it |
-| `description` | What a person choosing a harness reads |
-| `apis` | The provider APIs its CLI speaks, the preferred first: `anthropic`, `openai-responses`, `openai-chat`, `gemini`. The platform picks the first the request's provider speaks too, and tells `run` which (`$HG_PROVIDER_API`). Empty: it calls no model |
-| `mind` | Where under `$HOME` its CLI keeps its session. A later harness on the same session is told where to look |
-| `cache` | Folders under `$HOME` not worth saving between turns |
-| `install.timeout_s`, `run.stop_grace_s` | How long `install` may take (900), and how long a stopped turn is given to end (10) |
-| `settings` | Values the organization may set. Each reaches `run` as a variable of that name; `default` and `required` are optional |
-| `secrets` | Values the organization sets that must not enter the sandbox. `run` sees a placeholder in a variable of that name; the egress proxy puts the value into requests to `hosts`, and nowhere else |
+| `image`, and its limits | What `install` and `run` find to run with, and how much they may use |
+| `harnesses` | Which packages a request may name with it |
+| `network` | Every host a turn may reach, beyond its provider |
+| `variables` | Values `run` finds under their own names: how an organization sets a package up |
+| `secrets` | Values that never enter the sandbox, each with the hosts it may go to: `run` finds a placeholder under the secret's name |
 
-No other field exists. A setting's or a secret's name is upper-case letters, digits and `_`, and never starts with
-`HG_`.
+So a package that needs a token for a tool server reads it from a variable (`$TOOL_TOKEN`, in a file of its own
+or on its CLI's command line), and whoever sets up the environment gives it a secret of that name and the host it
+goes to. Say in the package's `README.md` what its environment must give it: what the image must have, the
+provider APIs its CLI speaks, and the variables, secrets and hosts it uses.
+
+This is contract `2`, which `GET /v1/platform` reports as `contract`.
 
 ## The sandbox
 
 Both programs run in a container of the environment's image, as a user that is not root, with a read-only root
 file system. What can be written: `/mind` (which is `$HOME`) and `/work` during a turn, `/harness` during an
 install, and `/tmp`, which is in memory and gone when the sandbox is. Nothing else survives a turn: not a running
-process, not the sandbox.
+process, not the sandbox. Of the two folders that persist, `~/.cache` is the exception, as its name says: it is
+never saved with a session, so what need not be kept goes there.
 
 The only way out is the egress proxy. The usual variables (`HTTPS_PROXY`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`
 and the rest) are set, so most programs use it unasked. A turn reaches its provider and what its environment
@@ -82,15 +71,15 @@ allows; an install reaches the package managers (npm, PyPI, GitHub and the like)
 A refused host answers `403` with a line saying why. A package adds no host: what its CLI needs beyond its provider
 goes in its README, for whoever sets up the environment.
 
-No secret enters the sandbox. The provider's key and every declared secret are placeholders; the proxy puts the
-real value in on the way out, toward the hosts it is bound to.
+No secret enters the sandbox. The provider's key and every secret of the environment are placeholders; the proxy
+puts the real value in on the way out, toward the hosts it is bound to.
 
 ## install
 
 Runs in the environment's image, with `/harness` (this package, writable) as its working directory and `HOME` in
-`/tmp`. It is given no provider, no setting and no secret. Install the CLI at a pinned version under
-`$HG_HARNESS/tools`, by its makers' own method, and check the version it got. Name no CPU architecture. It runs
-once for each image; after that `/harness` is read-only.
+`/tmp`. It is given no provider, no variable and no secret, and 15 minutes. Install the CLI at a pinned version
+under `$HG_HARNESS/tools`, by its makers' own method, and check the version it got. Name no CPU architecture. It
+runs once for each image; after that `/harness` is read-only.
 
 ## run
 
@@ -105,13 +94,15 @@ while it works, prints the stream's last event, and exits 0.
 | `$HG_TURN/files/<id>/<name>` | Each uploaded file the request's input names by `file_id` |
 | `$HG_TURN/previous.json` | The response this request continues from (what its `previous_response_id` names), as the API returns it; `null` when it continues from none. Its `status` says how that turn ended, and its `output` holds what it asked its caller |
 | `$HG_TURN/history.json` | Earlier turns of the session this harness has not seen (another harness ran them), each with its `input` and its `output` |
-| `$HG_TURN/handover.txt` | One line naming those harnesses and where they kept their notes, or nothing |
+| `$HG_TURN/handover.txt` | One line naming those harnesses, or nothing |
 | `$HG_MIND` (`$HOME`), `$HG_WORK` | `/mind` and `/work`, the session's two folders: they persist from turn to turn |
 | `$HG_HARNESS` | `/harness`: the installed package |
 | `$HG_CONTRACT` | `/etc/hg/contract`: this page, and the schemas |
 | `$HG_STATE` | A folder under the mind for small values of the package's own: its CLI's session id, to resume it |
-| `$HG_MODEL`, `$HG_PROVIDER_URL`, `$HG_PROVIDER_API`, `$HG_PROVIDER_KEY` | The model to call, the provider's base URL for that API as the organization wrote it, which API to speak, and a placeholder for its key |
-| `$HG_PROVIDER`, `$HG_ENVIRONMENT`, `$HG_HARNESS_NAME`, `$HG_HARNESS_VERSION` | The names in the request's `model`, and the package's own |
+| `$HG_PROVIDER_ANTHROPIC`, `$HG_PROVIDER_OPENAI_RESPONSES`, `$HG_PROVIDER_OPENAI_CHAT`, `$HG_PROVIDER_GEMINI` | The provider's base URL for each API it speaks, as the organization wrote it: one variable for each, and none for an API it does not speak. `run` uses the one its CLI speaks, and ends the turn with `response.failed`, saying which it needs, when there is none |
+| `$HG_MODEL`, `$HG_PROVIDER_KEY` | The model to call, and a placeholder for the provider's key. Both are empty when the request names no model (`none/none`) |
+| `$HG_ENVIRONMENT`, `$HG_HARNESS_NAME`, `$HG_PROVIDER` | The names in the request's `model` |
+| The environment's variables and secrets | Each variable under its own name, and a placeholder for each secret under its name |
 | `$HG_SESSION`, `$HG_RESPONSE` | The ids of the session and of this turn's response |
 
 ### The request
@@ -212,7 +203,7 @@ A session continues when `run` gives its CLI the CLI's own session id from the t
 say so on standard error.
 
 When a turn is stopped (cancelled, or past its environment's time limit), `SIGTERM` is sent to `run` and to
-everything it started, at once, and they have `run.stop_grace_s` seconds to end. The sandbox ends when `run` does,
+everything it started, at once, and they have 15 seconds to end. The sandbox ends when `run` does,
 so `run` must outlive its CLI: take the signal, do nothing with it, and go on reading until the CLI has ended,
 which is what gives the CLI the time to save its session. Then exit; the platform says how a stopped turn ended,
 whatever `run` printed. What it left is saved, and the next turn carries on from it: `previous.json` then has

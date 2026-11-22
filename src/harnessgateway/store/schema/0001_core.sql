@@ -89,7 +89,6 @@ CREATE TABLE turns (
     incomplete_reason  text,
     environment        text NOT NULL,
     harness            text NOT NULL,
-    mind_dir           text,                           -- where that harness keeps its mind: for a later handover
     provider           text,
     model              text,
     request            jsonb,                          -- as it was sent; NULL once the turn is deleted

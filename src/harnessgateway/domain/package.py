@@ -1,21 +1,18 @@
-"""A harness package as it travels: a gzip-compressed tar archive of a folder that holds `harness.json`,
-`install` and `run`. Reading one is where everything about it is checked, so nothing unchecked is ever installed."""
+"""A harness package as it travels: a gzip-compressed tar archive of a folder that holds `install` and `run`.
+Reading one is where everything about it is checked, so nothing unchecked is ever installed."""
 
 import gzip
 import hashlib
 import io
-import json
 import tarfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from harnessgateway.domain.resources import Manifest
 from harnessgateway.errors import Invalid, TooLarge
 
 PACKED_MAX = 64 * 1024 * 1024
 UNPACKED_MAX = 256 * 1024 * 1024
 FILES_MAX = 5000
-MANIFEST = "harness.json"
 PROGRAMS = ("install", "run")                  # what the platform runs: once for an image, and once a turn
 _STRAY = frozenset({".git", "__pycache__", ".DS_Store"})
 
@@ -36,7 +33,6 @@ class PackageFile:
 
 @dataclass(frozen=True)
 class Package:
-    manifest: Manifest
     files: tuple[PackageFile, ...]
     digest: str                                # of its files alone: the same files are the same package
 
@@ -83,16 +79,8 @@ def read_archive(data: bytes) -> Package:
     for program in PROGRAMS:
         if program not in files or not files[program].executable:
             raise Invalid(f"the package has no executable {program}")
-    try:
-        manifest = Manifest.load(json.loads(files[MANIFEST].content)) if MANIFEST in files else None
-    except ValueError:
-        raise Invalid(f"{MANIFEST} is not JSON") from None
-    except Invalid as refusal:
-        raise Invalid(f"{MANIFEST}: {refusal.message}") from None
-    if manifest is None:
-        raise Invalid(f"the package has no {MANIFEST}")
     ordered = tuple(files[path] for path in sorted(files))
-    return Package(manifest, ordered, _digest(ordered))
+    return Package(ordered, _digest(ordered))
 
 
 def write_archive(files: Iterable[PackageFile]) -> bytes:

@@ -94,10 +94,11 @@ def command(request, session):
 def environment():
     """How Claude Code is told its provider. The key is a placeholder: the egress proxy puts the real one in."""
     model = os.environ["HG_MODEL"]
-    return {**os.environ, "ANTHROPIC_BASE_URL": os.environ["HG_PROVIDER_URL"],
+    return {**os.environ, "ANTHROPIC_BASE_URL": os.environ["HG_PROVIDER_ANTHROPIC"],
             "ANTHROPIC_AUTH_TOKEN": os.environ["HG_PROVIDER_KEY"], "ANTHROPIC_MODEL": model,
             "ANTHROPIC_SMALL_FAST_MODEL": model, "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,      # its background model, by both its names
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1"}
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
+            "npm_config_cache": os.path.join(os.environ["HOME"], ".cache", "npm")}      # ~/.cache is never saved
 
 
 # the response
@@ -206,6 +207,10 @@ def main():
     # A stop is sent to this program and to Claude Code at once. This one waits for Claude Code to end, which is
     # what gives it the time to save its session, and then says nothing: the platform knows why the turn ended.
     signal.signal(signal.SIGTERM, lambda *_: stopped.append(True))
+    if "HG_PROVIDER_ANTHROPIC" not in os.environ:      # Claude Code speaks one API: the provider must speak it too
+        return say({"type": "response.failed", "response": {"error": {"code": "no_provider", "message": (
+            "HG FDE needs a provider that speaks the Anthropic API: name one in the model line, as "
+            "environment/hg-fde/provider/model.")}}})
     request = json.loads(read(os.path.join(TURN, "request.json")))
     session = read(SESSION) if os.path.exists(SESSION) else None
     ended, code = turn(request, session)

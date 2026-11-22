@@ -1,12 +1,12 @@
 """The sandbox contract: the fixed facts every harness package and the platform both rely on.
 
 A package is written against these and nothing else of the platform, so changing any of them is a new contract
-version, which a package names in its `harness.json`.
+version, which the platform reports.
 """
 
 from typing import Literal
 
-VERSION = 1
+VERSION = 2
 ApiName = Literal["anthropic", "openai-responses", "openai-chat", "gemini"]     # the provider APIs a harness may speak
 
 SANDBOX_UID = 10000                            # who everything in a sandbox runs as: never root
@@ -20,6 +20,9 @@ CONTRACT = f"{GIVEN}/contract"                 # and the contract, in words and 
 STATE_DIR = ".harnessgateway"                  # under the mind: where a package keeps small values of its own
 STARTUP = f"{TURN}/startup.sh"                 # the environment's startup script, when it has one
 STARTUP_FAILED = 78                            # what a sandbox exits with when that script fails
+INSTALL_TIMEOUT_S = 900                        # how long a package's install may take
+STOP_GRACE_S = 15                              # how long a stopped turn is given to end
+CACHE = ".cache"                               # under the mind: never saved with a session, as its name says
 
 PROXY_HOST = "egress"                          # the egress proxy's name on the sandbox network
 PROXY_PORT = 8080

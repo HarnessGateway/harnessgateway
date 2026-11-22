@@ -7,7 +7,7 @@ import pytest
 from harnessgateway.api.responses import accept
 from harnessgateway.errors import Invalid, NotFound, Refused
 from harnessgateway.platform import Platform
-from tests.helpers import MANIFEST, package
+from tests.helpers import package
 from tests.integration.conftest import LINE, ORG, WHO, ready
 
 
@@ -46,20 +46,16 @@ async def test_a_definition_that_cannot_work_is_refused_by_the_field_that_is_wro
     assert refusal.value.param == (param or None), refusal.value.message
 
 
-async def test_a_harness_is_its_package_and_keeps_what_a_new_one_still_declares(platform: Platform):
+async def test_a_harness_is_its_package_and_nothing_else(platform: Platform):
     resources = platform.resources
-    declared = {**MANIFEST, "name": "agent", "settings": {"MODE": {"default": "fast"}, "TEAM": {"required": True}},
-                "secrets": {"TOKEN": {"hosts": ["tool.example.com"], "required": True}}}
-    added = await resources.add_package(ORG, "agent", package(declared))
-    assert added.shown()["missing"] == ["settings.TEAM", "secrets.TOKEN"]
-    changed = await resources.apply(ORG, "harnesses", "agent", {"settings": {"TEAM": "payments"}, "secrets": {"TOKEN": "t"}})
-    assert (changed.spec["settings"], sorted(changed.sealed), changed.shown()["missing"]) == ({"TEAM": "payments"}, ["TOKEN"], [])
-    with pytest.raises(Invalid, match="OTHER is not declared"):
-        await resources.apply(ORG, "harnesses", "agent", {"settings": {"OTHER": "x"}})
-    again = await resources.add_package(ORG, "agent", package({**declared, "version": "2", "secrets": {}}))
-    assert (again.spec["settings"], again.sealed) == ({"TEAM": "payments"}, {})
-    with pytest.raises(Invalid, match="names 'agent', not 'renamed'"):
-        await resources.add_package(ORG, "renamed", package(declared))
+    added = await resources.add_package(ORG, "agent", package())
+    assert added.spec == {"digest": added.spec["digest"]} and added.sealed == {}
+    with pytest.raises(Invalid, match="a harness is its package"):                 # there is nothing to set on one
+        await resources.apply(ORG, "harnesses", "agent", {"settings": {"TEAM": "payments"}})
+    same = await resources.add_package(ORG, "twin", package())                     # the same files under another name
+    assert same.spec["digest"] == added.spec["digest"]
+    changed = await resources.add_package(ORG, "agent", package(**{"README.md": b"new"}))
+    assert changed.spec["digest"] != added.spec["digest"]
     await resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["agent"]})
     await resources.delete(ORG, "harnesses", "agent")
     assert (await resources.get(ORG, "environments", "default")).spec["harnesses"] == []
@@ -70,19 +66,17 @@ async def test_a_harness_is_its_package_and_keeps_what_a_new_one_still_declares(
 async def test_a_line_that_cannot_run_is_refused_before_anything_is_queued(platform: Platform):
     await ready(platform)
     resources = platform.resources
-    await resources.add_package(ORG, "agent", package({**MANIFEST, "name": "agent", "apis": ["anthropic"]}))
+    await resources.add_package(ORG, "agent", package())
     await resources.apply(ORG, "providers", "chat", {"apis": {"openai-chat": "https://api.example.com/v1"}})
     for line, why in (("nowhere/echo/none/none", "no environment"), ("default/nothing/none/none", "no harness"),
-                      ("default/agent/chat/m", "does not carry"), ("default/echo/chat/m", "calls no model"),
+                      ("default/agent/chat/m", "does not carry"), ("default/echo/chat/none", "name a provider and a model"),
                       ("default/echo", "four parts")):
         with pytest.raises(Invalid, match=why) as refusal:
             await accept(platform, WHO, {"model": line, "input": "x"})
         assert refusal.value.param == "model"
     await resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "agent"]})
-    for line, why in (("default/agent/chat/m", "speaks openai-chat, but harness"), ("default/agent/none/none", "calls a model"),
-                      ("default/agent/nobody/m", "no provider")):
-        with pytest.raises(Invalid, match=why):
-            await accept(platform, WHO, {"model": line, "input": "x"})
+    with pytest.raises(Invalid, match="no provider"):
+        await accept(platform, WHO, {"model": "default/agent/nobody/m", "input": "x"})
     with pytest.raises(Invalid, match="names no response"):
         await accept(platform, WHO, {"model": LINE, "input": "x", "previous_response_id": "resp_none"})
     assert await platform.db.all(None, "SELECT id FROM turns") == [] and platform.driver.plans == []

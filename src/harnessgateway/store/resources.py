@@ -37,12 +37,9 @@ class Resource:
 
     def shown(self) -> dict[str, Any]:
         """The resource as the API shows it: its definition in full, and which secrets have a value. Never the
-        values. A harness also says what must be set before a request can name it."""
-        said = {"name": self.name, **KINDS[self.kind].load(self.spec).dump(), "secrets_set": sorted(self.sealed),
+        values."""
+        return {"name": self.name, **KINDS[self.kind].load(self.spec).dump(), "secrets_set": sorted(self.sealed),
                 "created_at": self.created_at.isoformat(), "updated_at": self.updated_at.isoformat()}
-        if self.kind == "harnesses":
-            said["missing"] = Harness.load(self.spec).missing(set(self.sealed))
-        return said
 
 
 @dataclass(frozen=True)
@@ -65,7 +62,7 @@ def package_key(org_id: str, digest: str) -> str:
 
 def _split(kind: str, sent: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """A document as it was sent, as its definition and the secret values it carried (None: remove that one).
-    A provider's is `key`; an environment's are `secrets.<NAME>.value`; a harness's are `secrets.<NAME>`."""
+    A provider's is `key`; an environment's are `secrets.<NAME>.value`."""
     fields, values = dict(sent), {}
     if kind == "providers" and "key" in fields:
         values = {"key": fields.pop("key")}
@@ -74,11 +71,8 @@ def _split(kind: str, sent: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str
                              for name, secret in fields["secrets"].items()}
         values = {name: secret.pop("value") for name, secret in fields["secrets"].items()
                   if isinstance(secret, dict) and "value" in secret}
-    elif kind == "harnesses" and "secrets" in fields:
-        values = fields.pop("secrets")
-    if not isinstance(values, dict) or any(
-            value is not None and not (isinstance(value, str) and 0 < len(value) <= VALUE_MAX)
-            for value in values.values()):
+    if any(value is not None and not (isinstance(value, str) and 0 < len(value) <= VALUE_MAX)
+           for value in values.values()):
         raise Invalid(f"a secret's value is text of 1 to {VALUE_MAX} characters, or null to remove it", param="secrets")
     return fields, values
 
@@ -107,8 +101,10 @@ class Resources:
 
     async def apply(self, org_id: str, kind: str, name: str, sent: Mapping[str, Any]) -> Resource:
         """Make a definition, or replace the one of that name. A secret that is not sent keeps its value; null
-        removes it. A harness's definition is its package: only its settings and secrets are set this way."""
+        removes it. A harness is not made this way: it is its package."""
         check_name(name, "name")
+        if kind == "harnesses":
+            raise Invalid("a harness is its package: send the archive, or a session and the folder in its work")
         if kind == "providers" and name == NONE:
             raise Invalid(f"{NONE} is not a provider's name: in a model line it means no provider", param="name")
         fields, values = _split(kind, sent)
@@ -116,15 +112,6 @@ class Resources:
             row = await (await conn.execute(
                 "SELECT spec, sealed FROM resources WHERE org_id = %s AND kind = %s AND name = %s FOR UPDATE",
                 [org_id, kind, name])).fetchone()
-            if kind == "harnesses":
-                if row is None or set(fields) - {"settings"}:
-                    raise Invalid(f"harness {name!r} takes settings and secrets, once its package has been added")
-                changes = fields.get("settings", {})
-                if not isinstance(changes, dict):
-                    raise Invalid("settings is an object of name to value, or null to unset", param="settings")
-                settings = {**row["spec"]["settings"], **changes}
-                settings = {key: value for key, value in settings.items() if value is not None}
-                fields = {**row["spec"], "settings": settings}
             definition = KINDS[kind].load(fields)
             declared = definition.secret_names()
             sealed = {secret: value for secret, value in (row["sealed"] if row else {}).items()
@@ -148,26 +135,16 @@ class Resources:
     async def add_package(self, org_id: str, name: str, archive: bytes) -> Resource:
         """Add a package as a harness, or replace the harness of that name with it. The package is checked in
         full first, and kept as its files alone, written one way: not as the archive that happened to carry
-        them. A replaced harness keeps each setting and secret the new package still declares."""
+        them."""
         check_name(name, "name")
         package = read_archive(archive)
-        manifest = package.manifest
-        if manifest.name != name:
-            raise Invalid(f"the package's harness.json names {manifest.name!r}, not {name!r}", param="name")
         archive = write_archive(package.files)
         await self._blobs.put(package_key(org_id, package.digest), archive)
         async with self._db.tx(org_id) as conn:
             await conn.execute("INSERT INTO packages (org_id, digest, bytes) VALUES (%s, %s, %s) "
                                "ON CONFLICT DO NOTHING", [org_id, package.digest, len(archive)])
-            row = await (await conn.execute(
-                "SELECT spec, sealed FROM resources WHERE org_id = %s AND kind = 'harnesses' AND name = %s FOR UPDATE",
-                [org_id, name])).fetchone()
-            before = row or {"spec": {"settings": {}}, "sealed": {}}
-            kept = {setting: value for setting, value in before["spec"]["settings"].items()
-                    if setting in manifest.settings}
-            harness = Harness(manifest=manifest, digest=package.digest, settings=kept)
-            sealed = {secret: value for secret, value in before["sealed"].items() if secret in manifest.secrets}
-            await conn.execute(_UPSERT, [org_id, "harnesses", name, Jsonb(harness.dump()), Jsonb(sealed)])
+            await conn.execute(_UPSERT, [org_id, "harnesses", name, Jsonb(Harness(digest=package.digest).dump()),
+                                         Jsonb({})])
         return await self.get(org_id, "harnesses", name)
 
     async def delete(self, org_id: str, kind: str, name: str) -> None:
@@ -196,16 +173,9 @@ class Resources:
         environment = await self.find(org_id, "environments", line.environment)
         harness = await self.find(org_id, "harnesses", line.harness)
         provider = await self.find(org_id, "providers", line.provider) if line.provider != NONE else None
-        return resolve(line,
-                       Environment.load(environment.spec) if environment else None,
+        return resolve(line, Environment.load(environment.spec) if environment else None,
                        Harness.load(harness.spec) if harness else None,
-                       frozenset(harness.sealed) if harness else frozenset(),
                        Provider.load(provider.spec) if provider else None)
-
-    async def caches(self, org_id: str, harnesses: tuple[str, ...]) -> frozenset[str]:
-        """The cache folders of these harnesses, under the mind: what saving a session leaves out."""
-        found = [harness for harness in await self.all(org_id, "harnesses") if harness.name in harnesses]
-        return frozenset(cache for harness in found for cache in harness.spec["manifest"]["cache"])
 
     # installs: a package installed for an image
 

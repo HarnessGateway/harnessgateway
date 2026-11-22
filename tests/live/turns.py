@@ -81,7 +81,7 @@ archive = io.BytesIO()
 with tarfile.open(fileobj=archive, mode="w:gz") as tar:
     tar.add(SHELL, arcname=".")
 status, made = call("PUT", "/v1/harnesses/shell", archive.getvalue())
-check("a package a user brings becomes a harness", status == 200 and made["manifest"]["name"] == "shell", made.get("digest", made)[:12] if status == 200 else made)
+check("a package a user brings becomes a harness", status == 200 and made["name"] == "shell" and len(made["digest"]) == 64, made.get("digest", made)[:12] if status == 200 else made)
 base = {"image": "node:22", "harnesses": ["shell"]}
 for name, more in (("live", {}), ("live-py", {"image": "python:3.13-slim"}), ("live-tiny", {"disk_mb": 64}), ("live-quick", {"timeout_s": 5}),
                    ("live-small", {"image": "python:3.13-slim", "memory_mb": 256, "tmp_mb": 64}), ("live-closed", {"network": {"mode": "closed"}}),
@@ -162,8 +162,11 @@ m = turn("live-small/shell/none/none", "python3 -c \"x = bytearray(1 << 30); pri
 check("a turn past its memory limit says so", reason(m) == ("failed", "out_of_memory"), m["error"]["message"])
 n = turn("live/shell/none/none", "exit 3")
 check("a harness that reports failure is a failed response with its code", (n["status"], n["metadata"].get("hg_code")) == ("failed", "command_failed"), n["error"]["message"])
-status, o = call("POST", "/v1/responses", {"model": "live/shell/live-check/a-model", "input": "x"})
-check("a line that cannot run is refused before anything starts", status == 400 and o["error"]["param"] == "model", o["error"]["message"])
+status, o = call("POST", "/v1/responses", {"model": "live/shell/no-such-provider/a-model", "input": "x"})
+check("a line that names what is not there is refused before anything starts", status == 400 and o["error"]["param"] == "model", o["error"]["message"])
+o = turn("live/shell/live-check/a-model", "echo $HG_PROVIDER $HG_MODEL $HG_PROVIDER_ANTHROPIC; echo ${HG_PROVIDER_OPENAI_CHAT:-unset}")
+check("a harness is told its provider's base URL for each API the provider speaks, and which to use is its own to say",
+      said(o) == "live-check a-model https://api.example.com\nunset\n", repr(said(o)))
 p = turn("live/shell/none/none", "echo gone", store=False)
 check("a response that is not to be stored is gone once it has answered", p["status"] == "completed" and call("GET", f"/v1/responses/{p['id']}")[0] == 404)
 status, items = call("GET", f"/v1/responses/{a['id']}/input_items")

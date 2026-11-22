@@ -47,8 +47,8 @@ def routes(api: Api) -> list[Route]:
                         bool(entry.mode & 0o100)) for name, entry in entries.items()])
 
     async def apply(kind: str, request: Request, who: Principal) -> Any:
-        """Make or replace a definition. A harness is made from its package: an archive sent as the body, or a
-        folder of a session's work (`{"session", "path"}`). After that, its settings and secrets are set here."""
+        """Make or replace a definition. A harness is made from its package, and is nothing else: an archive
+        sent as the body, or a folder of a session's work (`{"session", "path"}`)."""
         name = request.path_params["name"]
         body = await read_body(request, PACKED_MAX)
         if kind == "harnesses" and body[:2] == _GZIP:
@@ -66,7 +66,7 @@ def routes(api: Api) -> list[Route]:
     async def package(request: Request, who: Principal) -> Any:
         """A harness's package, as the archive PUT takes: so a harness can be kept, moved and changed."""
         found = await resources.get(who.org_id, "harnesses", request.path_params["name"])
-        filename = f"{found.name}-{found.spec['manifest']['version']}.tar.gz"
+        filename = f"{found.name}.tar.gz"
         return Response(await resources.package(who.org_id, found.spec["digest"]), media_type="application/gzip",
                         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 

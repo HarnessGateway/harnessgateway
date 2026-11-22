@@ -11,18 +11,17 @@ from harnessgateway.platform import Platform
 from harnessgateway.proxy.authority import Authority, new_authority
 from harnessgateway.proxy.control import PlatformLink
 from harnessgateway.proxy.server import EgressProxy
-from tests.helpers import MANIFEST, package
+from tests.helpers import package
 from tests.integration.conftest import ORG, run
 
 
 async def test_the_proxy_is_told_what_a_running_sandbox_may_reach_and_no_secret_enters_the_sandbox(platform: Platform):
-    await platform.resources.add_package(ORG, "agent", package({**MANIFEST, "name": "agent", "apis": ["anthropic"],
-                                                                "secrets": {"TOOL": {"hosts": ["tool.example.com"]}}}))
-    await platform.resources.apply(ORG, "harnesses", "agent", {"secrets": {"TOOL": "tool-secret"}})
+    await platform.resources.add_package(ORG, "agent", package())
     await platform.resources.apply(ORG, "providers", "claude", {"apis": {"anthropic": "https://api.example.com"}, "key": "sk-real"})
     await platform.resources.apply(ORG, "environments", "default", {
         "image": "node:22", "harnesses": ["agent"], "network": {"allow": ["db.example.com"]},
-        "secrets": {"DB": {"hosts": ["db.example.com"], "header": "X-Key", "value": "db-secret"}}})
+        "secrets": {"DB": {"hosts": ["db.example.com"], "header": "X-Key", "value": "db-secret"},
+                    "TOOL": {"hosts": ["tool.example.com"], "value": "tool-secret"}}})
     transport, seen = httpx.ASGITransport(app=internal_app(platform)), {}
     link = PlatformLink("http://internal", "proxy-key", transport=transport)
     async with httpx.AsyncClient(transport=transport, base_url="http://internal") as stranger:
@@ -42,12 +41,12 @@ async def test_the_proxy_is_told_what_a_running_sandbox_may_reach_and_no_secret_
     plan, policy = seen["turn"]
     assert seen["install"][1].secrets == () and "registry.npmjs.org" in seen["install"][1].egress.allow
     assert policy.egress.mode == "limited" and {"api.example.com", "db.example.com"} <= set(policy.egress.allow)
-    assert "tool.example.com" not in policy.egress.allow                               # a package opens nothing
+    assert "tool.example.com" in policy.egress.allow                                   # where a secret goes is reachable
     secrets = {secret.value: secret for secret in policy.secrets}
     assert secrets["sk-real"].placeholder == plan.env["HG_PROVIDER_KEY"] and secrets["sk-real"].hosts == ("api.example.com",)
     assert secrets["db-secret"].header == "X-Key" and secrets["tool-secret"].placeholder == plan.env["TOOL"]
     assert not {"sk-real", "db-secret", "tool-secret"} & set(plan.env.values())        # no secret enters a sandbox
-    assert (plan.env["HG_PROVIDER_URL"], plan.env["HG_MODEL"]) == ("https://api.example.com", "claude-x")
+    assert (plan.env["HG_PROVIDER_ANTHROPIC"], plan.env["HG_MODEL"]) == ("https://api.example.com", "claude-x")
     fresh = PlatformLink("http://internal", "proxy-key", transport=transport)          # one that has kept nothing
     assert await fresh.policy(turn.id, plan.env["HTTPS_PROXY"].split("@")[0].rsplit(":", 1)[1]) is None
     used = await platform.usage.total(ORG)

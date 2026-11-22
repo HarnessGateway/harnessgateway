@@ -12,22 +12,18 @@ class Resolved:
     line: Line
     environment: Environment
     harness: Harness
-    provider: Provider | None = None           # None: the harness calls no model
-    api: str | None = None                     # the API the harness will speak to the provider
-
-    @property
-    def url(self) -> str:
-        return self.provider.apis[self.api] if self.provider and self.api else ""    # type: ignore[index]
+    provider: Provider | None = None           # None: the line names no model
 
     @property
     def model(self) -> str:
         return self.line.model if self.provider else ""
 
 
-def resolve(line: Line, environment: Environment | None, harness: Harness | None, secrets_set: frozenset[str],
-            provider: Provider | None) -> Resolved:
-    """What a line means, given the definitions it names (None where there is none of that name) and which of
-    the harness's secrets have a value. A line that cannot run is refused here, before anything is queued."""
+def resolve(line: Line, environment: Environment | None, harness: Harness | None, provider: Provider | None,
+            ) -> Resolved:
+    """What a line means, given the definitions it names (None where there is none of that name). A line that
+    names what is not there is refused here, before anything is queued. Whether a harness can use the provider
+    it is given is the harness's to say, when it runs."""
     def refuse(why: str) -> Invalid:
         return Invalid(why, param="model")
     if environment is None:
@@ -37,21 +33,10 @@ def resolve(line: Line, environment: Environment | None, harness: Harness | None
     if line.harness not in environment.harnesses:
         raise refuse(f"environment {line.environment!r} does not carry harness {line.harness!r}: "
                      "add it to the environment's harnesses")
-    if missing := harness.missing(secrets_set):
-        raise refuse(f"harness {line.harness!r} needs a value for {', '.join(missing)}")
-    speaks = harness.manifest.apis
-    if not speaks:
-        if (line.provider, line.model) != (NONE, NONE):
-            raise refuse(f"harness {line.harness!r} calls no model: name it "
-                         f"{line.environment}/{line.harness}/{NONE}/{NONE}")
+    if (line.provider, line.model) == (NONE, NONE):
         return Resolved(line, environment, harness)
     if NONE in (line.provider, line.model):
-        raise refuse(f"harness {line.harness!r} calls a model: name a provider that speaks "
-                     f"{' or '.join(speaks)}, and a model")
+        raise refuse(f"name a provider and a model, or {NONE}/{NONE} for a harness that calls no model")
     if provider is None:
         raise refuse(f"there is no provider named {line.provider!r}")
-    api = next((api for api in speaks if api in provider.apis), None)
-    if api is None:
-        raise refuse(f"provider {line.provider!r} speaks {', '.join(provider.apis)}, but harness "
-                     f"{line.harness!r} speaks {' or '.join(speaks)}")
-    return Resolved(line, environment, harness, provider, api)
+    return Resolved(line, environment, harness, provider)

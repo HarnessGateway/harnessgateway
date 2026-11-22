@@ -18,7 +18,7 @@ async def test_the_defaults_are_an_environment_and_the_two_harnesses_it_carries(
     assert [each.name for each in environments] == ["default"] and sorted(harnesses) == ["hg-fde", "shell"]
     assert environments[0].shown()["harnesses"] == ["hg-fde", "shell"]
     assert environments[0].shown()["network"]["mode"] == "open"                          # the engineer reads a CLI's own pages
-    assert harnesses["shell"]["manifest"]["apis"] == [] and harnesses["hg-fde"]["manifest"]["apis"] == ["anthropic"]
+    assert all(set(harness) == {"name", "digest", "secrets_set", "created_at", "updated_at"} for harness in harnesses.values())
     assert (await platform.resources.resolve(ORG, Line.parse("default/shell/none/none"))).provider is None
     assert await platform.resources.all(ORG, "providers") == []            # a provider is the organization's to add
     turn = await run(platform, model="default/shell/none/none", input="anything")     # and a request can name them at once

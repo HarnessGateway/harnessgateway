@@ -12,7 +12,6 @@ from harnessgateway.domain.sandbox import SandboxPlan
 from harnessgateway.driver.base import DriverError, SandboxExit
 from harnessgateway.driver.folders import LocalFolders
 
-MANIFEST = {"contract": 1, "name": "echo", "version": "1.0", "apis": []}
 TEXT = [
     {"type": "response.output_item.added",
      "item": {"id": "msg_1", "type": "message", "role": "assistant", "status": "in_progress", "content": []}},
@@ -24,9 +23,9 @@ TEXT = [
 DONE = {"type": "response.completed", "response": {"usage": {"input_tokens": 3, "output_tokens": 2}}}
 
 
-def package(manifest: dict = MANIFEST, **more: bytes) -> bytes:
-    return write_archive([PackageFile("harness.json", json.dumps(manifest).encode()),
-                          PackageFile("install", b"#!/bin/sh\n", True), PackageFile("run", b"#!/bin/sh\n", True),
+def package(**more: bytes) -> bytes:
+    """The smallest package: its two programs, and whatever else is given."""
+    return write_archive([PackageFile("install", b"#!/bin/sh\n", True), PackageFile("run", b"#!/bin/sh\n", True),
                           *(PackageFile(name, content) for name, content in more.items())])
 
 
