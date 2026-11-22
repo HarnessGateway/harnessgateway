@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.0.1
+
+This version changes where things are in the repository, and nothing a running installation does.
+
+- What an installation starts with is at the top of the repository: the packages in `packages/` (`shell` and
+  `harness-package-builder`), and the environment in `environments/default.json`. Before, both were inside the
+  Python package, under `src/harnessgateway/defaults/`. First-time setup gives every package in the first folder
+  as a harness and every definition in the second as an environment, each under its own name.
+- The package contract is now at
+  `packages/harness-package-builder/skills/building-harnessgateway-harness-package/PACKAGES.md`.
+
 ## 5.0.0
 
 This version is a new platform: the same idea and the same wire format, written again from the beginning as the
