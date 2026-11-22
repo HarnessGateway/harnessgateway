@@ -11,6 +11,7 @@
 - **Validate at every boundary**, and refuse with a message that names what was wrong and what is allowed.
 - **The platform knows no harness.** Anything about one agent CLI belongs in its package.
 - **The console is a client.** It calls the public API and nothing else: what it needs, the API gives everyone.
+  A page is drawn from DOM nodes, never from a string of markup, and what an agent made runs only sandboxed.
 - **The Responses API is not extended.** No request field, no response field, no route under its paths.
 - **An edition extends at a seam.** A change that makes the core know about an edition is the wrong change.
 - **No secret** in any file, log, test, commit or error message.

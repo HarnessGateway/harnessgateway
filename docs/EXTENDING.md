@@ -56,12 +56,13 @@ class Enterprise(Extension):
 
 ## Pages in the console
 
-The console is plain JavaScript modules, served from `/console`. An edition's `console()` folder is served at the
-same paths, and the console loads its `edition.js`:
+The console is plain JavaScript modules (the repository's `console/`), served from `/console`. An edition's
+`console()` folder is served at the same paths, and the console loads its `edition.js`:
 
 ```js
-import { get } from "./api.js";                  // the console's own modules are beside it
-import { add, clear, h, top } from "./ui.js";
+import { top } from "./components/layout.js";    // the console's own modules are beside it
+import { get } from "./lib/api.js";
+import { add, clear, h } from "./lib/dom.js";
 
 async function audit(main) {                     // draws the page at #/audit
   add(clear(main), top("Audit", "Every change."), (await get("/v1/audit")).data.map(row => h("div", {}, row.name)));

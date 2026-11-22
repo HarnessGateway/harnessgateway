@@ -50,7 +50,7 @@ the process that answers need not be the one that runs the turn.
 | `api/` | HTTP in, HTTP out | It validates and delegates; it decides nothing |
 | `extensions.py` | The seams | So that an edition adds to the core instead of changing it |
 | `defaults/` | What an organization starts with | Given once, at setup, through the same stores as anything an organization adds: the platform still knows no harness |
-| `console/` | The pages people use the platform through | A client of the API, served beside it: it has no route of its own, so the API is whole without it |
+| `console/` (the repository's, beside `src/`) | The pages people use the platform through | A client of the API, served beside it: it has no route of its own, so the API is whole without it |
 
 Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain`; `store` and `driver` use
 `domain`; `domain` uses nothing.
@@ -97,7 +97,9 @@ are made, how a caller is matched to one, and row-level policies on that setting
    what may be reached; private and local addresses never are, unless the operator names them.
 3. **Secrets**: sealed at rest; given to the proxy only for sandboxes running now; never in a sandbox, a log, a
    response or an error. A sandbox that prints its "key" prints a placeholder.
-4. **Untrusted files**: what an agent wrote is saved without following links and without running anything.
+4. **Untrusted files**: what an agent wrote is saved without following links and without running anything. A
+   browser is shown it only through a link that is the permission (one session, one hour), and only sandboxed: a
+   page an agent built runs in an origin of its own, and can neither read the page that shows it nor call the API.
 5. **Validation**: at every boundary, with a refusal that names what was wrong.
 
 ## Usage
