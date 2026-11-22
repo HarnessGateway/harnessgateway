@@ -17,6 +17,7 @@ async def test_the_defaults_are_an_environment_and_the_two_harnesses_it_carries(
     harnesses = {each.name: each.shown() for each in await platform.resources.all(ORG, "harnesses")}
     assert [each.name for each in environments] == ["default"] and sorted(harnesses) == ["harness-package-builder", "shell"]
     assert environments[0].shown()["harnesses"] == ["harness-package-builder", "shell"]
+    assert environments[0].shown()["network"]["mode"] == "open"                          # the builder reads a CLI's own pages
     assert harnesses["shell"]["manifest"]["apis"] == [] and harnesses["harness-package-builder"]["manifest"]["apis"] == ["anthropic"]
     assert (await platform.resources.resolve(ORG, Line.parse("default/shell/none/none"))).provider is None
     assert await platform.resources.all(ORG, "providers") == []            # a provider is the organization's to add

@@ -1,6 +1,6 @@
 """What an organization starts with: one environment, and the two harnesses it carries.
 
-    default                     an environment on a common image, with the platform's default limits and network
+    default                     an environment on a common image, with the default limits and an open network
     shell                       the smallest harness package: it runs the request's input as a command
     harness-package-builder     an agent that writes harness packages for other agent CLIs
 
