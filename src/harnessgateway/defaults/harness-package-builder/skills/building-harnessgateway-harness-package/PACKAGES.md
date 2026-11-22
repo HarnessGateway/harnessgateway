@@ -4,7 +4,8 @@ A harness is an agent CLI made runnable on the platform by a package. The platfo
 one is in its package, and every package is run the same way. An organization starts with two, `shell` and
 `harness-package-builder`, and owns every package it has.
 
-This is the whole contract. It is also what `harness-package-builder` reads before it writes a package.
+This is the whole contract. It is also what `harness-package-builder` reads before it writes a package: it is
+kept in that package's skill.
 
 ## A package is a folder
 
@@ -42,7 +43,7 @@ It travels as a gzip-compressed tar archive of that folder: `tar -czf agent.tar.
 | `contract` | The sandbox contract the package is written against: `1` |
 | `name`, `version` | The name is the harness's name (lower-case letters, digits and `-`); a request names it in `model`. The version is the CLI's, with a number of the package's own after it |
 | `description` | What a person choosing a harness reads |
-| `apis` | The provider APIs its CLI speaks: `anthropic`, `openai-responses`, `openai-chat`, `gemini`. Empty: it calls no model |
+| `apis` | The provider APIs its CLI speaks, the preferred first: `anthropic`, `openai-responses`, `openai-chat`, `gemini`. The platform picks the first the request's provider speaks too, and tells `run` which (`$HG_PROVIDER_API`). Empty: it calls no model |
 | `mind` | Where under `$HOME` its CLI keeps its session. A later harness on the same session is told where to look |
 | `cache` | Folders under `$HOME` not worth saving between turns |
 | `install.timeout_s`, `run.stop_grace_s` | How long `install` may take (900), and how long `run` is given to end once it is told to (10) |

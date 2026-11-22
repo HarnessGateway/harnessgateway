@@ -30,9 +30,9 @@ installed, sandboxes run under it; without it, isolation is `none`, and the log 
 
 | | |
 |---|---|
-| `default` | An environment on a common image (`node:22`), with the default limits and network |
+| `default` | An environment on a common image (`node:22`), with the default limits and an open network: a sandbox reaches any public host, through the proxy |
 | `shell` | The smallest harness: it runs a request's input as a command. `default/shell/none/none` tries an environment before any agent is set up |
-| `harness-package-builder` | An agent that writes harness packages for other agent CLIs. Add a provider that speaks the Anthropic API, ask it for a package, and add what it wrote from its session |
+| `harness-package-builder` | An agent that writes harness packages for other agent CLIs: it researches the CLI, writes the package, verifies it with a hello world, and ends with a link that adds it. It needs a provider that speaks the Anthropic API |
 
 They are given once, at setup, and are yours from then on: change them, delete them, add your own. Nothing else
 ships: no provider, and no other agent.
@@ -42,7 +42,7 @@ ships: no provider, and no other agent.
 | | | |
 |---|---|---|
 | **Provider** | `PUT /v1/providers/{name}` | A model endpoint: each API shape it speaks at a base URL, and a key |
-| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([the package contract](src/harnessgateway/defaults/harness-package-builder/guide/PACKAGES.md)) |
+| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own: `harness.json`, `install`, `run` ([the package contract](src/harnessgateway/defaults/harness-package-builder/skills/building-harnessgateway-harness-package/PACKAGES.md)) |
 | **Environment** | `PUT /v1/environments/{name}` | Where turns run: image, limits, network, variables, secrets, a startup script, and the harnesses it carries |
 
 ```sh
