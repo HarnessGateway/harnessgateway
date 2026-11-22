@@ -34,3 +34,11 @@ A change starts with a test that fails without it: unit for a rule, integration 
 API, live for what only a real container shows. Say which levels you ran.
 
 Commits are small and say why. One change, one commit.
+
+## Versions
+
+Every change that reaches `main` is a version. Give it one in `pyproject.toml` and `src/harnessgateway/__init__.py`
+(then `uv lock`), and an entry in `CHANGELOG.md` that says what changed for someone who runs the platform. A push
+to `main` whose version has no tag yet is released by `.github/workflows/release.yml`: the image is built and
+pushed, the commit is tagged, and the entry becomes the release's notes. A push whose version is already released
+fails, and says so.

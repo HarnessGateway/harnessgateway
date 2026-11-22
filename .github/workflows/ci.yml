@@ -1,8 +1,15 @@
 name: ci
+# Every level of the checks that a hosted runner can run, and the image built and scanned. It also runs every
+# week: a vulnerability can be published against an image that has not changed.
 on:
   push:
-    branches: [main]
   pull_request:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -26,3 +33,53 @@ jobs:
       - run: uv run pytest tests/unit tests/integration
         env:
           HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
+
+  # A whole platform as a user installs it: the image built from this tree by install.sh, then real turns in real
+  # containers, and every page of the console in a real browser.
+  live:
+    runs-on: ubuntu-latest
+    env:
+      HG_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the platform as a user does
+        run: |
+          set -o pipefail
+          ./install.sh | sed -E 's/hg_[A-Za-z0-9_-]{20,}/hg_(the key)/'        # the key it prints is not for a public log
+          key=$(docker compose exec -T serve harnessgateway init --new-key </dev/null | awk 'END {print $NF}')
+          echo "::add-mask::$key"
+          echo "HG_KEY=$key" >> "$GITHUB_ENV"
+      - name: Real turns, in real containers
+        run: python3 tests/live/turns.py
+      - name: A browser, for the console's checks
+        run: |
+          npm install --global playwright
+          npx playwright install --with-deps chromium
+          echo "NODE_PATH=$(npm root --global)" >> "$GITHUB_ENV"
+      - name: Every page of the console
+        run: node tests/live/console.cjs
+      - name: What the platform logged, when that failed
+        if: failure()
+        run: docker compose logs --tail 200 serve proxy
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t harnessgateway:ci .
+      - name: The image runs, and holds the console and what an installation starts with
+        run: |
+          docker run --rm harnessgateway:ci harnessgateway --version
+          docker run --rm harnessgateway:ci python -c "
+          from harnessgateway import defaults
+          from harnessgateway.api import console
+          assert (console.FILES / 'index.html').is_file(), console.FILES
+          print({name: len(defaults.archive(name)) for name in ('shell', 'harness-package-builder')})"
+      # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0
+        with:
+          image-ref: harnessgateway:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
