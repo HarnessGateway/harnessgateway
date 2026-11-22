@@ -1,0 +1,5 @@
+{
+  "image": "node:22",
+  "harnesses": ["harness-package-builder", "shell"],
+  "network": { "mode": "open" }
+}

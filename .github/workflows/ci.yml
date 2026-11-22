@@ -1,6 +1,6 @@
 name: ci
-# Every level of the test plan (SPEC §24) that a hosted runner can run, and both images built and scanned. It also
-# runs every week: a vulnerability can be published against an image that has not changed.
+# Every level of the checks that a hosted runner can run, and the image built and scanned. It also runs every
+# week: a vulnerability can be published against an image that has not changed.
 on:
   push:
   pull_request:
@@ -18,157 +18,68 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_PASSWORD: test
+          POSTGRES_USER: hg
+          POSTGRES_PASSWORD: hg
+          POSTGRES_DB: hg_test
         ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
-    env:
-      HG_TEST_DATABASE_URL: postgresql://postgres:test@127.0.0.1:5432/postgres
+        options: --health-cmd "pg_isready -U hg" --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync
+      - run: uv sync --locked --extra dev
       - run: uv run ruff check .
       - run: uv run mypy
-      - name: A browser, for the console's test
+      - run: find console -name "*.js" -exec node --check {} +    # it has no build step to catch one
+      - run: uv run pytest tests/unit tests/integration
+        env:
+          HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
+
+  # A whole platform as a user installs it: the image built from this tree by install.sh, then real turns in real
+  # containers, and every page of the console in a real browser.
+  live:
+    runs-on: ubuntu-latest
+    env:
+      HG_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the platform as a user does
+        run: |
+          set -o pipefail
+          ./install.sh | sed -E 's/hg_[A-Za-z0-9_-]{20,}/hg_(the key)/'        # the key it prints is not for a public log
+          key=$(docker compose exec -T serve harnessgateway init --new-key </dev/null | awk 'END {print $NF}')
+          echo "::add-mask::$key"
+          echo "HG_KEY=$key" >> "$GITHUB_ENV"
+      - name: Real turns, in real containers
+        run: python3 tests/live/turns.py
+      - name: A browser, for the console's checks
         run: |
           npm install --global playwright
           npx playwright install --with-deps chromium
           echo "NODE_PATH=$(npm root --global)" >> "$GITHUB_ENV"
-      - name: Unit, integration and browser tests
-        run: uv run pytest
-      - name: End-to-end tests, in real containers
-        run: uv run pytest tests/e2e
-        env:
-          HG_TEST_DOCKER: "1"
-      - name: End-to-end tests again, with sandboxes on the platform's own sandbox image
-        run: |
-          docker build --quiet -f images/sandbox/Dockerfile -t sandbox:ci images/sandbox
-          uv run pytest tests/e2e
-        env:
-          HG_TEST_DOCKER: "1"
-          HG_TEST_SANDBOX_IMAGE: sandbox:ci
-
-  # A whole platform as a user installs it: both images built from this tree, deploy/install.sh, and then each
-  # package that ships running real turns of its real CLI, against a model that follows a script, so no key is
-  # needed and the answers never change (harness-packages: tools/scripted_model.py, tests/test_live.py).
-  # Once with sandboxes on the host's kernel, once under gVisor.
-  live:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        isolation: [none, gvisor]
-    env:
-      HG_PLATFORM_IMAGE: harnessgateway:ci
-      HG_SANDBOX_IMAGE: sandbox:ci
-      HG_TEST_URL: http://127.0.0.1:8000
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync
-      - name: Both images, from this tree
-        run: |
-          docker build --quiet -f images/platform/Dockerfile -t "$HG_PLATFORM_IMAGE" .
-          docker build --quiet -f images/sandbox/Dockerfile -t "$HG_SANDBOX_IMAGE" images/sandbox
-      # A change to the kit or the contract is made in both repositories, on branches of one name.
-      - name: The packages that ship, from the branch of this name where there is one
-        run: |
-          from=https://github.com/HarnessGateway/harness-packages
-          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" "$from" /tmp/harness-packages \
-            || git clone --depth 1 "$from" /tmp/harness-packages
-      - name: Install the platform as a user does, and stand the scripted model beside it
-        run: |
-          set -o pipefail
-          deploy/install.sh --dir "$RUNNER_TEMP/hg" ${{ matrix.isolation == 'gvisor' && '--with-gvisor' || '' }} \
-            | sed -E 's/hg_[A-Za-z0-9_-]{20,}/hg_(the key)/'        # the key it prints is not for a public log
-          cd "$RUNNER_TEMP/hg"
-          key=$(docker compose exec -T serve harnessgateway init --new-admin-key </dev/null | awk 'END {print $NF}')
-          echo "::add-mask::$key"
-          echo "HG_TEST_KEY=$key" >> "$GITHUB_ENV"
-          # A new installation installs what its default environment carries without being asked: nothing has
-          # named a harness yet, and the platform has not been started a second time.
-          for _ in $(seq 90); do
-            installed=$(curl -fsS "$HG_TEST_URL/v1/environments/default" -H "Authorization: Bearer $key" \
-              | jq -r '[.installs[].status] | unique | join(" ")')
-            [ "$installed" = ready ] && break
-            sleep 2
-          done
-          test "$installed" = ready
-          echo "HG_PRIVATE_HOSTS=hg-stack-model:8000" >> .env       # the model is on this host's own network
-          docker compose up --detach serve proxy                    # started again, with that setting
-          docker run --detach --name hg-stack-model --network hg-control \
-            --volume /tmp/harness-packages/tools:/tools:ro python:3.13 python3 /tools/scripted_model.py 8000
-          for _ in $(seq 60); do curl -fsS -o /dev/null "$HG_TEST_URL/readyz" && break; sleep 1; done
-          isolation=$(curl -fsS "$HG_TEST_URL/v1/platform" -H "Authorization: Bearer $key" | jq -r .isolation)
-          test "$isolation" = "${{ matrix.isolation }}"
-      - name: Each package runs real turns of its CLI
-        working-directory: /tmp/harness-packages
-        run: uv run --project "$GITHUB_WORKSPACE" pytest tests/test_live.py
+      - name: Every page of the console
+        run: node tests/live/console.cjs
       - name: What the platform logged, when that failed
         if: failure()
-        run: cd "$RUNNER_TEMP/hg" && docker compose logs --tail 200 serve proxy
+        run: docker compose logs --tail 200 serve proxy
 
-  images:
+  image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f images/platform/Dockerfile -t harnessgateway:ci .
-      - run: docker build -f images/sandbox/Dockerfile -t sandbox:ci images/sandbox
-      - name: The platform image runs, its catalog holds the template package, and nothing in it raises privileges
+      - run: docker build -t harnessgateway:ci .
+      - name: The image runs, and holds the console and what an installation starts with
         run: |
-          docker run --rm harnessgateway:ci harnessgateway version
-          docker run --rm harnessgateway:ci harnessgateway package check /packages/shell
-          docker run --rm --entrypoint /bin/sh harnessgateway:ci -c 'ls /usr/share/harnessgateway/harnessgateway-*.whl'
-          docker run --rm --entrypoint /bin/sh harnessgateway:ci -c '
-            set -e
-            docker --version
-            if command -v apk || command -v busybox; then echo "a package manager or BusyBox is left"; exit 1; fi
-            test -z "$(find / -xdev -type f -perm /6000 2>/dev/null)"'
-      - name: The sandbox image has what the shipped harnesses need, as user 10000, and nothing that raises privileges
-        run: |
-          docker run --rm --user 10000:10000 --read-only --tmpfs /tmp:rw,exec --entrypoint /bin/sh sandbox:ci -c '
-            set -e
-            test "$(id -u)" = 10000
-            node --version && npm --version
-            python3 -c "import sys; assert sys.version_info >= (3, 12), sys.version"
-            python3 -m venv /tmp/venv && /tmp/venv/bin/pip --version
-            git --version && curl --version >/dev/null && rg --version >/dev/null && jq --version
-            if command -v apk || command -v busybox; then echo "a package manager or BusyBox is left"; exit 1; fi
-            test -z "$(find / -xdev -type f -perm /6000 2>/dev/null)"'
-      # Each package that ships with the platform installs on the sandbox image as the platform installs it: as
-      # user 10000, into /harness with the kit and the platform's own wheel beside it, on a read-only image with a
-      # scratch /tmp. A package that no longer installs (a new npm that skips install scripts, a moved download)
-      # fails here, not for a user.
-      - name: Every package that ships with the platform installs on the sandbox image
-        run: |
-          git clone --depth 1 https://github.com/HarnessGateway/harness-packages /tmp/harness-packages
-          wheel=$(mktemp -d) platform=$(docker create harnessgateway:ci)
-          docker cp "$platform:/usr/share/harnessgateway/." "$wheel" && docker rm "$platform" >/dev/null
-          for manifest in /tmp/harness-packages/*/harness.json; do
-            name=$(jq -r .name "$manifest") version=$(jq -r .version "$manifest")
-            dir=$(mktemp -d)
-            cp -r "$(dirname "$manifest")/." "$dir/"
-            mkdir -p "$dir/kit" && cp harnessgateway/kit/hgkit.py "$wheel"/harnessgateway-*.whl "$dir/kit/"
-            sudo chown -R 10000:10000 "$dir"
-            echo "::group::$name $version"
-            docker run --rm --user 10000:10000 --read-only --tmpfs /tmp:rw,exec --volume "$dir:/harness" \
-              --workdir /harness --env HOME=/tmp/home --env HG_CONTRACT=1 --env HG_HARNESS=/harness \
-              --env HG_HARNESS_NAME="$name" --env HG_HARNESS_VERSION="$version" --entrypoint /harness/install sandbox:ci
-            echo "::endgroup::"
-          done
+          docker run --rm harnessgateway:ci harnessgateway --version
+          docker run --rm harnessgateway:ci python -c "
+          from harnessgateway import defaults
+          from harnessgateway.api import console
+          assert (console.FILES / 'index.html').is_file(), console.FILES
+          print({name: len(defaults.archive(name)) for name in ('shell', 'harness-package-builder')})"
       # Fixed CRITICAL and HIGH findings fail the run; findings with no fix yet are reported, not failed on.
-      - name: Scan the platform image
+      - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0
         with:
           image-ref: harnessgateway:ci
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-      - name: Scan the sandbox image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25    # v0.36.0
-        with:
-          image-ref: sandbox:ci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"

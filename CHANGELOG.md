@@ -1,5 +1,40 @@
 # Changelog
 
+## 5.0.0
+
+This version is a new platform: the same idea and the same wire format, written again from the beginning as the
+smallest core that does the job. It is not an upgrade in place. An installation of 4.x is not migrated, and its
+data, definitions and packages do not carry over; 4.4.1 stays as the tag `v4.4.1`.
+
+What it is:
+
+- The OpenAI Responses API, unmodified, with the Files and Containers APIs beside it.
+- Providers, environments and harnesses as definitions, with sealed secrets. A request names all four parts of
+  its model: `environment/harness/provider/model`.
+- Harness packages run in hardened sandboxes; sessions saved as content-addressed snapshots.
+- An egress proxy that enforces each environment's network and keeps secrets out of sandboxes.
+- Sessions as their requests and responses; usage as CPU, memory, network and storage.
+- Links a browser can open a session's files through, sandboxed (`POST /v1/containers/{id}/view`).
+- A console at `/console`: chat, providers, environments, harnesses, sessions and usage.
+- The seams an edition builds on, and a sample extension that uses each.
+
+What is different from 4.x:
+
+- **Installing.** Clone the repository and run `./install.sh`: it builds the image on the host and starts it.
+  `deploy/install.sh`, with its `--with-gvisor`, is gone; sandboxes run under gVisor when the host has `runsc`.
+- **What an installation starts with.** The `default` environment and two harnesses: `shell`, and
+  `harness-package-builder`, which writes a package for any other agent CLI and ends with a link that adds it.
+  The packages of the `harness-packages` repository were written for the 4.x kit and do not run on this version.
+- **Packages.** A package is still `harness.json`, `install` and `run`. There is no `seeds/` folder and the kit is
+  smaller (`Request`, `State`, `Cli`, `Emitter`): what a CLI is given, its `run` points it at or puts in place.
+  `harnessgateway package check` is gone; the builder's `verify.py` runs a package's install and a hello world.
+- **Sandboxes.** There is no sandbox image of the platform's own: an environment names any image. What a sandbox
+  may reach is the environment's `network` (`closed`, `limited` or `open`).
+- **Bringing in a package an agent wrote.** `PUT /v1/harnesses/{name}` with `{"session", "path"}`; the drafts
+  API is gone.
+- **Keys.** There is one kind of API key. Who may do what is an edition's to say, through a seam.
+- **The image.** One image, `ghcr.io/harnessgateway/harnessgateway`, runs both `serve` and `proxy`.
+
 ## 4.4.1
 
 This version changes no code.

@@ -1,79 +1,59 @@
-"""Spec §5.4: how a turn's final status and reason are decided. Outside observations win."""
+"""How a turn ended, the response it becomes, and what a new harness is told."""
 
 import pytest
+from openai.types.responses import Response
 
-from harnessgateway.domain.outcome import Observed, Terminal, decide
+from harnessgateway.domain.handover import handover_line, unseen
+from harnessgateway.domain.outcome import Observed, Outcome, Terminal, decide
+from harnessgateway.domain.response import envelope_event, response_object
 
-DONE = Terminal(kind="done")
-
-
-def test_a_package_that_reports_done_and_exits_cleanly_completes() -> None:
-    o = decide(Observed(exit_code=0, terminal=DONE))
-    assert (o.status, o.reason, o.message) == ("completed", None, None)
+DONE, FAILED = Terminal("done"), Terminal("failed", code="no_auth", message="the key was refused")
 
 
-@pytest.mark.parametrize(
-    ("observed", "status", "reason"),
-    [
-        (Observed(setup_failed=True), "failed", "setup_failed"),
-        (Observed(install_failed=True), "failed", "install_failed"),
-        (Observed(restore_failed=True), "failed", "restore_failed"),
-        (Observed(sandbox_failed=True), "failed", "sandbox_failed"),
-        (Observed(cancelled=True, exit_code=137), "cancelled", "cancelled"),
-        (Observed(timed_out=True, exit_code=137), "failed", "timed_out"),
-        (Observed(out_of_disk=True, exit_code=137), "failed", "out_of_disk"),
-        (Observed(out_of_memory=True, exit_code=137), "failed", "out_of_memory"),
-        (Observed(exit_code=137, terminal=DONE), "failed", "out_of_memory"),
-        (Observed(invalid_output="line 3 is not JSON", exit_code=143), "failed", "invalid_output"),
-        (Observed(save_failed=True, exit_code=0, terminal=DONE), "failed", "save_failed"),
-        (Observed(exit_code=0, terminal=Terminal(kind="failed", code="provider_error", message="401")),
-         "failed", "harness_failed"),
-        (Observed(exit_code=0, terminal=Terminal(kind="incomplete", reason="max_output_tokens")), "incomplete",
-         "max_output_tokens"),
-        (Observed(exit_code=0), "failed", "harness_error"),
-        (Observed(exit_code=3), "failed", "harness_error"),
-        (Observed(exit_code=1, terminal=DONE), "failed", "harness_error"),
-    ],
-)
-def test_each_row_of_the_table(observed: Observed, status: str, reason: str) -> None:
-    o = decide(observed)
-    assert (o.status, o.reason) == (status, reason)
-    assert o.message                                   # every outcome but success says what happened
+@pytest.mark.parametrize(("seen", "status", "reason"), [
+    (Observed(exit_code=0, terminal=DONE), "completed", None),
+    (Observed(before="install_failed", terminal=DONE), "failed", "install_failed"),
+    (Observed(started=False, terminal=DONE), "failed", "sandbox_failed"),
+    (Observed(stopped="shutdown", exit_code=0, terminal=DONE), "failed", "sandbox_failed"),
+    (Observed(stopped="cancelled", exit_code=0, terminal=DONE), "cancelled", "cancelled"),
+    (Observed(stopped="timed_out", exit_code=137), "failed", "timed_out"),
+    (Observed(stopped="out_of_disk", exit_code=137), "failed", "out_of_disk"),
+    (Observed(exit_code=137, out_of_memory=True, terminal=DONE), "failed", "out_of_memory"),
+    (Observed(exit_code=137), "failed", "out_of_memory"),
+    (Observed(startup_failed=True, exit_code=78), "failed", "startup_failed"),
+    (Observed(stopped="invalid_output", invalid_output="not JSON", exit_code=143), "failed", "invalid_output"),
+    (Observed(exit_code=0, terminal=DONE, saved=False), "failed", "save_failed"),
+    (Observed(exit_code=0, terminal=FAILED), "failed", "harness_failed"),
+    (Observed(exit_code=0, terminal=Terminal("incomplete", reason="max_output_tokens")), "incomplete", "max_output_tokens"),
+    (Observed(exit_code=2, terminal=DONE), "failed", "harness_error"),
+    (Observed(exit_code=0), "failed", "harness_error"),
+])
+def test_what_the_platform_saw_outranks_what_the_harness_said(seen: Observed, status: str, reason: str | None):
+    outcome = decide(seen)
+    assert (outcome.status, outcome.reason) == (status, reason)
+    assert decide(Observed(exit_code=0, terminal=FAILED)).code == "no_auth"
 
 
-def test_rows_are_checked_in_order_so_outside_observations_win() -> None:
-    everything = Observed(cancelled=True, timed_out=True, out_of_memory=True, save_failed=True, exit_code=0,
-                          terminal=DONE)
-    assert decide(everything).reason == "cancelled"
-    assert decide(Observed(timed_out=True, out_of_memory=True, exit_code=137, terminal=DONE)).reason == "timed_out"
-    assert decide(Observed(out_of_memory=True, save_failed=True, exit_code=137)).reason == "out_of_memory"
+def test_a_turn_is_always_a_valid_response_object():
+    request = {"model": "a/b/c/d", "input": "x", "metadata": {"mine": "1"}, "instructions": "be brief"}
+    common = {"id": "resp_1", "session_id": "sess_1", "created_at": 1, "model": "a/b/c/d", "request": request, "output": [], "usage": None}
+    queued = response_object(**common, status="queued", outcome=None)
+    assert queued["metadata"] == {"mine": "1", "hg_session": "sess_1"} and queued["instructions"] == "be brief" and queued["error"] is None
+    failed = response_object(**common, status="failed", outcome=Outcome("failed", "harness_failed", "the key was refused", "no_auth"))
+    assert failed["metadata"] == {"mine": "1", "hg_session": "sess_1", "hg_reason": "harness_failed", "hg_code": "no_auth"}
+    assert failed["error"] == {"code": "server_error", "message": "the key was refused"}
+    cut = response_object(**common, status="incomplete", outcome=Outcome("incomplete", "max_output_tokens", "", incomplete_reason="max_output_tokens"))
+    assert cut["incomplete_details"] == {"reason": "max_output_tokens"}
+    for response in (queued, failed, cut):
+        Response.model_validate(response)
+    assert envelope_event(failed, 7)["type"] == "response.failed" and envelope_event(queued, 0, "response.created")["sequence_number"] == 0
+    cancelled = response_object(**common, status="cancelled", outcome=Outcome("cancelled", "cancelled", "the turn was cancelled"))
+    assert envelope_event(cancelled, 3)["type"] == "response.incomplete"
 
 
-def test_a_package_failure_carries_its_code_and_its_own_words() -> None:
-    said = Terminal(kind="failed", code="provider_error", message="401 Unauthorized")
-    o = decide(Observed(exit_code=0, terminal=said))
-    assert (o.code, o.message) == ("provider_error", "401 Unauthorized")
-
-
-def test_an_incomplete_turn_carries_the_package_s_reason() -> None:
-    o = decide(Observed(exit_code=0, terminal=Terminal(kind="incomplete", reason="content_filter")))
-    assert (o.status, o.incomplete_reason) == ("incomplete", "content_filter")
-
-
-def test_a_message_says_what_happened_in_plain_words() -> None:
-    assert "time limit" in (decide(Observed(timed_out=True)).message or "")
-    assert "memory" in (decide(Observed(out_of_memory=True)).message or "")
-    assert "exited with code 3" in (decide(Observed(exit_code=3)).message or "")
-
-
-def test_a_kill_the_platform_did_not_make_is_the_memory_limit_even_before_docker_says_so() -> None:
-    # Docker can report a container's exit before the kernel's out-of-memory event reaches it, so its flag reads
-    # false for a container the limit killed. Nothing else in a sandbox sends SIGKILL (exit 137) but the platform,
-    # whose own stops are known and win, and the kernel's out-of-memory killer.
-    killed = decide(Observed(exit_code=137))
-    assert (killed.status, killed.reason) == ("failed", "out_of_memory")
-    assert "137" in (killed.message or "")
-    assert "memory limit" in (killed.message or "")
-    assert decide(Observed(timed_out=True, exit_code=137)).reason == "timed_out"
-    assert decide(Observed(out_of_disk=True, exit_code=137)).reason == "out_of_disk"
-    assert decide(Observed(invalid_output="half a line", exit_code=137)).reason == "out_of_memory"
+def test_a_harness_is_told_who_worked_on_the_session_since_it_last_did():
+    pasts = [("codex", ".codex"), ("claude-code", ".claude"), ("goose", None), ("goose", None)]
+    assert handover_line(pasts, "codex") == "Handover from goose. Before it: claude-code. Review /mind/.claude."
+    assert (handover_line(pasts, "goose"), handover_line([], "codex")) == ("", "")
+    assert handover_line(pasts[:1], "shell") == "Handover from codex. Review /mind/.codex."
+    assert (unseen(pasts, "codex"), unseen(pasts, "goose"), unseen(pasts, "new")) == (3, 0, 4)

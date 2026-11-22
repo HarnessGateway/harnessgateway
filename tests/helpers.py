@@ -1,99 +1,89 @@
-"""What several levels of test share: the shell package, a second harness made from it, and a running platform."""
+"""What the tests share: a smallest package, the lines a run prints, and a driver whose folders are real (the
+Docker driver's own file work, on this machine) and whose sandbox is this process: it writes the files and prints
+the lines a test tells it to."""
 
 import asyncio
-import contextlib
 import json
-import shutil
-import socket
-from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 
-import uvicorn
+from harnessgateway.domain import contract
+from harnessgateway.domain.package import PackageFile, write_archive
+from harnessgateway.domain.sandbox import SandboxPlan
+from harnessgateway.driver.base import DriverError, SandboxExit
+from harnessgateway.driver.folders import LocalFolders
 
-from harnessgateway import packaging
-from harnessgateway.domain.harness import Harness
-from harnessgateway.intake import Intake
-from harnessgateway.store.turns import Turn
-from harnessgateway.stores import Stores
-
-SHELL = Path(__file__).parents[1] / "packages" / "shell"
-SHELL_MODEL = "default/shell/none/none"
-
-
-async def add(stores: Stores, org: str, archive: bytes, *, environments: tuple[str, ...] = ("default",)) -> Harness:
-    """Add a harness, and have these environments carry it."""
-    harness = await stores.harnesses.add(org, archive)
-    await carry(stores, org, harness.name, environments=environments)
-    return harness
-
-
-async def carry(stores: Stores, org: str, *names: str, environments: tuple[str, ...] = ("default",)) -> None:
-    """Have environments carry these harnesses, besides those they carry."""
-    for environment in environments:
-        carried = (await stores.environments.get(org, environment)).harnesses
-        await stores.environments.update(org, environment, {"harnesses": sorted({*carried, *names})})
+MANIFEST = {"contract": 1, "name": "echo", "version": "1.0", "apis": []}
+TEXT = [
+    {"type": "response.output_item.added", "output_index": 0,
+     "item": {"id": "msg_1", "type": "message", "role": "assistant", "status": "in_progress", "content": []}},
+    {"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": "hel",
+     "logprobs": []},
+    {"type": "response.output_item.done", "output_index": 0,
+     "item": {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed",
+              "content": [{"type": "output_text", "text": "hello", "annotations": []}]}},
+]
+DONE = {"type": "hg.done", "usage": {"input_tokens": 3, "output_tokens": 2}}
 
 
-def variant(tmp_path: Path, name: str, **changes: Any) -> bytes:
-    """The shell package under another name: a second harness to switch to."""
-    folder = tmp_path / f"package-{name}"
-    shutil.copytree(SHELL, folder)
-    manifest = json.loads((folder / "harness.json").read_text())
-    (folder / "harness.json").write_text(json.dumps({**manifest, "name": name, **changes}))
-    return packaging.pack(folder)
+def package(manifest: dict = MANIFEST, **more: bytes) -> bytes:
+    return write_archive([PackageFile("harness.json", json.dumps(manifest).encode()),
+                          PackageFile("install", b"#!/bin/sh\n", True), PackageFile("run", b"#!/bin/sh\n", True),
+                          *(PackageFile(name, content) for name, content in more.items())])
 
 
-class Platform:
-    """The pieces of a running platform, and the few things a test does with them."""
-
-    def __init__(self, stores: Stores, org: str, driver: Any) -> None:
-        self.stores, self.org, self.driver = stores, org, driver
-        self.intake = Intake(stores)
-
-    async def ask(self, text: Any, model: str = SHELL_MODEL, **request: Any) -> Turn:
-        return await self.intake.accept(self.org, {"model": model, "input": text, **request})
-
-    async def final(self, turn: Turn, timeout: float = 30) -> Turn:
-        """Wait for a turn's final event, then read the turn."""
-        async def last() -> None:
-            async for _ in self.stores.turns.follow(self.org, turn.id):
-                pass
-        await asyncio.wait_for(last(), timeout)
-        return await self.stores.turns.get(self.org, turn.id)
-
-    async def run(self, text: Any, model: str = SHELL_MODEL, **request: Any) -> Turn:
-        return await self.final(await self.ask(text, model, **request))
-
-    async def started(self, turn: Turn, marker: str = "started") -> None:
-        """Wait until a running turn has printed `marker`."""
-        async with asyncio.timeout(20):
-            while not any(marker in event.get("delta", "") for event in await self.stores.turns.events(
-                    self.org, turn.id)):
-                await asyncio.sleep(0.05)
+def lines(*objects: dict) -> list[str]:
+    return [json.dumps(each) for each in objects]
 
 
-def text_of(turn: Turn) -> str:
-    return "".join(part["text"] for item in turn.output if item["type"] == "message" for part in item["content"])
+class FakeDriver(LocalFolders):
+    """What each sandbox was given (its plan, and the files under /turn) is kept for a test to look at."""
 
+    name = "fake"
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("", 0))
-        port: int = s.getsockname()[1]
-        return port
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.plans: list[SandboxPlan] = []
+        self.found: list[dict[str, str]] = []      # for each turn's sandbox: the files under /turn, by path
+        self.prints = lines(*TEXT, DONE)
+        self.writes: dict[str, bytes | int] = {}   # path under /work -> content, or the size of a file of zeros
+        self.exit, self.install_exit = SandboxExit(True, 0), SandboxExit(True, 0)
+        self.hold = False
+        self.stopped = asyncio.Event()
+        self.discarded: list[str] = []
 
+    def folder(self, plan: SandboxPlan, path: str) -> Path:
+        return self.path(next(mount.folder for mount in plan.mounts if mount.path == path))
 
-@contextlib.asynccontextmanager
-async def serving(app: Any, *, host: str = "127.0.0.1", port: int | None = None) -> AsyncIterator[str]:
-    """Serve an app over real HTTP for as long as the block lasts. Yields its address."""
-    port = port or free_port()
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.02)
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        await task
+    async def isolation(self) -> str:
+        return "none"
+
+    async def image_id(self, ref: str) -> str:
+        if ref.startswith("missing"):
+            raise DriverError(f"docker pull failed: {ref} not found")
+        return f"sha256:{ref}"
+
+    async def run(self, plan: SandboxPlan, on_stdout, on_stderr) -> SandboxExit:
+        self.plans.append(plan)
+        if plan.command.endswith("/install"):
+            await on_stderr("installing")
+            return self.install_exit
+        turn, work = self.folder(plan, contract.TURN), self.folder(plan, contract.WORK)
+        self.found.append({path.relative_to(turn).as_posix(): path.read_text() for path in turn.rglob("*") if path.is_file()})
+        for path, content in self.writes.items():
+            (work / path).parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, int):
+                with (work / path).open("wb") as file:
+                    file.truncate(content)
+            else:
+                (work / path).write_bytes(content)
+        for text in self.prints:
+            await on_stdout(text)
+        if self.hold:
+            await self.stopped.wait()
+        return self.exit
+
+    async def stop(self, name: str, grace_s: int) -> None:
+        self.stopped.set()
+
+    async def discard(self, name: str) -> None:
+        self.discarded.append(name)

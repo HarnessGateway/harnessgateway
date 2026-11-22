@@ -1,0 +1,7 @@
+{
+  "contract": 1,
+  "name": "shell",
+  "version": "1.0",
+  "description": "The smallest harness package: its agent is the shell. It runs the request's input as a command and answers with what the command printed. It calls no model, so it is named environment/shell/none/none.",
+  "apis": []
+}

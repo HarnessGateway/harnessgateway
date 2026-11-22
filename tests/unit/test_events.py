@@ -1,194 +1,87 @@
-"""Spec §8.7: the lines a package prints, and how the platform reads, numbers and validates them."""
+"""What a harness prints, and the kit that prints it."""
 
+import io
 import json
-from typing import Any
+import sys
 
 import pytest
-from openai.types.responses import ResponseOutputMessage, ResponseReasoningItem, ResponseUsage
 
-from harnessgateway.domain.events import LINE_MAX, LineError, OutputEvents, RunOutput, read_line
-
-MESSAGE = {"id": "msg_1", "type": "message", "role": "assistant", "status": "in_progress", "content": []}
-MESSAGE_DONE = {**MESSAGE, "status": "completed",
-                "content": [{"type": "output_text", "text": "Hi", "annotations": []}]}
-ADDED = {"type": "response.output_item.added", "output_index": 0, "item": MESSAGE}
-DELTA = {"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0,
-         "delta": "Hi", "logprobs": []}
-DONE = {"type": "response.output_item.done", "output_index": 0, "item": MESSAGE_DONE}
+from harnessgateway.domain.events import Event, LineError, Log, RunOutput, storable
+from harnessgateway.domain.outcome import Terminal
+from harnessgateway.kit import hgkit
+from tests.helpers import DONE, TEXT, lines
 
 
-def line(obj: Any) -> str:
-    return json.dumps(obj)
+def test_events_are_numbered_checked_and_gathered_into_the_output():
+    output = RunOutput()
+    read = [output.read(text) for text in lines(*TEXT, {"type": "hg.log", "text": "note"}, DONE)]
+    assert [type(each) for each in read] == [Event, Event, Event, Log, Terminal]
+    assert [each.data["sequence_number"] for each in read[:3]] == [2, 3, 4] and read[3].text == "note"
+    assert output.terminal.usage["total_tokens"] == 5 and output.terminal.usage["input_tokens_details"]["cached_tokens"] == 0
+    assert output.output() == [TEXT[2]["item"]] and output.events == 3
+    assert output.read(json.dumps(TEXT[0])) is None                    # whatever follows the terminal line is ignored
 
 
-def test_an_output_event_is_read_as_an_event() -> None:
-    read = read_line(line(DELTA))
-    assert (read.kind, read.event) == ("event", DELTA)
-
-
-def test_a_log_line_is_read_as_a_log() -> None:
-    read = read_line(line({"type": "hg.log", "text": "resuming session abc"}))
-    assert (read.kind, read.text) == ("log", "resuming session abc")
-
-
-def test_done_is_a_terminal_line_and_its_usage_is_completed() -> None:
-    read = read_line(line({"type": "hg.done", "usage": {"input_tokens": 10, "output_tokens": 5}}))
-    assert read.kind == "terminal"
-    assert read.terminal is not None
-    assert read.terminal.kind == "done"
-    usage = read.terminal.usage
-    assert usage is not None
-    assert (usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (10, 5, 15)
-    assert usage["input_tokens_details"]["cached_tokens"] == 0
-    assert usage["output_tokens_details"]["reasoning_tokens"] == 0
-    ResponseUsage.model_validate(usage)                         # the SDK accepts it as a complete usage object
-
-
-def test_done_without_usage_has_none() -> None:
-    read = read_line(line({"type": "hg.done"}))
-    assert read.terminal is not None
-    assert read.terminal.usage is None
-
-
-def test_incomplete_and_failed_are_terminal_lines() -> None:
-    incomplete = read_line(line({"type": "hg.incomplete", "reason": "max_output_tokens"})).terminal
-    failed = read_line(line({"type": "hg.failed", "code": "provider_error", "message": "401"})).terminal
-    assert incomplete is not None
-    assert failed is not None
-    assert (incomplete.kind, incomplete.reason) == ("incomplete", "max_output_tokens")
-    assert (failed.kind, failed.code, failed.message) == ("failed", "provider_error", "401")
-
-
-@pytest.mark.parametrize("text", [
-    "plain text",
-    "[1, 2]",
-    '"a string"',
-    line({"no": "type"}),
-    line({"type": 5}),
-    line({"type": "response.unknown.event"}),
-    line({"type": "hg.unknown"}),
-    line({"type": "response.created"}),                         # the platform writes response-level events
-    line({"type": "response.completed"}),
-    line({"type": "error"}),
-    line({"type": "hg.incomplete", "reason": "bored"}),
-    line({"type": "hg.failed", "code": "Bad Code", "message": "x"}),
-    line({"type": "hg.failed", "code": "ok"}),                  # a failure says what went wrong
-    line({"type": "hg.done", "usage": {"input_tokens": "many"}}),
-    line({"type": "hg.done", "surprise": 1}),
-    line({"type": "hg.log"}),
-    "",
+@pytest.mark.parametrize(("line", "why"), [
+    ("hello", "not JSON"), ("[1]", "JSON object with a type"), ('{"type": "response.completed"}', "written by the platform"),
+    ('{"type": "response.made_up"}', "not an event"), (json.dumps({**TEXT[0], "sequence_number": 9}), "does not number"),
+    ('{"type": "response.output_text.delta"}', "response.output_text.delta: "), ('{"type": "hg.log", "text": 1}', "hg.log has a text"),
+    ('{"type": "hg.done", "usage": {"input_tokens": "3"}}', "usage is an object"), ('{"type": "hg.done", "extra": 1}', "no field 'extra'"),
+    ('{"type": "hg.incomplete", "reason": "tired"}', "max_output_tokens"), ('{"type": "hg.failed", "code": "Bad Code", "message": "m"}', "hg.failed has a code"),
+    ('{"type": "hg.failed", "code": "ok"}', "has a message"),
 ])
-def test_a_line_that_is_not_allowed_is_refused(text: str) -> None:
-    with pytest.raises(LineError):
-        read_line(text)
+def test_a_line_the_contract_does_not_allow_is_refused(line: str, why: str):
+    with pytest.raises(LineError, match=why):
+        RunOutput().read(line)
 
 
-def test_a_nul_character_in_a_line_is_replaced_because_the_database_cannot_hold_one() -> None:
-    # An agent that prints a binary file prints NUL characters. They are valid JSON and not valid stored text.
-    event = read_line(line({**DELTA, "delta": "a\x00b"})).event
-    assert event is not None
-    assert event["delta"] == "a\ufffdb"
-    log = read_line(line({"type": "hg.log", "text": "x\x00"}))
-    assert log.text == "x\ufffd"
-    failed = read_line(line({"type": "hg.failed", "code": "cli_error", "message": "bad\x00"})).terminal
-    assert failed is not None
-    assert failed.message == "bad\ufffd"
+def test_text_that_was_cut_short_is_still_the_answer_so_far():
+    cut = RunOutput()
+    for text in lines(*TEXT[:2]):
+        cut.read(text)
+    assert cut.output() == [{**TEXT[0]["item"], "status": "incomplete", "content": [{"type": "output_text", "annotations": [], "text": "hel"}]}]
+    assert storable({"a\x00": ["b\x00c", 1]}) == {"a�": ["b�c", 1]}
 
 
-def test_a_line_over_the_limit_is_refused_without_being_parsed() -> None:
-    with pytest.raises(LineError, match="16 MiB"):
-        read_line("x" * (LINE_MAX + 1))
-
-
-def test_events_are_numbered_from_where_the_platform_left_off() -> None:
-    events = OutputEvents(first_sequence_number=2)
-    a = events.accept(dict(ADDED))
-    b = events.accept(dict(DELTA))
-    assert (a["sequence_number"], b["sequence_number"]) == (2, 3)
-    assert events.next_sequence_number == 4
-
-
-def test_an_event_that_does_not_fit_the_openai_type_is_refused() -> None:
-    events = OutputEvents(first_sequence_number=0)
-    broken = {k: v for k, v in DELTA.items() if k != "delta"}
-    with pytest.raises(LineError, match="delta"):
-        events.accept(broken)
-    assert events.next_sequence_number == 0                     # a refused event takes no number
-
-
-def test_a_package_may_not_number_events_itself() -> None:
-    with pytest.raises(LineError, match="sequence_number"):
-        OutputEvents(first_sequence_number=0).accept({**DELTA, "sequence_number": 9})
-
-
-def test_the_output_is_the_finished_items_in_order() -> None:
-    events = OutputEvents(first_sequence_number=0)
-    reasoning = {"id": "rs_1", "type": "reasoning", "summary": []}
-    events.accept({"type": "response.output_item.added", "output_index": 0, "item": reasoning})
-    events.accept({"type": "response.output_item.done", "output_index": 0, "item": reasoning})
-    events.accept({**ADDED, "output_index": 1})
-    events.accept({**DELTA, "output_index": 1})
-    events.accept({**DONE, "output_index": 1})
-    assert [item["type"] for item in events.output()] == ["reasoning", "message"]
-    assert events.output()[1] == MESSAGE_DONE
-
-
-def test_an_item_that_was_started_and_holds_nothing_is_not_output() -> None:
-    events = OutputEvents(first_sequence_number=0)
-    events.accept(dict(ADDED))
-    assert events.output() == []
-
-
-def test_text_cut_short_is_output_as_an_incomplete_item_in_its_place() -> None:
-    # A turn that was stopped or killed never finishes the text it was printing. What was said is still output.
-    events = OutputEvents(first_sequence_number=0)
-    thought = {"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 1,
-               "summary_index": 0, "delta": "thinking"}
-    events.accept({**ADDED, "output_index": 2})
-    events.accept({**DELTA, "output_index": 2})
-    events.accept({**DELTA, "output_index": 2})
-    events.accept({"type": "response.output_item.added", "output_index": 1,
-                   "item": {"id": "rs_1", "type": "reasoning", "summary": []}})
-    events.accept(thought)
-    events.accept({"type": "response.output_item.added", "output_index": 0,
-                   "item": {"id": "rs_0", "type": "reasoning", "summary": []}})
-    events.accept({"type": "response.output_item.done", "output_index": 0,
-                   "item": {"id": "rs_0", "type": "reasoning", "summary": []}})
-    said = DELTA["delta"] * 2
-    assert events.output() == [
-        {"id": "rs_0", "type": "reasoning", "summary": []},
-        {"id": "rs_1", "type": "reasoning", "status": "incomplete",
-         "summary": [{"type": "summary_text", "text": "thinking"}]},
-        {**MESSAGE_DONE, "status": "incomplete",
-         "content": [{"type": "output_text", "text": said, "annotations": []}]},
-    ]
-    ResponseReasoningItem.model_validate(events.output()[1])    # the SDK accepts both as output items
-    ResponseOutputMessage.model_validate(events.output()[2])
-
-
-def test_a_run_s_output_is_read_line_by_line_until_its_terminal_line() -> None:
-    """Spec §8.7, the five things the platform does with each line."""
-    run = RunOutput(first_sequence_number=2)
-    assert run.terminal is None
-
-    event = run.read(json.dumps(ADDED))
-    assert event is not None
-    assert (event.kind, event.event and event.event["sequence_number"]) == ("event", 2)
-    log = run.read('{"type": "hg.log", "text": "working"}')
-    assert log is not None
-    assert (log.kind, log.text) == ("log", "working")
-    assert run.read(json.dumps(DONE)) is not None
-
-    end = run.read('{"type": "hg.done"}')
-    assert end is not None
-    assert end.kind == "terminal"
-    assert run.terminal is not None
-    assert run.terminal.kind == "done"
-    assert run.read("anything at all, even this") is None                 # after the terminal line: ignored
-    assert [item["id"] for item in run.output()] == ["msg_1"]
-    assert run.next_sequence_number == 4
-
-
-def test_a_bad_line_in_a_run_s_output_is_refused() -> None:
-    with pytest.raises(LineError):
-        RunOutput(first_sequence_number=2).read("plain text")
+def test_everything_the_kit_prints_is_accepted(tmp_path, monkeypatch):
+    out, read = io.StringIO(), RunOutput()
+    emit = hgkit.Emitter(out)
+    emit.think("let me see")
+    emit.say("hel")
+    emit.say("lo")
+    emit.ran("ls", "a.txt\n", "", 0)
+    emit.wrote("a.txt", "+hi")
+    emit.edited("a.txt", "-hi\n+ho")
+    emit.deleted("a.txt")
+    emit.called("docs", "search", {"q": "x"}, output="found")
+    emit.called("docs", "search", error="down")
+    emit.used("browser", "open x", "opened")
+    emit.log("a note")
+    emit.done({"input_tokens": 3, "output_tokens": 2})
+    results = [read.read(line) for line in out.getvalue().splitlines()]
+    kinds = [item["type"] for item in read.output()]
+    assert kinds == ["reasoning", "message", "shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output",
+                     "apply_patch_call", "apply_patch_call_output", "apply_patch_call", "apply_patch_call_output", "mcp_call",
+                     "mcp_call", "custom_tool_call", "custom_tool_call_output"]
+    assert read.output()[1]["content"][0]["text"] == "hello" and isinstance(results[-1], Terminal) and read.terminal.kind == "done"
+    with pytest.raises(RuntimeError, match="has ended"):
+        emit.say("more")
+    turn = tmp_path / "turn"
+    (turn / "files" / "file_1").mkdir(parents=True)
+    (turn / "files" / "file_1" / "notes.txt").write_text("n")
+    (turn / "request.json").write_text(json.dumps({"model": "m", "instructions": "be brief", "reasoning": {"effort": "low"}, "input": [
+        {"role": "user", "content": [{"type": "input_text", "text": "first"}]}, {"role": "user", "content": "second"}]}))
+    (turn / "history.json").write_text("[]")
+    (turn / "handover.txt").write_text("Handover from codex.\n")
+    env = {"HG_TURN": str(turn), "HG_MODEL": "m", "HG_STATE": str(tmp_path / "state" / "echo")}
+    request, state = hgkit.Request(env), hgkit.State(env)
+    assert (request.prompt, request.instructions, request.effort, request.model) == ("first\n\nsecond", "be brief", "low", "m")
+    assert request.brief().split("\n\n") == ["Handover from codex.", "Instructions for this request:\nbe brief",
+                                              f"Files given with this request: {turn}/files/file_1/notes.txt", "first", "second"]
+    assert state.get("session") is None
+    state.set("session", "abc")
+    assert state.get("session") == "abc"
+    state.clear("session")
+    assert state.get("session") is None
+    cli = hgkit.Cli([sys.executable, "-c", "print('one'); print('two'); raise SystemExit(3)"])
+    assert list(cli.lines()) == ["one", "two"] and cli.exit_code == 3
