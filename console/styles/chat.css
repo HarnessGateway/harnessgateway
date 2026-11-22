@@ -17,9 +17,9 @@
 .chat .middle { display: flex; flex-direction: column; min-width: 0; height: 100%; }
 .chat-head { display: flex; align-items: center; gap: 6px; padding: 10px 14px 10px 20px; border-bottom: 1px solid var(--line); } .chat-head .square { flex: none; }
 .line-bar { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--faint); }
-.line-bar select, .line-bar input { height: 32px; width: auto; min-width: 0; flex: 1 1 0; border-color: transparent; background: var(--sunk); font: 500 13px var(--mono); }
+.line-bar select, .line-bar input { height: 32px; width: auto; min-width: 84px; flex: 1 1 0; border-color: transparent; background: var(--sunk); font: 500 13px var(--mono); }
 .line-bar .needs { flex: 2 1 0; color: var(--accent); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chat-head .session { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.chat-head .session { color: var(--faint); font-size: 11.5px; white-space: nowrap; min-width: 0; flex: 0 100 auto; overflow: hidden; text-overflow: ellipsis; }   /* it gives way to the model line */
 .chat .log { flex: 1; overflow: auto; padding: 28px 24px; }
 .hello { max-width: 520px; margin: 14vh auto 0; text-align: center; } .hello h1 { margin-bottom: 8px; }
 .composer { margin: 0 auto 18px; width: min(780px, calc(100% - 40px)); padding: 8px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
@@ -42,7 +42,7 @@
 .note { padding: 36px 20px; text-align: center; color: var(--muted); font-size: 13px; } .side .note.bad { color: var(--bad); }
 .files-list { padding: 10px; } .files-list .filter { margin-bottom: 8px; }
 .files-list .row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px; } .files-list .row:hover { background: var(--sunk); }
-.files-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; direction: rtl; text-align: left; }
+.files-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .files-list .sz { color: var(--faint); font-size: 12px; white-space: nowrap; } .files-list .dl { color: var(--faint); display: none; } .files-list .row:hover .dl { display: inline-flex; } .files-list .dl:hover { color: var(--ink); }
 .filecard { display: grid; gap: 6px; justify-items: center; padding: 60px 20px; text-align: center; } .filecard .big { font: 700 22px var(--mono); color: var(--faint); margin-bottom: 6px; } .filecard a, .cut a { color: var(--accent); }
 .cut { padding: 8px 14px; background: var(--warn-soft); color: var(--warn); font-size: 12.5px; }
