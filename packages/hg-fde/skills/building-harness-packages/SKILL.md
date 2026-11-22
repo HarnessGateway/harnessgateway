@@ -1,6 +1,6 @@
 ---
 name: building-harness-packages
-description: Build a HarnessGateway harness package for an agent CLI - research the CLI, write harness.json, install and run, check that it runs, and hand it over with a link that adds it. Use for any request to make, fix or change a harness package.
+description: Build a HarnessGateway harness package for an agent CLI - research the CLI, write harness.json, install and run, and hand it over with a link that adds it. Use for any request to make, fix or change a harness package.
 ---
 
 # Building a harness package
@@ -63,34 +63,12 @@ of `/harness/run`:
 Add a `README.md`: what it needs from an image, which APIs it speaks, which fields of the request it honours, and
 what must be set.
 
-## 5. Check that it runs
-
-```
-python3 /harness/skills/building-harness-packages/verify.py /work/<name>
-```
-
-It runs the package's `install`, then a hello-world turn, and holds every line to the schema the platform checks a
-`run` by. It ends with `VERIFIED`, with `NOT VERIFIED` and why, or with `INSTALL VERIFIED ONLY` when this
-session's provider speaks none of the CLI's APIs. Give it ten minutes: your shell tool stops a command after two
-unless you ask for more. Fix what it names and run it again.
-
-Then try a second turn, and anything else the README says the package does:
-
-```
-python3 /harness/skills/building-harness-packages/verify.py /work/<name> --say "What did I just ask you?"
-python3 /harness/skills/building-harness-packages/verify.py /work/<name> --new --request /work/.notes/request.json
-```
-
-`--say` is one more turn in the same session; `--request` sends a Responses request of your writing; `--new`
-starts a new session; `--stop-after 5` stops a turn the way a cancelled one is stopped; `--shape <type>` prints
-the fields of any item or event. When it is verified, remove `/work/.trial`.
-
-## 6. Hand over
+## 5. Hand over
 
 End your reply with this, the package's own values filled in. Write the link exactly as it is here, with only the
 name changed.
 
-> **`<name>` `<version>` is ready.** It speaks `<apis>`; verified here on `<the API that was run>`.
+> **`<name>` `<version>` is ready to add.** It speaks `<apis>`.
 >
 > **[Add `<name>` as a harness](/console/#/harnesses/add/<name>)**
 >
@@ -98,5 +76,6 @@ name changed.
 >
 > Then send it a first message: `<environment>/<name>/<provider>/<model>`.
 
-and after it, in a few lines: which fields of the request it honours, what its environment's image must have, what
-must be set, and what was not tried.
+and after it, in a few lines: which fields of the request it honours, what its environment's image must have, and
+what must be set. The person adds it and tries it on the platform: if it fails there, they will paste the turn's
+log, and you fix the package in `/work/<name>/` and hand it over again.

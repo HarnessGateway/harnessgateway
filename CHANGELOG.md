@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.1.2
+
+`hg-fde` (now `2.1.330-3`) builds a package and hands it over; it no longer verifies it. Its `verify.py` is gone,
+and so is the step that ran it. Whoever adds the package tries it on the platform, and comes back with the turn's
+log if it fails. Its method is still a skill it loads, apart from `AGENTS.md`, which says who it is.
+
 ## 5.1.1
 
 `hg-fde` (now `2.1.330-2`) is made simple again. It does one thing: it researches an agent CLI, writes

@@ -1,6 +1,6 @@
 [project]
 name = "harnessgateway"
-version = "5.1.1"
+version = "5.1.2"
 description = "Agent infrastructure: any agent harness CLI, run in a sandbox, behind the OpenAI Responses API."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -56,9 +56,8 @@ ignore = ["S101"]                # assert states what must hold; it guards nothi
 [tool.ruff.lint.per-file-ignores]
 "src/harnessgateway/store/**" = ["S608"]                # queries are built from constants; every value is a parameter
 "tests/**" = ["E501", "S"]                            # a test reads better with its assertion on one line
-"packages/**" = ["S603", "S108"]                     # HG FDE's verifier runs a package's programs: that is its job
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "packages"]
+files = ["src"]

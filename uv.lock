@@ -278,7 +278,7 @@ wheels = [
 
 [[package]]
 name = "harnessgateway"
-version = "5.1.1"
+version = "5.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
