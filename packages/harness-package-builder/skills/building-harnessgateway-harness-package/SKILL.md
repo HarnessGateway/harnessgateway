@@ -153,8 +153,12 @@ A caller's first request is the first turn of a session that holds nothing: no c
 earlier turn left. A CLI often needs one to have run before a thing works (a tool list it caches, a server it has
 met). What worked only after other turns does not work for a caller, and your package must make it work on the
 first: prepare in `run` whatever the CLI would otherwise have had to learn. A field you could not try this way is
-"not tried" in the README, not "honoured". When it is verified, remove `/work/.trial`: an installed CLI is
-hundreds of megabytes saved with every turn.
+"not tried" in the README, not "honoured".
+
+**After your last change to `run`, try every field again.** A flag added for one field breaks another, and a
+trial from before the change proves nothing about the package you hand over. Keep each request you tried in
+`/work/.notes/`, so that trying them all again is one command each. When it is verified, remove `/work/.trial`:
+an installed CLI is hundreds of megabytes saved with every turn.
 
 ## 4. Hand over
 
