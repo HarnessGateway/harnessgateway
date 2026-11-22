@@ -53,6 +53,25 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
     assert await platform.grants.policy(turn.id, token) is None       # and what it was granted is worth nothing
 
 
+async def test_a_turn_that_needs_its_caller_ends_with_the_question_and_the_next_request_answers_it(platform: Platform):
+    """The Responses API has no status for a response that waits: the turn ends, completed, with the call as its
+    last item, and the answer is the next request's input, which reaches the harness as it was sent."""
+    await ready(platform)
+    driver, tools = platform.driver, [{"type": "function", "name": "lookup", "parameters": {"type": "object"}, "strict": False}]
+    asks = {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": '{"q": "weather"}'}
+    driver.prints = lines({"type": "response.output_text.delta", "delta": "Let me look."}, asks, {"type": "response.completed"})
+    asked = await run(platform, tools=tools)
+    said, call = asked.response()["output"]
+    assert (asked.status, said["content"][0]["text"], call["type"], call["call_id"]) == ("completed", "Let me look.", "function_call", "call_1")
+    assert json.loads(driver.found[-1]["request.json"])["tools"] == tools           # the harness is told the caller's tools
+    answer = [{"type": "function_call_output", "call_id": "call_1", "output": "sunny"}]
+    driver.prints = lines({"type": "response.output_text.delta", "delta": "It is sunny."}, {"type": "response.completed"})
+    answered = await run(platform, input=answer, tools=tools, previous_response_id=asked.id)
+    assert (answered.session_id, answered.response()["output"][0]["content"][0]["text"]) == (asked.session_id, "It is sunny.")
+    assert json.loads(driver.found[-1]["request.json"])["input"] == answer
+
+
+
 async def test_a_session_continues_forks_and_changes_harness(platform: Platform):
     await ready(platform)
     driver = platform.driver

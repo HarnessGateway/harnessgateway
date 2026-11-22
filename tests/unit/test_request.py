@@ -16,6 +16,9 @@ def test_what_the_responses_api_accepts_is_accepted_as_it_was_sent():
     assert validate(full) is full
     listed = {**BODY, "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}, {"type": "input_file", "file_id": "file_1"}]}]}
     assert validate(listed) is listed and file_ids(listed) == ["file_1"] and file_ids(BODY) == []
+    answer = {**BODY, "previous_response_id": "resp_x", "input": [{"type": "function_call_output", "call_id": "c", "output": "sunny"},
+                                                                 {"type": "mcp_approval_response", "approval_request_id": "a", "approve": True}]}
+    assert validate(answer) is answer                                  # what a turn ended by asking, answered
 
 
 @pytest.mark.parametrize(("change", "param"), [
