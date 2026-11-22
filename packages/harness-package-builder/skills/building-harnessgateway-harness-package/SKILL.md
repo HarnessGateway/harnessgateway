@@ -141,8 +141,20 @@ python3 /harness/skills/building-harnessgateway-harness-package/verify.py /work/
 The first shows it remembers; the second that a command and a file are printed as the items they are; and
 `--request` sends a Responses request of your writing (`instructions`, `reasoning`, `tools`, an `input` that is a
 list), to try each field you said the package honours. `--stop-after 5` stops a turn the way a cancelled one is
-stopped. A field you could not try is "not tried" in the README, not "honoured". When it is verified, remove
-`/work/.trial`: an installed CLI is hundreds of megabytes saved with every turn.
+stopped.
+
+**Try each field as the first turn of a new session**, with `--new`:
+
+```
+python3 /harness/skills/building-harnessgateway-harness-package/verify.py /work/<name> --new --request /work/.notes/request.json
+```
+
+A caller's first request is the first turn of a session that holds nothing: no cache, no config, no login an
+earlier turn left. A CLI often needs one to have run before a thing works (a tool list it caches, a server it has
+met). What worked only after other turns does not work for a caller, and your package must make it work on the
+first: prepare in `run` whatever the CLI would otherwise have had to learn. A field you could not try this way is
+"not tried" in the README, not "honoured". When it is verified, remove `/work/.trial`: an installed CLI is
+hundreds of megabytes saved with every turn.
 
 ## 4. Hand over
 

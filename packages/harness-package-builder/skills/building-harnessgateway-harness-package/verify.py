@@ -5,6 +5,7 @@
                                             turn in a new session, on this session's provider
     verify.py <folder> --say "<prompt>"     one more turn in the same session: to try resuming, a command, a file
         --request FILE      the Responses request to send, in place of one made from the prompt: any field, any input
+        --new               in a new session: nothing a turn before it left (a cache, a config, a session) is there
         --stop-after S      stop that turn after S seconds, the way a cancelled turn is stopped
         --set NAME=VALUE    a setting, or any other variable the turn should be given (repeatable)
     verify.py --shape <type>                what a line of that type holds: an output item, or a stream event
@@ -185,10 +186,12 @@ def install(package: Path, manifest: dict[str, Any]) -> bool:
 
 
 def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_after: float | None,
-         given: list[str]) -> tuple[list[str], str]:
+         given: list[str], new: bool = False) -> tuple[list[str], str]:
     """Run one turn. Returns what is wrong with it (nothing, when the platform would take it) and what it said."""
     root, env = laid_out(package, manifest)
     for folder in ("mind", "work", "turn"):
+        if new:
+            shutil.rmtree(root / folder, ignore_errors=True)
         (root / folder).mkdir(parents=True, exist_ok=True)
     settings = manifest.get("settings") or {}
     env.update({name: str(declared["default"]) for name, declared in settings.items()
@@ -252,6 +255,7 @@ def main() -> int:
     parser.add_argument("folder", type=Path, nargs="?")
     parser.add_argument("--say", metavar="PROMPT")
     parser.add_argument("--request", type=Path, metavar="FILE")
+    parser.add_argument("--new", action="store_true")
     parser.add_argument("--stop-after", type=float)
     parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE")
     parser.add_argument("--shape", metavar="TYPE")
@@ -269,7 +273,7 @@ def main() -> int:
     label = f"{manifest['name']} {manifest['version']}"
     if args.say is not None or args.request is not None:
         request = json.loads(args.request.read_text()) if args.request else {"input": args.say}
-        wrong, _ = turn(package, manifest, request, args.stop_after, args.set)
+        wrong, _ = turn(package, manifest, request, args.stop_after, args.set, args.new)
         print("verify: " + ("every line is one the platform takes." if not wrong
                             else "PROBLEMS:\n  " + "\n  ".join(wrong)))
         return 1 if wrong else 0

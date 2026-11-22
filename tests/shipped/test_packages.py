@@ -97,7 +97,8 @@ def test_a_package_is_verified_by_its_install_and_a_hello_world(tmp_path: Path):
     assert again.returncode == 0 and "Before this you said: Say hello in one short sentence." in again.stdout
     (tmp_path / "request.json").write_text(json.dumps({"input": [{"role": "user", "content": "hi"}], "instructions": "be brief"}))
     whole = verify(tmp_path, package, "--request", str(tmp_path / "request.json"), api="anthropic")     # any request at all
-    assert whole.returncode == 0 and "Told: be brief" in whole.stdout
+    assert whole.returncode == 0 and "Told: be brief" in whole.stdout and "Before this you said: And again?" in whole.stdout
+    assert "Before this you said: nothing" in verify(tmp_path, package, "--new", "--say", "First?", api="anthropic").stdout
     assert "Before this you said: nothing" in verify(tmp_path, package, api="anthropic").stdout      # verifying starts over
     shape = json.loads(verify(tmp_path, "--shape", "shell_call_output").stdout)
     assert shape["required"] == ["call_id", "output", "status", "type"] and "is not a line a run prints" in verify(tmp_path, "--shape", "nope").stderr

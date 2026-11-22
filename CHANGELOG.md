@@ -29,10 +29,10 @@ version 1, because nothing has been built on it yet.
   of the Responses API's (`rate_limit_exceeded`, say), and `server_error` otherwise; `metadata.hg_code` has it
   either way.
 - The handover line is given once, as `/turn/handover.txt`; the variable `HG_HANDOVER` is gone.
-- `shell` and `harness-package-builder` (now `2.1.330-4`) are written this way. The builder designs each package
+- `shell` and `harness-package-builder` (now `2.1.330-5`) are written this way. The builder designs each package
   from the request and the response: which fields of the request the CLI can honour, and which output item each
-  thing it reports is. Its verifier holds every line to the schema, sends any request (`--request`), and shows the
-  shape of any item (`--shape`).
+  thing it reports is. Its verifier holds every line to the schema, sends any request (`--request`), as the first
+  turn of a new session when asked (`--new`), and shows the shape of any item (`--shape`).
 
 ## 5.0.2
 
