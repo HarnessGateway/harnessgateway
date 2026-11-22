@@ -25,7 +25,8 @@ const api = async (method, path, body) => {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  page.on("console", message => { if (message.type() === "error" && !/401/.test(message.text())) errors.push(message.text()); });
+  // A refused sign-in is tried on purpose, and a message that interrupts waits out the turn it stopped (409).
+  page.on("console", message => { if (message.type() === "error" && !/\b(401|409)\b/.test(message.text())) errors.push(message.text()); });
   page.setDefaultTimeout(15000);
 
   const check = async (name, run) => {
@@ -40,10 +41,12 @@ const api = async (method, path, body) => {
   const tab = async label => { await page.click(`.tabs a:has-text("${label}")`); await page.waitForTimeout(200); };
   const labelled = label => `div:has(> label:text-is("${label}")) > input`;
   const picked = async action => { const [chooser] = await Promise.all([page.waitForEvent("filechooser"), action()]); return chooser; };
+  const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("hg.chats")));       // the chat's own list, newest first
   const say = async words => {
+    const said = await page.locator(".said").count();
     await page.fill(".composer textarea", words);
     await page.press(".composer textarea", "Enter");
-    await page.waitForSelector(`.said:has-text(${JSON.stringify(words.slice(0, 30))})`);
+    await page.waitForFunction(count => document.querySelectorAll(".said").length > count, said);
     await page.waitForSelector("button[title=Send]:visible", { timeout: 180000 });
     return page.locator(".reply").last();
   };
@@ -267,46 +270,158 @@ const api = async (method, path, body) => {
     expect(text.includes("hello from the console") && text.includes("started"), `the reply is "${text.slice(0, 80)}"`);
     expect(await reply.locator(".who").textContent() === LINE, "the reply does not name the model line it ran on");
     expect(await reply.locator(".state").count() === 0, "a completed reply still shows a state");
-    await page.waitForSelector(".made .file:has-text('note.txt')");
-    const chats = await page.evaluate(() => JSON.parse(localStorage.getItem("hg.chats")));
-    expect(chats[0].session && chats[0].exchanges[0].response, "the chat did not keep its session and its response");
+    await page.waitForSelector(".files-list .row:has-text('note.txt')");
+    expect(await page.locator(".tiles .tile:has-text('note.txt')").count() === 1, "the file the turn made is not shown under its reply");
+    const chats = await stored();
+    expect(chats[0].session && chats[0].exchanges[0].response && chats[0].exchanges[0].status === "completed", "the chat did not keep its session and its response");
+    expect(await page.textContent(".chat-head .session") === chats[0].session, "the chat does not show its session");
     made.sessions.add(chats[0].session);
   });
   await check("the next message continues the same session", async () => {
     const reply = await say("cat note.txt && echo second >> note.txt && wc -l < note.txt");
     expect((await reply.locator(".text").textContent()).includes("hello from the console"), "the file of the first turn is not there");
-    const chats = await page.evaluate(() => JSON.parse(localStorage.getItem("hg.chats")));
+    const chats = await stored();
     expect(chats[0].exchanges.length === 2 && (await api("GET", `/v1/sessions/${chats[0].session}`)).turns === 2, "the second message is not the session's second turn");
     await shot("09-chat");
   });
-  await check("what an agent prints is text, never markup", async () => {
-    const reply = await say("echo '<b id=planted>bold</b><img src=x onerror=window.planted=1>'");
-    expect((await reply.locator(".text").textContent()).includes("<b id=planted>"), "the reply does not show the text");
-    expect(await page.locator("#planted").count() === 0 && !(await page.evaluate(() => window.planted)), "output became markup");
+  await check("a reply is drawn as markdown, and nothing in it runs", async () => {
+    const reply = await say("printf '## Done\\n\\n**bold** and `code` and [a link](https://example.com)\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |\\n\\n- [x] one\\n- [ ] two\\n\\n```python\\nprint(1)\\n```\\n\\n<b id=planted>kept</b><img src=https://example.com/x.png onerror=window.planted=1><script>window.planted=2</script>\\n'");
+    const text = reply.locator(".text");
+    expect(await text.locator(".heading").textContent() === "Done" && await text.locator("p b").first().textContent() === "bold", "the heading or the strong words are not drawn");
+    expect(await text.locator("table td").count() === 2 && await text.locator("li.task input").count() === 2, "the table or the task list is not drawn");
+    expect(await text.locator("a[href='https://example.com'][target=_blank][rel~=noopener]").count() === 1, "the link does not open apart");
+    expect((await text.locator(".cb code").textContent()).includes("print(1)") && await text.locator(".cb .cbh").textContent() === "pythonCopy", "the code block is not drawn with its language and Copy");
+    expect((await text.textContent()).includes("kept"), "words inside a kept tag are lost");
+    expect(await page.locator("#planted").count() === 0 && await text.locator("img, script").count() === 0 && !(await page.evaluate(() => window.planted)), "what the agent printed became markup that runs");
   });
-  await check("a failed turn says why", async () => {
+  await check("code is highlighted, mathematics typeset and a diagram drawn, by libraries the page is allowed to load", async () => {
+    const reply = await say("printf 'Area: $\\pi r^2$\n\n```python\ndef area(r):\n    return 3.14 * r * r\n```\n\n```mermaid\ngraph TD; A-->B;\n```\n'");
+    await reply.locator(".cb code .hljs-keyword").first().waitFor({ timeout: 30000 });
+    await reply.locator(".math .katex").waitFor({ timeout: 30000 });
+    await page.frameLocator(".reply .cb.drawn iframe.viewer").last().locator("svg").waitFor({ timeout: 60000 });
+  });
+  await check("a failed turn says why, and a reply can be copied", async () => {
     const reply = await say("exit 3");
-    await reply.locator(".state:has-text('failed')").waitFor();
-    expect((await reply.locator(".state").textContent()).includes("code 3"), "the failure does not say why");
+    await reply.locator(".state.bad:has-text('code 3')").waitFor();
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.locator(".reply").nth(1).hover();
+    await page.locator(".reply").nth(1).locator(".actions button[title=Copy]").click();
+    expect((await page.evaluate(() => navigator.clipboard.readText())).includes("hello from the console"), "the reply was not copied");
   });
-  await check("a chat is read again from the API when the page is opened again", async () => {
+  await check("a file is given with a message, and the harness finds it", async () => {
+    await page.setInputFiles(".composer input[type=file]", { name: "given.txt", mimeType: "text/plain", buffer: Buffer.from("from the person") });
+    await page.waitForSelector(".composer .pending .tile:has-text('given.txt') small:has-text('B')");
+    const reply = await say("cat /turn/files/*/given.txt");
+    expect((await reply.locator(".text").textContent()).includes("from the person"), "the harness did not find the file");
+    expect(await page.locator(".said").last().locator(".attached:has-text('given.txt')").count() === 1 && await page.locator(".composer .pending .tile").count() === 0, "the file is not shown with the message");
+  });
+  await check("what a turn builds opens beside the chat, and runs apart from the console", async () => {
+    await say("mkdir -p site && printf '<h1 id=t>built</h1><script>document.getElementById(\"t\").textContent += \" and ran: \" + (function () { try { return sessionStorage.length; } catch (e) { return \"no storage\"; } })()</script>' > site/index.html; printf '# Notes\\n\\nSee [the page](site/index.html).\\n' > notes.md; printf 'x,y\\n1,2\\n3,\"4,5\"\\n' > data.csv");
+    await page.waitForSelector(".side .ph .title:has-text('site/index.html')");
+    const frame = page.frameLocator(".side .pb iframe");
+    await frame.locator("h1:has-text('built and ran: no storage')").waitFor();                     // it runs, and has no origin
+    expect(!(await page.getAttribute(".side .pb iframe", "sandbox")).includes("allow-same-origin"), "the page is not sandboxed");
+    expect((await page.getAttribute(".side .ph a[title=Download]", "href")).endsWith("site/index.html?download"), "the page cannot be downloaded");
+    await page.click(".side .ph button[title='Show the code']");
+    await page.waitForSelector(".side .codeview:has-text('<h1 id=t>built</h1>')");
+    expect((await page.locator(".tiles").last().locator(".tile b").allTextContents()).join().startsWith("index.html,notes.md,data.csv"), "the turn's files are not shown best first");
+    await shot("09-chat-preview");
+  });
+  await check("a document's links open the session's files, and a table is drawn", async () => {
+    await page.locator(".tiles").last().locator(".tile:has-text('notes.md')").click();
+    await page.click(".side .doc a.work");
+    await page.waitForSelector(".side .ph .title:has-text('site/index.html')");
+    await page.click(".side .segment button:has-text('Files')");
+    await page.waitForSelector(".files-list .row");
+    expect((await page.locator(".files-list .row .nm").allTextContents()).includes("site/index.html"), "the files are not listed");
+    await page.click(".files-list .row:has-text('data.csv')");
+    await page.waitForSelector(".side table.grid tbody tr >> nth=1");
+    expect((await page.locator(".side table.grid tbody tr").last().locator("td").allTextContents()).join("|") === "2|3|4,5", "the table is not read as CSV");
+    await page.click(".side .ph button[title=Close]");
+    expect(await page.isHidden(".side"), "the panel does not close");
+    await page.click(".chat-head button[title=\"The session's files\"]");
+    await page.waitForSelector(".side:visible");
+  });
+  await check("a turn is stopped, and a message sent while one runs interrupts it and steers", async () => {
+    await page.fill(".composer textarea", "echo begun; sleep 60; echo never");
+    await page.press(".composer textarea", "Enter");
+    await page.waitForSelector(".reply .text:has-text('begun')");
+    expect(await page.getAttribute(".composer textarea", "placeholder") === "Send a message to interrupt and steer", "the composer does not say a message would interrupt");
+    await page.click(".composer button[title=Stop]");
+    await page.locator(".reply").last().locator(".state:has-text('Stopped')").waitFor();
+    await page.fill(".composer textarea", "echo again; sleep 60; echo never");
+    await page.press(".composer textarea", "Enter");
+    await page.waitForSelector(".reply .text:has-text('again')");
+    const reply = await say("echo steered");
+    expect((await reply.locator(".text").textContent()).includes("steered"), "the message that interrupted was not answered");
+    await page.locator(".reply").nth(await page.locator(".reply").count() - 2).locator(".state:has-text('Interrupted')").waitFor();
+    const chats = await stored();
+    expect((await api("GET", `/v1/sessions/${chats[0].session}`)).turns === chats[0].exchanges.length, "an interrupted turn left the session");
+  });
+  await check("a chat is read again from the API when the page is opened again, and a running turn is followed again", async () => {
+    await page.fill(".composer textarea", "sleep 4; echo late");
+    await page.press(".composer textarea", "Enter");
+    await page.waitForSelector(".reply .working");
     await page.reload();
-    await page.waitForSelector(".said >> nth=3");
-    await page.waitForSelector(".reply >> nth=3");
+    await page.waitForSelector(".reply .text:has-text('late')", { timeout: 60000 });
     expect((await page.locator(".reply .text").first().textContent()).includes("hello from the console"), "the first reply is not shown again");
-    expect(await page.locator(".list a.on").count() === 1, "the open chat is not marked in the list");
-    expect(await page.inputValue("select[title=Environment]") === ENVIRONMENT, "the chat's model line is not picked again");
+    expect(await page.locator(".rows a.on").count() === 1 && await page.inputValue("select[title=Environment]") === ENVIRONMENT, "the open chat or its model line is not shown again");
+    await page.waitForSelector("button[title=Send]");
+  });
+  await check("a message is taken back, edited and sent again, in a new branch", async () => {
+    const before = (await stored())[0];
+    await page.locator(".said").last().hover();
+    await page.locator(".said").last().locator("button[title^=Rewind]").click();
+    await page.waitForSelector(".notice:has-text('Rewound')");
+    expect(await page.inputValue(".composer textarea") === "sleep 4; echo late", "the message's words are not back in the composer");
+    expect(await page.locator(".said").count() === before.exchanges.length - 1, "the message is still in the conversation");
+    await page.fill(".composer textarea", "");
+    const reply = await say("cat note.txt; echo edited");
+    expect((await reply.locator(".text").textContent()).includes("edited") && (await reply.locator(".text").textContent()).includes("hello from the console"), "the branch does not have the session's files");
+    const after = (await stored())[0];
+    expect(after.session !== before.session && after.exchanges.length === before.exchanges.length, "the edited message did not start a branch of its own");
+    made.sessions.add(after.session);
+  });
+  await check("a reply is branched into a chat of its own, and a chat is renamed", async () => {
+    await page.locator(".reply").first().hover();
+    await page.locator(".reply").first().locator("button[title^=Branch]").click();
+    await page.waitForSelector(".notice:has-text('A branch')");
+    expect(await page.locator(".rows a").count() === 2 && await page.locator(".said").count() === 1, "the branch is not a chat of its own that ends at the reply");
+    const reply = await say("cat note.txt | head -1; echo on the branch");
+    expect((await reply.locator(".text").textContent()).includes("hello from the console"), "the branch did not continue from the reply");
+    const chats = await stored();
+    expect(chats[0].session !== chats[1].session && chats[1].exchanges.length > 1, "the chat it came from was changed");
+    made.sessions.add(chats[0].session);
+    await page.locator(".rows a.on").hover();
+    await page.locator(".rows a.on button[title=Rename]").click();
+    await page.fill(".rows input.rename", "The branch");
+    await page.press(".rows input.rename", "Enter");
+    expect(await page.locator(".rows a.on span").textContent() === "The branch" && (await stored())[0].title === "The branch", "the chat was not renamed");
+  });
+  await check("the list of chats is hidden and shown, and stays as it was left", async () => {
+    await page.click(".list-head button[title='Hide chats']");
+    expect(await page.isHidden(".chat .list"), "the list is still shown");
+    await page.reload();
+    await page.waitForSelector(".chat.nolist .chat-head button[title='Show chats']");
+    await page.click(".chat-head button[title='Show chats']");
+    await page.waitForSelector(".chat .list:visible");
   });
   let direct = "";
-  await check("a session another application started is under Sessions, and not in the chat", async () => {
-    const response = await api("POST", "/v1/responses", { model: LINE, input: "echo started by the API" });
+  await check("a session another application started is under Sessions, not in the chat, and is continued from there", async () => {
+    const response = await api("POST", "/v1/responses", { model: LINE, input: "echo started by the API > api.txt; cat api.txt" });
     direct = response.metadata.hg_session;
     made.sessions.add(direct);
     await go("#/chat");
-    expect(await page.locator(".list a").count() === 1, "the chat lists a session it did not start");
+    expect(await page.locator(".rows a").count() === 2, "the chat lists a session it did not start");
     await go("#/sessions");
     await page.waitForSelector(`.listing a[href="#/sessions/${direct}"]`);
     await shot("10-sessions");
+    await go(`#/sessions/${direct}`);
+    await page.click("button:has-text('Continue in chat')");
+    await page.waitForSelector(".notice:has-text('started elsewhere')");
+    const reply = await say("cat api.txt");
+    expect((await reply.locator(".text").textContent()).includes("started by the API"), "the chat did not continue the session");
+    expect((await api("GET", `/v1/sessions/${direct}`)).turns === 2, "the message did not go to that session");
   });
 
   // sessions
@@ -346,11 +461,13 @@ const api = async (method, path, body) => {
   // tidying up, through the console
   await check("a chat is removed from the browser, and its session stays", async () => {
     await go("#/chat");
-    await page.hover(".list a");
-    await page.click(".list a button");
-    await page.click(".dialog button.primary");
-    await page.waitForSelector(".list a", { state: "detached" });
-    expect((await api("GET", `/v1/sessions/${[...made.sessions][0]}`)).turns === 4, "removing the chat removed its session");
+    for (let left = await page.locator(".rows a").count(); left > 0; left--) {
+      await page.locator(".rows a").first().hover();
+      await page.locator(".rows a").first().locator("button[title^=Remove]").click();
+      await page.click(".dialog button.primary");
+      await page.waitForFunction(count => document.querySelectorAll(".rows a").length === count, left - 1);
+    }
+    expect((await api("GET", `/v1/sessions/${[...made.sessions][0]}`)).turns >= 4, "removing the chat removed its session");
   });
   await check("the environment, the harness and the provider are deleted", async () => {
     for (const [kind, name] of [["environments", ENVIRONMENT], ["harnesses", HARNESS]]) {
