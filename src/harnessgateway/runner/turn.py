@@ -157,8 +157,9 @@ class TurnRunner:
                     "input": earlier.request["input"], "output": earlier.output}
                    for earlier in chain[len(chain) - unseen(pasts, turn.harness):]
                    if earlier.request is not None]               # a deleted turn has nothing to show
-        inputs = {"request.json": json.dumps(turn.request).encode(), "history.json": json.dumps(history).encode(),
-                  "handover.txt": handover.encode()}
+        previous = chain[-1].response() if chain and chain[-1].deleted_at is None else None
+        inputs = {"request.json": json.dumps(turn.request).encode(), "previous.json": json.dumps(previous).encode(),
+                  "history.json": json.dumps(history).encode(), "handover.txt": handover.encode()}
         if environment.scripts.startup:            # run as a program: its first line may name its interpreter
             inputs["startup.sh"] = (environment.scripts.startup.rstrip() + "\n").encode()
         try:
