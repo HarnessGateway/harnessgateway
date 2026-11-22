@@ -1,9 +1,16 @@
 // Environments: a card for each, and an editor with a tab for each part. Edits are a working copy across all the
 // tabs, saved once. A new environment, or one read from a file, is a working copy too: every tab is there before
 // it exists. Out of the console and back in, an environment is one JSON file.
-import { all, del, get, put } from "./api.js";
-import { NEW, again, code, drafts, frame, rows } from "./edit.js";
-import { add, clear, confirm, download, fail, field, h, icon, lines, mono, pickFile, pill, toast, top } from "./ui.js";
+import { code } from "../components/code.js";
+import { drafts, frame, NEW } from "../components/editor.js";
+import { confirm, fail, toast } from "../components/feedback.js";
+import { field, mono, pill, top } from "../components/layout.js";
+import { rows } from "../components/rows.js";
+import { all, del, get, put } from "../lib/api.js";
+import { add, clear, h, icon } from "../lib/dom.js";
+import { download, pickFile } from "../lib/files.js";
+import { lines } from "../lib/format.js";
+import { again } from "../lib/route.js";
 
 const TABS = ["General", "Resources", "Network", "Variables", "Secrets", "Scripts", "Harnesses"];
 const BLANK = { image: "", harnesses: [], cpus: 2, memory_mb: 4096, pids: 512, tmp_mb: 1024, disk_mb: 10240, timeout_s: 1800,

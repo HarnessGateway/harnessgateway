@@ -1,8 +1,10 @@
 // Providers: a name, the API shape it speaks at a base URL, and a key. A provider may speak more than one shape
 // with the same key. The key is write-only: it is sent when typed, and kept when left empty.
-import { all, del, put } from "./api.js";
-import { again } from "./edit.js";
-import { add, clear, confirm, dialog, field, h, icon, mono, pill, top } from "./ui.js";
+import { confirm, dialog } from "../components/feedback.js";
+import { field, mono, pill, top } from "../components/layout.js";
+import { all, del, put } from "../lib/api.js";
+import { add, clear, h, icon } from "../lib/dom.js";
+import { again } from "../lib/route.js";
 
 // The API shapes a harness may speak, each with where it is usually served.
 const SHAPES = { "anthropic": "https://api.anthropic.com", "openai-responses": "https://api.openai.com/v1",

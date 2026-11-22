@@ -1,0 +1,55 @@
+/* The chat: its list, the model line, the conversation's column, the composer, and the panel beside it. */
+.chat { display: grid; grid-template-columns: 232px minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr); height: 100%; }   /* each column scrolls by itself */
+.chat.nolist { grid-template-columns: minmax(0, 1fr) auto; } .chat.nolist .list { display: none; } .chat:not(.nolist) .show-list { display: none; }
+
+/* the list of chats */
+.chat .list { border-right: 1px solid var(--line); padding: 14px 10px; overflow: auto; }
+.list-head { display: flex; gap: 6px; margin-bottom: 10px; } .list-head > button:first-child { flex: 1; justify-content: center; }
+.chat .rows { display: flex; flex-direction: column; gap: 2px; }
+.chat .rows a { display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px 0 10px; border-radius: 8px; color: var(--muted); }
+.chat .rows a > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat .rows a:hover { background: var(--sunk); color: var(--ink); } .chat .rows a.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.chat .rows a button { display: none; height: 26px; width: 26px; padding: 0; justify-content: center; } .chat .rows a:hover button { display: inline-flex; }
+.chat .rows a svg { width: 14px; height: 14px; } .chat .rows .working { margin: 0 6px; flex: none; } .chat .rows a:hover .working { display: none; }
+.chat .rows input.rename { flex: 1; height: 26px; padding: 0 6px; min-width: 0; }
+
+/* the conversation's column */
+.chat .middle { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+.chat-head { display: flex; align-items: center; gap: 6px; padding: 10px 14px 10px 20px; border-bottom: 1px solid var(--line); } .chat-head .square { flex: none; }
+.line-bar { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: var(--faint); }
+.line-bar select, .line-bar input { height: 32px; width: auto; min-width: 0; flex: 1 1 0; border-color: transparent; background: var(--sunk); font: 500 13px var(--mono); }
+.line-bar .needs { flex: 2 1 0; color: var(--accent); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head .session { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.chat .log { flex: 1; overflow: auto; padding: 28px 24px; }
+.hello { max-width: 520px; margin: 14vh auto 0; text-align: center; } .hello h1 { margin-bottom: 8px; }
+.composer { margin: 0 auto 18px; width: min(780px, calc(100% - 40px)); padding: 8px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.composer .row { display: flex; gap: 6px; align-items: flex-end; }
+.composer textarea { border: 0; font: 14px/1.5 var(--sans); min-height: 40px; max-height: 220px; resize: none; padding: 9px 6px; background: none; } .composer textarea:focus { box-shadow: none; }
+.composer .pending { display: flex; flex-wrap: wrap; gap: 6px; } .composer .pending:not(:empty) { padding: 2px 2px 8px; }
+.composer .pending .tile { padding: 5px 4px 5px 10px; } .composer .pending button { height: 24px; width: 24px; padding: 0; justify-content: center; }
+.start { max-width: 520px; margin: 14vh auto 0; padding: 0 20px; } .start h1 { margin-bottom: 8px; } .start .step { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border: 1px solid var(--line);
+         border-radius: 12px; margin-top: 10px; background: var(--surface); } .start .step:hover { border-color: var(--line-strong); }
+.start .num { width: 26px; height: 26px; border-radius: 99px; display: grid; place-items: center; font-weight: 600; font-size: 12.5px; background: var(--sunk); color: var(--muted); flex: none; }
+.start .done .num { background: var(--ok-soft); color: var(--ok); } .start .step div { flex: 1; } .start .step b { font-weight: 600; display: block; }
+
+/* the panel: the session's files, and a preview */
+.side { width: min(420px, 38vw); display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; background: var(--bg); } .side.wide { width: min(880px, 62vw); }
+.side .ph { display: flex; align-items: center; gap: 2px; padding: 10px 8px 10px 12px; border-bottom: 1px solid var(--line); }
+.side .ph .title { flex: 1; min-width: 0; margin: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.side .ph .square { width: 30px; height: 30px; } a.square { display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; color: var(--muted); } a.square:hover { background: var(--sunk); color: var(--ink); }
+.side .pb { flex: 1; overflow: auto; min-height: 0; position: relative; } .side .pb > iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+.note { padding: 36px 20px; text-align: center; color: var(--muted); font-size: 13px; } .side .note.bad { color: var(--bad); }
+.files-list { padding: 10px; } .files-list .filter { margin-bottom: 8px; }
+.files-list .row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px; } .files-list .row:hover { background: var(--sunk); }
+.files-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; direction: rtl; text-align: left; }
+.files-list .sz { color: var(--faint); font-size: 12px; white-space: nowrap; } .files-list .dl { color: var(--faint); display: none; } .files-list .row:hover .dl { display: inline-flex; } .files-list .dl:hover { color: var(--ink); }
+.filecard { display: grid; gap: 6px; justify-items: center; padding: 60px 20px; text-align: center; } .filecard .big { font: 700 22px var(--mono); color: var(--faint); margin-bottom: 6px; } .filecard a, .cut a { color: var(--accent); }
+.cut { padding: 8px 14px; background: var(--warn-soft); color: var(--warn); font-size: 12.5px; }
+.imagebox { display: grid; place-items: center; min-height: 100%; padding: 16px; } .imagebox img { cursor: zoom-out; } .imagebox img.fit { max-width: 100%; max-height: calc(100vh - 140px); cursor: zoom-in; }
+.media { display: grid; place-items: center; min-height: 100%; padding: 16px; } .media video { max-width: 100%; max-height: calc(100vh - 140px); } .media audio { width: 100%; }
+.doc { padding: 20px 24px 40px; margin: 0; max-width: 820px; }
+.tableinfo { padding: 8px 14px; } table.grid { border-collapse: collapse; font-size: 12.5px; } table.grid + button { margin: 12px 14px; }
+table.grid th, table.grid td { border: 1px solid var(--line); padding: 4px 10px; white-space: nowrap; text-align: left; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+table.grid th { background: var(--sunk); position: sticky; top: 0; font-weight: 600; } table.grid .ln { color: var(--faint); text-align: right; background: var(--sunk); }
+.nb-cell { margin: 0 0 14px; } .nb-in { font: 11.5px var(--mono); color: var(--faint); } .nb-out { margin: 6px 0; font-size: 12.5px; max-height: 420px; } .nb-out img { max-width: 100%; }

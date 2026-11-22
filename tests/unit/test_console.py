@@ -1,6 +1,7 @@
 """The console's routes: its files and nothing else, an edition's files with them, and the API left alone."""
 
 import base64
+import re
 from pathlib import Path
 
 import pytest
@@ -24,13 +25,15 @@ def test_the_console_is_served_at_its_path_and_the_root_leads_to_it():
     assert [http.get(path).headers["location"] for path in ("/", "/console")] == ["/console/", "/console/"]
 
 
-def test_every_file_a_page_names_is_one_the_console_has():
-    names = {file.name for file in console.FILES.iterdir()}
-    for file in console.FILES.glob("*.js"):
-        for line in file.read_text().splitlines():
-            if line.startswith("import ") and " from " in line:
-                assert line.split(' from "./')[1].rstrip('";') in names, f"{file.name}: {line}"
-    assert {"app.css", "app.js"} <= names and 'href="app.css"' in (console.FILES / "index.html").read_text()
+def test_every_file_a_module_or_the_page_names_is_one_the_console_has():
+    modules = list(console.FILES.rglob("*.js"))
+    assert len(modules) > 20
+    for module in modules:
+        for named in re.findall(r'^import [^"]*"(\.[^"]+)";', module.read_text(), re.M):
+            assert (module.parent / named).resolve().is_file(), f"{module.relative_to(console.FILES)} imports {named}"
+    page = (console.FILES / "index.html").read_text()
+    for named in re.findall(r'<(?:link[^>]*href|script[^>]*src)="([^":]+)"', page):
+        assert (console.FILES / named).is_file(), f"index.html names {named}"
 
 
 def test_nothing_outside_the_console_is_served_and_nothing_is_written():
@@ -38,6 +41,12 @@ def test_nothing_outside_the_console_is_served_and_nothing_is_written():
     for path in ("/console/nope.js", "/console/../cli.py", "/console/%2e%2e/cli.py", "/console/..%2f..%2fcli.py", "/v1/platform"):
         assert http.get(path).status_code == 404, path
     assert http.post("/console/").status_code == 405
+
+
+def test_what_renders_an_agents_document_is_served_sandboxed_and_the_console_is_not():
+    http = client()
+    assert http.get("/console/components/viewer/viewer.html").headers["content-security-policy"].startswith("sandbox ")
+    assert "sandbox" not in http.get("/console/").headers["content-security-policy"]
 
 
 def test_an_edition_adds_files_and_the_last_named_is_looked_in_first(tmp_path: Path):
@@ -50,6 +59,7 @@ def test_an_edition_adds_files_and_the_last_named_is_looked_in_first(tmp_path: P
     assert "two" in http.get("/console/edition.js").text                     # in place of the core's, and of the first's
     assert http.get("/console/extra.js").status_code == 200                  # added
     assert "import { pages }" in http.get("/console/app.js").text            # the core's own, still
+    assert http.get("/console/lib/api.js").status_code == 200                # in its folders
     assert "pages = []" in client().get("/console/edition.js").text          # the core adds no page
 
 

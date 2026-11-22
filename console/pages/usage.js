@@ -1,6 +1,8 @@
 // Usage: what the organization used, as the infrastructure it is: processor time, memory, network and storage.
-import { get } from "./api.js";
-import { add, bytes, clear, figure, h, icon, top } from "./ui.js";
+import { top } from "../components/layout.js";
+import { get } from "../lib/api.js";
+import { add, clear, h, icon } from "../lib/dom.js";
+import { bytes, figure } from "../lib/format.js";
 
 const day = date => date.toISOString().slice(0, 10);
 const PERIODS = {

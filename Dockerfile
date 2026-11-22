@@ -6,6 +6,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /usr/local/bin/uv
 WORKDIR /src
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
+COPY console ./console
 # Exactly what uv.lock pins, then the platform itself.
 RUN uv export --quiet --locked --no-dev --no-emit-project --output-file /tmp/requirements.txt \
  && uv pip install --system --no-cache --requirements /tmp/requirements.txt \

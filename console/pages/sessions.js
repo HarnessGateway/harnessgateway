@@ -1,8 +1,11 @@
 // Sessions: every session of the organization, whichever application started it, each shown as the conversation
 // its requests and responses make. One call gives a session's turns with both payloads.
-import { del, get } from "./api.js";
-import { inputText, replyNode, said, turnOf } from "./transcript.js";
-import { STATUS, add, ago, bytes, clear, confirm, h, icon, mono, pill, top } from "./ui.js";
+import { inputText, replyNode, said, turnOf } from "../components/conversation.js";
+import { confirm } from "../components/feedback.js";
+import { mono, pill, STATUS, top } from "../components/layout.js";
+import { del, get } from "../lib/api.js";
+import { add, clear, h, icon } from "../lib/dom.js";
+import { ago, bytes } from "../lib/format.js";
 
 async function session(main, id) {
   const [summary, turns] = await Promise.all([get(`/v1/sessions/${id}`), get(`/v1/sessions/${id}/turns`)]);
@@ -11,7 +14,8 @@ async function session(main, id) {
       h("div", {}, h("h1", { class: "mono", style: "font-size:17px" }, id),
         h("div", { class: "sub" }, `${summary.turns} turn${summary.turns === 1 ? "" : "s"} · ${bytes(summary.bytes)} saved · last active ${ago(summary.last_active_at)}`,
           summary.forked_from_response_id && ` · forked from ${summary.forked_from_response_id}`)),
-      h("div", { class: "acts" }, h("button", { class: "quiet danger", onclick: () => confirm(`Delete ${id}, with its turns, its snapshots and its files?`,
+      h("div", { class: "acts" }, summary.head_response_id && h("a", { href: `#/chat/open/${id}` }, h("button", {}, "Continue in chat")),
+        h("button", { class: "quiet danger", onclick: () => confirm(`Delete ${id}, with its turns, its snapshots and its files?`,
         async () => { await del(`/v1/sessions/${id}`); location.hash = "#/sessions"; }) }, "Delete"))),
     turns.data.map(turn => {
       const raw = h("div", { class: "raw", hidden: true }, turn.log && [h("h2", {}, "Log"), h("pre", {}, turn.log)],

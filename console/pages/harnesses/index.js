@@ -2,11 +2,18 @@
 // tab is the files themselves, edited here; the others are what the organization sets on it and which environments
 // carry it. Edits are a working copy, packed and saved once. Out of the console and back in, a harness is its
 // package archive.
-import { all, call, del, get, put } from "./api.js";
-import { manifestOf, pack, template, unpack } from "./archive.js";
-import { NEW, again, code, drafts, frame } from "./edit.js";
-import { definition } from "./environments.js";
-import { add, ask, bytes, clear, confirm, dialog, download, fail, field, h, icon, mono, pickFile, pill, toast, top } from "./ui.js";
+import { code } from "../../components/code.js";
+import { drafts, frame, NEW } from "../../components/editor.js";
+import { ask, confirm, dialog, fail, toast } from "../../components/feedback.js";
+import { field, mono, pill, top } from "../../components/layout.js";
+import { all, call, del, get, put } from "../../lib/api.js";
+import { manifestOf, pack, unpack } from "../../lib/archive.js";
+import { add, clear, h, icon } from "../../lib/dom.js";
+import { download, pickFile } from "../../lib/files.js";
+import { bytes } from "../../lib/format.js";
+import { again } from "../../lib/route.js";
+import { definition } from "../environments.js";
+import { template } from "./template.js";
 
 const TABS = ["Files", "Settings", "Secrets", "Environments"];
 const at = name => `/v1/harnesses/${encodeURIComponent(name)}`;

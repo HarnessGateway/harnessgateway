@@ -31,6 +31,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/harnessgateway"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"console" = "harnessgateway/console"      # the console's files travel inside the package: api/console.py serves them
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
 asyncio_mode = "auto"

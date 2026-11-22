@@ -1,14 +1,14 @@
 // The console's shell: signing in, the sidebar, and a hash router that draws one page into <main>. Plain
 // JavaScript modules, no build step.
-import { get, session } from "./api.js";
-import { chat } from "./chat.js";
 import { pages } from "./edition.js";
-import { environments } from "./environments.js";
-import { harnesses } from "./harnesses.js";
-import { providers } from "./providers.js";
-import { sessions } from "./sessions.js";
-import { add, clear, h, icon } from "./ui.js";
-import { usage } from "./usage.js";
+import { get, session } from "./lib/api.js";
+import { add, clear, h, icon } from "./lib/dom.js";
+import { chat } from "./pages/chat/index.js";
+import { environments } from "./pages/environments.js";
+import { harnesses } from "./pages/harnesses/index.js";
+import { providers } from "./pages/providers.js";
+import { sessions } from "./pages/sessions.js";
+import { usage } from "./pages/usage.js";
 
 const NAV = [
   ["", [["chat", "Chat", chat]]],
@@ -54,6 +54,7 @@ async function route() {
   add(clear($("nav")), NAV.map(([group, items]) => [group && h("div", { class: "group" }, group),
     items.map(([name, label, , glyph = name]) => h("a", { href: `#/${name}`, class: name === current ? "on" : "" }, icon(glyph), label))]));
   const main = h("main", { id: "page" });         // a fresh element: nothing of the last page is left listening
+  if ($("page").leave) $("page").leave();         // and a page that follows something stops following it
   $("page").replaceWith(main);
   try { await PAGES[current](main, params); } catch (error) { add(clear(main), h("p", { class: "bad" }, error.message)); }
 }

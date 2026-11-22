@@ -11,15 +11,27 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import BaseRoute, Route
 
-FILES = Path(__file__).resolve().parent.parent / "console"
-# What may run in the console's pages: its own scripts and styles, talking to its own origin. Nothing an agent
-# wrote is ever markup there, and this is the second wall behind that.
-_HEADERS = {
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-                               "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-    "X-Content-Type-Options": "nosniff",
-    "Cache-Control": "no-cache",               # a page is asked for again after an update, never served stale
-}
+from harnessgateway.domain import view
+
+_HERE = Path(__file__).resolve()
+# The console is the repository's top-level `console/`. An installed package holds a copy of it beside its modules
+# (pyproject.toml puts it there); a checkout serves the repository's own.
+FILES = next(folder for folder in (_HERE.parents[1] / "console", _HERE.parents[3] / "console") if folder.is_dir())
+# The libraries that highlight code and typeset mathematics in a reply: each pinned to a version by its address
+# here, and to its content by an integrity hash where the console loads it. Without them everything still reads.
+_LIBRARIES = "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.12.0/ https://cdn.jsdelivr.net/npm/katex@0.19.1/"
+# What may run in the console's pages: its own scripts and those libraries, talking to its own origin. Nothing an
+# agent wrote is ever markup there, and this is the second wall behind that.
+_PAGE = (f"default-src 'self'; script-src 'self' {_LIBRARIES}; style-src 'self' 'unsafe-inline' {_LIBRARIES}; "
+         f"font-src {_LIBRARIES}; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+         "frame-ancestors 'none'")
+SANDBOXED = "components/viewer/"               # what renders a document an agent made runs apart, like the document
+
+
+def _headers(path: str) -> dict[str, str]:
+    return {"Content-Security-Policy": view.POLICY if path.startswith(SANDBOXED) else _PAGE,
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-cache"}       # a page is asked for again after an update, never served stale
 
 
 def routes(added: Sequence[Path] = ()) -> list[BaseRoute]:
@@ -34,7 +46,7 @@ def routes(added: Sequence[Path] = ()) -> list[BaseRoute]:
         for folder in folders:
             file = (folder / path).resolve()
             if file.is_relative_to(folder) and file.is_file():
-                return FileResponse(file, headers=_HEADERS)
+                return FileResponse(file, headers=_headers(path))
         return PlainTextResponse("Not Found", 404)
 
     async def home(_: Request) -> Response:

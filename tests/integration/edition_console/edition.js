@@ -1,6 +1,7 @@
 // The sample edition's page in the console: the audit log its own route serves.
-import { get } from "./api.js";
-import { add, clear, h, top } from "./ui.js";
+import { top } from "./components/layout.js";
+import { get } from "./lib/api.js";
+import { add, clear, h } from "./lib/dom.js";
 
 async function audit(main) {
   const rows = (await get("/v1/audit")).data;

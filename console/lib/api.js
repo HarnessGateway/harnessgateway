@@ -7,10 +7,10 @@ export const session = {
   set key(value) { value ? sessionStorage.setItem(KEY, value) : sessionStorage.removeItem(KEY); },
 };
 
-/** One call. `body` is sent as JSON, or as it is when it is a Blob. A refusal is thrown as an Error whose message
- *  is the platform's own, with the HTTP status on it. `raw` gives the Response instead of its JSON. */
+/** One call. `body` is sent as JSON, or as it is when it is a Blob or a form. A refusal is thrown as an Error whose
+ *  message is the platform's own, with the HTTP status on it. `raw` gives the Response instead of its JSON. */
 export async function call(method, path, body, { raw = false, signal } = {}) {
-  const sent = body === undefined || body instanceof Blob ? body : JSON.stringify(body);
+  const sent = body === undefined || body instanceof Blob || body instanceof FormData ? body : JSON.stringify(body);
   const response = await fetch(path, { method, body: sent, signal, headers: { Authorization: `Bearer ${session.key}` } });
   if (!response.ok) {
     const refusal = await response.json().catch(() => ({}));
