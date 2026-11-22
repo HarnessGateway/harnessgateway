@@ -17,6 +17,7 @@ with a console for it: a client of that API, which nothing in the API needs.
 ## Run it
 
 ```sh
+git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
 ./install.sh                    # builds the image, starts it, and prints the first API key, once
 ```
 
