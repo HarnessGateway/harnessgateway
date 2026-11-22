@@ -11,7 +11,8 @@ import { h } from "../lib/dom.js";
 /**
  * options
  *   breaks       a line break inside a paragraph is a break (a reply) rather than a space (a document)
- *   link(url)    → {href} (the web: a new tab) | {open: path} (one of the session's files) | {anchor} | null (text only)
+ *   link(url)    → {href} (the web: a new tab) | {page} (a page of the console) | {open: path} (one of the session's
+ *                  files) | {anchor} | null (text only)
  *   image(url)   → an address this page may load, or null
  *   open(path)   what opening one of the session's files does
  *   code(text, language, closed) → the node for a fenced block (closed: its fence has ended, while a reply streams)
@@ -157,6 +158,7 @@ function inline(text, o) {
 function link(address, words, o) {
   const to = o.link ? o.link(address) : /^(https?:|mailto:)/i.test(address) ? { href: address } : null;
   if (to && to.href) return h("a", { href: to.href, target: "_blank", rel: "noopener noreferrer" }, words);
+  if (to && to.page) return h("a", { href: to.page }, words);
   if (to && to.open) return h("a", { href: "#", class: "work", title: to.open, onclick: event => { event.preventDefault(); o.open && o.open(to.open); } }, words);
   if (to && to.anchor) return h("a", { href: "#", onclick: event => {
     event.preventDefault();

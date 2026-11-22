@@ -7,7 +7,7 @@ import { bytes } from "../../lib/format.js";
 import { badgeOf, dirName, inWork } from "../../lib/kinds.js";
 import { keep, kept } from "../../lib/storage.js";
 import { hasSource, preview } from "./preview.js";
-import { viewUrl } from "./workspace.js";
+import { viewUrl } from "../../lib/work.js";
 
 const OPEN = "hg.chat.panel", LIST_MAX = 2000;   // the rows drawn in the list of files; a filter finds the rest
 

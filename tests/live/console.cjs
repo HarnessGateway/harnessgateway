@@ -10,7 +10,7 @@ const fs = require("fs");
 const URL = (process.env.HG_URL || "http://127.0.0.1:8000").replace(/\/$/, ""), KEY = process.env.HG_KEY || "";
 const IMAGE = process.env.HG_IMAGE || "python:3.13-slim", SHOTS = process.env.HG_SHOTS || "";
 const id = Date.now().toString(36), PROVIDER = `console-check-p${id}`, HARNESS = `console-check-h${id}`, ENVIRONMENT = `console-check-e${id}`;
-const LINE = `${ENVIRONMENT}/${HARNESS}/none/none`;
+const LINE = `${ENVIRONMENT}/${HARNESS}/none/none`, WRITTEN = `console-check-w${id}`;        // a package written in a session
 const results = [], made = { sessions: new Set() };
 
 const api = async (method, path, body) => {
@@ -425,6 +425,35 @@ const api = async (method, path, body) => {
     expect((await api("GET", `/v1/sessions/${direct}`)).turns === 2, "the message did not go to that session");
   });
 
+  await check("a package an agent wrote is added from its link or its offer, and chatted with at once", async () => {
+    await go("#/chat");
+    await page.selectOption("select[title=Environment]", ENVIRONMENT);
+    const reply = await say([`mkdir -p ${WRITTEN} && cd ${WRITTEN}`,
+      `echo '{"contract": 1, "name": "${WRITTEN}", "version": "1.0-1", "description": "Greets.", "apis": []}' > harness.json`,
+      "printf '#!/bin/sh\\ntrue\\n' > install",
+      "cat > run <<'RUN'", "#!/usr/bin/env python3", "import os, sys", 'sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))', "import hgkit",
+      "emit = hgkit.Emitter()", 'emit.say("hello from the package")', "emit.done()", "RUN",
+      `chmod +x install run && echo "Ready: [Add it as a harness](/console/#/harnesses/from/$HG_SESSION/${WRITTEN})"`].join("\n"));
+    made.sessions.add((await stored())[0].session);
+    await reply.locator(`a.tile.package:has-text("Add ${WRITTEN} as a harness")`).waitFor();              // the chat's own offer
+    const link = reply.locator(".text a:has-text('Add it as a harness')");
+    expect((await link.getAttribute("href")).startsWith("#/harnesses/from/sess_") && await link.getAttribute("target") === null, "the agent's link does not lead to the console's own page");
+    await link.click();
+    await page.waitForSelector(`.dialog h3:has-text("Add ${WRITTEN} as a harness")`);
+    expect((await page.textContent(".dialog p")).includes("Version 1.0-1 · calls no model · Greets."), "the dialog does not say what the package is");
+    expect(await page.inputValue(".dialog [name=name]") === WRITTEN && await page.inputValue(".dialog [name=environment]") === ENVIRONMENT, "the name or the environment is not filled in");
+    await shot("09-add-harness");
+    await page.click(".dialog button.primary");
+    await page.waitForFunction(() => location.hash.startsWith("#/chat/with/"));
+    await page.waitForSelector(".composer");
+    expect(await page.inputValue("select[title=Harness]") === WRITTEN && (await page.inputValue(".composer textarea")).startsWith("Say hello"), "the chat is not ready on the new harness");
+    expect((await api("GET", `/v1/environments/${ENVIRONMENT}`)).harnesses.includes(WRITTEN), "the environment does not carry it");
+    await page.press(".composer textarea", "Enter");
+    await page.waitForSelector(".reply .text:has-text('hello from the package')", { timeout: 120000 });      // its hello world, on the platform
+    await page.waitForSelector("button[title=Send]");
+    made.sessions.add((await stored())[0].session);
+  });
+
   // sessions
   await check("a session is its conversation, with each turn's payloads", async () => {
     const [mine] = [...made.sessions];
@@ -501,7 +530,7 @@ const api = async (method, path, body) => {
   await browser.close();
 })().catch(error => { console.log(`  FAIL  ${error.message}`); results.push([false, "the run"]); }).finally(async () => {
   for (const session of made.sessions) await api("DELETE", `/v1/sessions/${session}`).catch(() => {});
-  for (const path of [`environments/${ENVIRONMENT}`, `harnesses/${HARNESS}`, `providers/${PROVIDER}`]) await api("DELETE", `/v1/${path}`).catch(() => {});
+  for (const path of [`environments/${ENVIRONMENT}`, `harnesses/${HARNESS}`, `harnesses/${WRITTEN}`, `providers/${PROVIDER}`]) await api("DELETE", `/v1/${path}`).catch(() => {});
   const failed = results.filter(([ok]) => !ok).length;
   console.log(`\n${results.length - failed} of ${results.length} checks passed`);
   process.exit(failed ? 1 : 0);

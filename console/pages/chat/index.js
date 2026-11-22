@@ -15,14 +15,15 @@ import { copyText } from "../../lib/files.js";
 import { bytes } from "../../lib/format.js";
 import { SHOWCASE, baseName, dirName, inWork, kindOf } from "../../lib/kinds.js";
 import { keep, kept } from "../../lib/storage.js";
+import { ensureView, filesOf, packagesIn } from "../../lib/work.js";
 import { begin, branch, chats, find, head, remove, rewind, save, unfinished } from "./chats.js";
 import { composer as makeComposer } from "./composer.js";
 import { modelLine } from "./line.js";
 import { badge, sidePanel } from "./panel.js";
 import { arriving, cancel, follow, hear, start } from "./turns.js";
-import { ensureView, filesOf, workLinks } from "./workspace.js";
+import { workLinks } from "./workspace.js";
 
-const LIST = "hg.chat.list", TILES = 12;
+const LIST = "hg.chat.list", TILES = 12, HELLO = "Say hello, and tell me what you can do.";
 const final = new Map();                         // response id → the response, once it is final: a reply is read once
 let takenBack = "";                              // a rewound message's words, on their way to the composer drawn next
 
@@ -63,14 +64,22 @@ export async function chat(main, params) {
   const running = () => turns.findLast(turn => turn && turn.live);
   const toggleList = () => { keep(LIST, layout.classList.toggle("nolist") === false); };
   const fresh = () => { location.hash = "#/chat"; };
-  const listFiles = async () => { if (current && current.session) panel.setFiles(await filesOf(current.session)); };
+  const listFiles = async () => {
+    if (!current || !current.session) return;
+    panel.setFiles(await filesOf(current.session));
+    if (turns[turns.length - 1]) redraw(turns.length - 1);       // a package among them is offered under the last reply
+  };
 
   // ── the conversation ─────────────────────────────────────────────────────────────────────────────────────────
   const act = (glyph, label, title, onclick) => h("button", { class: "quiet", title, onclick }, icon(glyph), label);
   /** What is drawn under a reply: the files its turn made, and what may be done with it. */
   function under(index) {
     const turn = turns[index], exchange = current.exchanges[index], listed = new Map(panel.files().map(file => [file.path, file]));
-    return [(exchange.files || []).length > 0 && h("div", { class: "tiles" }, exchange.files.map(path => h("button", { class: "tile", title: path, onclick: () => panel.openFile(path) },
+    // A harness package among the session's files, as its latest turn left them, is one click from being a harness.
+    const packages = index === current.exchanges.length - 1 && !turn.live ? packagesIn(panel.files()) : [];
+    return [packages.length > 0 && h("div", { class: "tiles" }, packages.map(folder => h("a", { class: "tile package", href: `#/harnesses/from/${current.session}/${folder}` },
+        icon("harnesses"), h("span", {}, h("b", {}, `Add ${folder} as a harness`), h("small", {}, "A package in this session's files"))))),
+      (exchange.files || []).length > 0 && h("div", { class: "tiles" }, exchange.files.map(path => h("button", { class: "tile", title: path, onclick: () => panel.openFile(path) },
         badge(path), h("span", {}, h("b", {}, baseName(path)), h("small", {}, dirName(path) || "work", listed.has(path) && ` · ${bytes(listed.get(path).bytes)}`))))),
       !turn.live && h("div", { class: "actions" },
         replyText(turn) && act("copy", "", "Copy", event => copied(event.currentTarget, replyText(turn))),
@@ -158,6 +167,7 @@ export async function chat(main, params) {
     const exchange = current.exchanges[index], listed = await filesOf(current.session);
     if (left) return;
     panel.setFiles(listed);
+    redraw(index);
     if (!before) return;                                 // a turn this page did not see start: what changed is not known
     const byPath = new Map(listed.files.map(file => [file.path, file])), told = JSON.stringify(turn.segments);
     const changed = new Set(turn.segments.flatMap(segment => segment.steps || []).filter(each => each.path && each.verb !== "Deleted").map(each => inWork(each.path)));
@@ -245,10 +255,11 @@ export async function chat(main, params) {
   add(clear(main), add(layout, h("div", { class: "list" }, h("div", { class: "list-head" },
       h("button", { onclick: fresh }, icon("plus"), "New chat"), h("button", { class: "quiet square", title: "Hide chats", onclick: toggleList }, icon("side"))), list),
     middle, panel.node));
-  line.set((current || chats[0] || {}).model || `${environments.find(found => found.harnesses.length).name}/`);
+  const [, environment, harness] = params[0] === "with" ? params : [];     // #/chat/with/<environment>/<harness>: a new chat on it
+  line.set(harness ? `${environment}/${harness}/` : (current || chats[0] || {}).model || `${environments.find(found => found.harnesses.length).name}/`);
   sessionLabel.textContent = (current && current.session) || "";
   drawList();
-  if (takenBack) { composer.set(takenBack); takenBack = ""; } else composer.focus();
+  if (takenBack || harness) { composer.set(takenBack || HELLO); takenBack = ""; } else composer.focus();
   for (const chat of chats) if (chat !== current && unfinished(chat)) {      // what became of work left running in another chat
     const last = chat.exchanges[chat.exchanges.length - 1];
     get(`/v1/responses/${last.response}`).then(response => response.status, () => "failed").then(status => {

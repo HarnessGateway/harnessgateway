@@ -10,6 +10,7 @@ import { all, call, del, get, put } from "../../lib/api.js";
 import { manifestOf, pack, unpack } from "../../lib/archive.js";
 import { add, clear, h, icon } from "../../lib/dom.js";
 import { download, pickFile } from "../../lib/files.js";
+import { ensureView, viewUrl } from "../../lib/work.js";
 import { bytes } from "../../lib/format.js";
 import { again } from "../../lib/route.js";
 import { definition } from "../environments.js";
@@ -191,24 +192,44 @@ async function importArchive(existing) {
   } catch (error) { toast(`${file.name} is not a harness package: ${error.message}`, true); }
 }
 
-const fromSession = async () => dialog("Harness from a session", [
-  h("p", { class: "muted" }, "Takes a folder of a session's work, as it was last saved, and makes it a harness: how a package an agent wrote is brought in. Under a name that is taken, it replaces that harness."),
-  field("Name", h("input", { name: "name", pattern: "[a-z0-9][a-z0-9\\-]*", required: true, autocomplete: "off" })),
-  field("Session", [h("input", { name: "session", placeholder: "sess_…", required: true, list: "recent", autocomplete: "off" }),
-    h("datalist", { id: "recent" }, (await get("/v1/sessions?limit=50")).data.map(found => h("option", { value: found.id }, `${found.model || ""} · ${found.turns} turns`)))]),
-  field("Folder in /work", h("input", { name: "path", placeholder: "The same as the name, usually", autocomplete: "off" })),
-], "Add harness", async form => {
-  const read = name => form.elements[name].value.trim();
-  await put(at(read("name")), { session: read("session"), path: read("path") || read("name") });
-  drafts.delete(`harnesses/${read("name")}`);
-  location.hash = page(read("name"));
-});
+/** Take a folder of a session's work as a harness. `given` is {session, path} when the way here named them (a link
+ *  an agent gave, or the chat's own offer): then it is one click, and leads to a chat with the new harness. */
+async function fromSession(given = {}) {
+  const [environments, recent, started] = await Promise.all([all("/v1/environments", "name"), get("/v1/sessions?limit=50"),
+    given.session ? get(`/v1/sessions/${encodeURIComponent(given.session)}`).catch(() => null) : null]);
+  // What the folder says it is, read from the session's files: the name a harness takes is its package's.
+  const manifest = given.session && await ensureView(given.session).then(() => fetch(viewUrl(given.session, `${given.path}/harness.json`)))
+    .then(response => response.ok ? response.json() : null).catch(() => null);
+  const ranIn = started && String(started.model || "").split("/")[0];
+  dialog(manifest ? `Add ${manifest.name} as a harness` : "Harness from a session", [
+    manifest ? h("p", { class: "muted" }, [manifest.version && `Version ${manifest.version}`, (manifest.apis || []).length ? `speaks ${manifest.apis.join(", ")}` : "calls no model",
+        manifest.description].filter(Boolean).join(" · "))
+      : h("p", { class: "muted" }, "Takes a folder of a session's work, as it was last saved, and makes it a harness: how a package an agent wrote is brought in. Under a name that is taken, it replaces that harness."),
+    field("Name", h("input", { name: "name", value: (manifest || {}).name || given.path || "", pattern: "[a-z0-9][a-z0-9\\-]*", required: true, autocomplete: "off" })),
+    field("Session", [h("input", { name: "session", value: given.session || "", placeholder: "sess_…", required: true, list: "recent", autocomplete: "off" }),
+      h("datalist", { id: "recent" }, recent.data.map(found => h("option", { value: found.id }, `${found.model || ""} · ${found.turns} turns`)))]),
+    field("Folder in /work", h("input", { name: "path", value: given.path || "", placeholder: "The same as the name, usually", autocomplete: "off" })),
+    field("Environment that carries it", h("select", { name: "environment" }, h("option", { value: "" }, "None yet"),
+      environments.map(each => h("option", { value: each.name, selected: each.name === ranIn }, each.name))),
+      "A request names a harness with an environment that carries it. Pick one, and you go straight to a chat with it."),
+  ], "Add harness", async form => {
+    const read = name => form.elements[name].value.trim(), name = read("name"), environment = environments.find(each => each.name === read("environment"));
+    await put(at(name), { session: read("session"), path: read("path") || name });
+    drafts.delete(`harnesses/${name}`);
+    if (environment && !environment.harnesses.includes(name)) {
+      await put(`/v1/environments/${encodeURIComponent(environment.name)}`, { ...definition(environment), harnesses: [...environment.harnesses, name] });
+    }
+    toast(`Added ${name}`);
+    location.hash = environment ? `#/chat/with/${encodeURIComponent(environment.name)}/${encodeURIComponent(name)}` : page(name);
+  });
+}
 
 export async function harnesses(main, params) {
-  if (params[0]) return harness(main, params);
+  const linked = params[0] === "from" && /^sess_/.test(params[1] || "") && params[2];       // #/harnesses/from/<session>/<folder>
+  if (params[0] && !linked) return harness(main, params);
   const [found, environments] = await Promise.all([all("/v1/harnesses", "name"), all("/v1/environments", "name")]);
   add(clear(main), top("Harnesses", "The agents you have. Each is a package you own: write one here, import one, or bring in one an agent wrote in a session.",
-    h("button", { class: "quiet", onclick: fromSession }, "From a session"), h("button", { onclick: () => importArchive(found.map(each => each.name)) }, "Import"),
+    h("button", { class: "quiet", onclick: () => fromSession().catch(fail) }, "From a session"), h("button", { onclick: () => importArchive(found.map(each => each.name)) }, "Import"),
     h("button", { class: "primary", onclick: create }, icon("plus"), "New harness")),
     h("div", { class: "cards" }, found.map(each => h("a", { class: "card", href: page(each.name) },
       h("div", { class: "name" }, each.name, mono(each.manifest.version), (drafts.get(`harnesses/${each.name}`) || {}).dirty && pill("Unsaved", "warn")),
@@ -218,4 +239,8 @@ export async function harnesses(main, params) {
         each.missing.length > 0 && pill(`needs ${each.missing.join(", ")}`, "bad")))),
       drafts.has(`harnesses/${NEW}`) ? h("a", { class: "card add", href: page(NEW) }, "Continue the new harness")
         : h("button", { class: "card add", onclick: create }, icon("plus"), "New harness")));
+  if (linked) {
+    history.replaceState(null, "", "#/harnesses");               // the link is used once: the page is the list from here on
+    await fromSession({ session: params[1], path: params.slice(2).join("/") });
+  }
 }
