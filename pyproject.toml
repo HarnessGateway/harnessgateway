@@ -1,6 +1,6 @@
 [project]
 name = "harnessgateway"
-version = "5.1.3"
+version = "5.2.0"
 description = "Agent infrastructure: any agent harness CLI, run in a sandbox, behind the OpenAI Responses API."
 readme = "README.md"
 requires-python = ">=3.12"

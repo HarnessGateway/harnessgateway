@@ -1,5 +1,26 @@
 # Changelog
 
+## 5.2.0
+
+A harness package is two programs. This is a change of the package contract, to contract 2.
+
+- **`harness.json` is gone.** A package is `install`, `run`, and whatever files they need. It declares nothing:
+  a harness is its package, under the name it is added as, and there is nothing to set on one.
+- **The environment is the only door.** What a turn may reach and hold is said in one place: the environment's
+  image, limits, network, variables and secrets. A package that needs a token reads it from a variable, and the
+  environment gives it a secret of that name and the hosts it goes to. Settings and secrets of a harness, and the
+  API to set them, are removed.
+- **`run` chooses its provider's API.** It is given the provider's base URL for each API the provider speaks
+  (`HG_PROVIDER_ANTHROPIC`, `HG_PROVIDER_OPENAI_RESPONSES`, `HG_PROVIDER_OPENAI_CHAT`, `HG_PROVIDER_GEMINI`) and
+  uses the one its agent CLI speaks. `HG_PROVIDER_URL`, `HG_PROVIDER_API` and `HG_HARNESS_VERSION` are removed.
+  A provider the CLI cannot use is no longer refused when the request is sent: the turn fails, with the package's
+  own words. A line that names an environment, a harness or a provider that is not there is still refused at once.
+- **`~/.cache` is never saved with a session**, in place of the folders a package listed. An install has 15
+  minutes, and a stopped turn 15 seconds to end, for every package.
+- **The console** edits a harness as its files and the environments that carry it. A new harness and an imported
+  one are named by the person; the model line offers every provider, or none.
+- **HG FDE** writes two files, and says in the package's README what its environment must give it.
+
 ## 5.1.3
 
 - **A package is its files, however it was packed.** On a Mac, `tar` adds a hidden `._name` entry beside every
