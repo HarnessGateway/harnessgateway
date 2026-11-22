@@ -14,10 +14,11 @@ Everything else may change. These are what users, packages and editions are writ
    against the SDK's response type. The only field with a meaning of the platform's own is `model`.
 2. **The three definitions** (providers, environments, harnesses) share one shape: a name, a definition, and
    secrets sealed beside it. They have one set of verbs.
-3. **The harness package** is `harness.json`, `install` and `run` ([PACKAGES.md](../contract/PACKAGES.md)). The platform knows
-   no agent CLI: everything about one is in its package.
+3. **The harness package** is two programs, `install` and `run` ([PACKAGES.md](../contract/PACKAGES.md)). The
+   platform knows no agent CLI: everything about one is in its package. A package declares nothing: what a turn
+   may reach and hold is its environment's to say.
 4. **The sandbox** is what a package finds inside it: `/mind`, `/work`, `/turn`, `/harness`, the variables, the
-   proxy. It has a version, which a package names.
+   proxy. It has a version, which the platform reports.
 
 ## A turn, start to finish
 
