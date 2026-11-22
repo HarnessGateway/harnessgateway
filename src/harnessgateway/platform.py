@@ -67,9 +67,9 @@ class Platform:
             if settings.driver not in drivers:
                 raise SettingsError(f"HG_DRIVER is one of {', '.join(sorted(drivers))}: {settings.driver!r}")
             driver = drivers[settings.driver](settings)
-        return cls(settings, extensions, db, driver, Orgs(db), Keys(db), Resources(db, blobs, sealer), Turns(db),
-                   Sessions(db), Snapshots(db, blobs), Files(db, blobs), Usage(db), Grants(db, sealer),
-                   AuthorityStore(db, sealer), Rounds(db))
+        return cls(settings, extensions, db, driver, Orgs(db), Keys(db), Resources(db, blobs, sealer),
+                   Turns(db, sealer), Sessions(db), Snapshots(db, blobs), Files(db, blobs), Usage(db),
+                   Grants(db, sealer), AuthorityStore(db, sealer), Rounds(db))
 
     async def announce(self, name: str, org_id: str, *, by: Principal | None = None, **about: Any) -> None:
         """Tell the extensions what happened. One that fails is logged: it never fails what it was told about."""

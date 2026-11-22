@@ -12,11 +12,13 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from harnessgateway.domain.egress import BoundSecret
 from harnessgateway.domain.line import NONE, Line
 from harnessgateway.domain.outcome import CANCELLED, FINAL, Outcome
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.response import LAST_EVENTS, envelope_event, response_object
+from harnessgateway.domain.sealing import Sealer
 from harnessgateway.errors import Conflict, NotFound
 from harnessgateway.ids import new_id
 from harnessgateway.store.db import Connection, Database, announce
@@ -106,12 +108,12 @@ class Turns:
                                    [session_id, org_id, parent.id if parent else None])
             row = await (await conn.execute(
                 "INSERT INTO turns (id, org_id, session_id, parent_id, number, status, environment, harness, "
-                "mind_dir, provider, model, request, store, principal) "
-                f"VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
+                "mind_dir, provider, model, request, credentials, store, principal) "
+                f"VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
                 [turn_id, org_id, session_id, parent.id if parent else None, parent.number + 1 if parent else 1,
                  line.environment, line.harness, resolved.harness.manifest.mind,
                  line.provider if resolved.provider else None, resolved.model or None, Jsonb(dict(request)),
-                 request.get("store") is not False, who.subject])).fetchone()
+                 Jsonb(sealed), request.get("store") is not False, who.subject])).fetchone()
             assert row is not None
             turn = Turn(**row)
             await conn.execute("UPDATE sessions SET head_turn_id = %s, last_active_at = now() WHERE id = %s",
@@ -126,6 +128,14 @@ class Turns:
         if row is None:
             raise NotFound(f"there is no response {turn_id}")
         return Turn(**row)
+
+    async def credentials(self, turn: Turn) -> tuple[BoundSecret, ...]:
+        """The credentials a turn's request carried, opened: for the egress proxy, while the turn runs."""
+        row = await self._db.one(turn.org_id, "SELECT credentials FROM turns WHERE org_id = %s AND id = %s",
+                                 [turn.org_id, turn.id])
+        return tuple(BoundSecret(tuple(kept["hosts"]), self._sealer.open(
+            kept["value"], turn.org_id, "turns", turn.id, placeholder), placeholder)
+            for placeholder, kept in (row["credentials"] if row else {}).items())
 
     async def chain(self, org_id: str, turn_id: str) -> list[Turn]:
         """The turns before this one, back to the first of its session and through forks, oldest first."""
@@ -204,7 +214,8 @@ class Turns:
                         usage: dict[str, Any] | None = None, snapshot_id: str | None = None, log: str = "") -> Turn:
         row = await (await conn.execute(
             "UPDATE turns SET status = %s, reason = %s, code = %s, message = %s, incomplete_reason = %s, "
-            "output = %s, usage = %s, snapshot_id = %s, log = %s, completed_at = now(), runner_id = NULL "
+            "output = %s, usage = %s, snapshot_id = %s, log = %s, completed_at = now(), runner_id = NULL, "
+            "credentials = '{}' "
             f"WHERE id = %s AND {_OPEN} RETURNING {COLUMNS}",
             [outcome.status, outcome.reason, outcome.code, outcome.message, outcome.incomplete_reason,
              Jsonb(list(output)), Jsonb(usage) if usage is not None else None, snapshot_id, log[-LOG_MAX:],

@@ -3,11 +3,14 @@ body is checked against the OpenAI SDK's own description of the request, and rea
 which makes of each field what its agent can."""
 
 import json
+from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from openai.types.responses.response_create_params import ResponseCreateParamsBase
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
+from harnessgateway.domain.egress import BoundSecret, HostEntry
 from harnessgateway.errors import Invalid
 
 METADATA_MAX = 16                              # pairs, as the Responses API allows
@@ -51,6 +54,39 @@ def validate(body: object) -> dict[str, Any]:
         raise Invalid("a background response is fetched later, so it must be stored: store cannot be false",
                       param="store")
     return body
+
+
+def without_credentials(body: dict[str, Any], new_placeholder: Callable[[], str],
+                        ) -> tuple[dict[str, Any], list[BoundSecret]]:
+    """The request with a placeholder in place of every credential it carries, and each credential bound to where
+    the request says it goes. A request's credentials are those of the MCP servers it names: their `headers` and
+    their `authorization`, which may go to that server's host and nowhere else. The request is kept, shown and
+    given to its harness with the placeholders; only the egress proxy is told the values."""
+    bound: list[BoundSecret] = []
+
+    def hidden(value: str, host: str) -> str:
+        placeholder = new_placeholder()
+        if host:                                   # a credential with nowhere to go is only forgotten
+            bound.append(BoundSecret((host,), value, placeholder))
+        return placeholder
+
+    def clean(tool: Any) -> Any:
+        if not isinstance(tool, dict) or tool.get("type") != "mcp":
+            return tool
+        try:
+            url = urlsplit(tool.get("server_url") or "")
+            host = str(HostEntry(url.hostname, url.port)) if url.hostname else ""
+        except ValueError:                         # not an address at all
+            host = ""
+        cleaned = dict(tool)
+        if isinstance(tool.get("authorization"), str):
+            cleaned["authorization"] = hidden(tool["authorization"], host)
+        if isinstance(tool.get("headers"), dict):
+            cleaned["headers"] = {name: hidden(value, host) for name, value in tool["headers"].items()}
+        return cleaned
+    if not isinstance(body.get("tools"), list):
+        return body, bound
+    return {**body, "tools": [clean(tool) for tool in body["tools"]]}, bound
 
 
 def _content(item: object) -> list[Any]:

@@ -12,9 +12,9 @@ from starlette.routing import Route
 from harnessgateway.api.http import Api, listing, parse_object, read_body
 from harnessgateway.domain.line import Line
 from harnessgateway.domain.principal import Principal
-from harnessgateway.domain.request import file_ids, input_items, validate
+from harnessgateway.domain.request import file_ids, input_items, validate, without_credentials
 from harnessgateway.errors import Conflict, Invalid, NotFound
-from harnessgateway.ids import is_id
+from harnessgateway.ids import is_id, new_placeholder
 from harnessgateway.platform import Platform
 from harnessgateway.store.turns import Turn
 
@@ -48,8 +48,9 @@ async def accept(platform: Platform, who: Principal, body: dict[str, Any]) -> Tu
             await platform.files.get(org_id, file_id)
         except NotFound:
             raise Invalid(f"input names a file that does not exist: {file_id}", param="input") from None
+    body, credentials = without_credentials(body, new_placeholder)
     await platform.extensions.before_turn(who, body)
-    return await platform.turns.create(who, resolved=resolved, request=body, parent=parent)
+    return await platform.turns.create(who, resolved=resolved, request=body, parent=parent, credentials=credentials)
 
 
 def routes(api: Api) -> list[Route]:

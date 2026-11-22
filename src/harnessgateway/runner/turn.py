@@ -177,6 +177,7 @@ class TurnRunner:
             resolved, provider_key=key, new_placeholder=new_placeholder,
             environment_secrets=await resources.secrets(org_id, "environments", line.environment),
             harness_secrets=await resources.secrets(org_id, "harnesses", line.harness))
+        bound += await platform.turns.credentials(turn)        # the request's own, bound to where it said they go
         proxy_token = new_token()
         await platform.grants.put(Policy(org_id, turn.id, line.environment, turn_policy(resolved), bound), proxy_token)
         plan = turn_plan(session_id=turn.session_id, turn_id=turn.id, install_id=install_id, image_id=image_id,

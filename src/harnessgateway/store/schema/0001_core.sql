@@ -93,6 +93,7 @@ CREATE TABLE turns (
     provider           text,
     model              text,
     request            jsonb,                          -- as it was sent; NULL once the turn is deleted
+    credentials        jsonb NOT NULL DEFAULT '{}',    -- what the request carried, sealed, by its placeholder: until it ends
     output             jsonb NOT NULL DEFAULT '[]',
     usage              jsonb,                          -- the tokens its harness reported
     snapshot_id        text,
