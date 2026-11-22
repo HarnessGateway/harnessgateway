@@ -3,10 +3,7 @@
 
     verify.py <folder>                      the check every package must pass: its `install`, then a hello-world
                                             turn in a new session, on this session's provider
-    verify.py <folder> --suite              then what a caller relies on, each proven by a marker: instructions,
-                                            on a first turn and on a continued one; memory; a stop, and carrying
-                                            on after it; a tool server the request names; the size of the home
-    verify.py <folder> --say "<prompt>"     one more turn in the same session: to try a command, a file, a skill
+    verify.py <folder> --say "<prompt>"     one more turn in the same session: to try resuming, a command, a file
         --request FILE      the Responses request to send, in place of one made from the prompt: any field, any input
         --new               in a new session: nothing a turn before it left (a cache, a config, a session) is there
         --stop-after S      stop that turn after S seconds, the way a cancelled turn is stopped
@@ -44,7 +41,6 @@ ENDINGS = ("response.completed", "response.incomplete", "response.failed")
 PLATFORMS = ("response.created", "response.queued", "response.in_progress", "error")
 ADDED, DONE = "response.output_item.added", "response.output_item.done"
 HELLO = "Say hello in one short sentence."
-BIG = 5 * 1024 * 1024                              # a folder of the home this large is asked about: is it a cache?
 TYPES: dict[str, type | tuple[type, ...]] = {
     "string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list, "object": dict,
     "null": type(None)}
@@ -273,73 +269,9 @@ def turn(package: Path, manifest: dict[str, Any], request: dict[str, Any], stop_
     return read
 
 
-def suite(package: Path, manifest: dict[str, Any], given: tuple[str, ...]) -> bool:
-    """What a caller relies on, each proven by a marker in a real turn. Whether all of it held."""
-    results: list[tuple[str, bool, str]] = []
-
-    def tried(what: str, request: dict[str, Any], marker: str, never: str = "", **how: Any) -> Read:
-        print(f"\n--- {what}")
-        read = turn(package, manifest, request, given=given, **how)
-        held = not read.wrong and read.finished and marker in read.said and not (never and never in read.said)
-        results.append((what, held, "; ".join(read.wrong) or f"it said: {read.said.strip()[:160] or '(nothing)'}"))
-        return read
-
-    # Each turn is told a marker of its own and asked for it, so that what is tried is which instructions the
-    # agent was given, and not whether a model drops a habit its earlier replies show.
-    marked = "What is the marker for this turn? Reply with the marker only."
-    tried("instructions, on a session's first turn",
-          {"instructions": "The marker for this turn is ALPHA.", "input": marked}, "ALPHA", new=True)
-    tried("instructions, on a continued turn",            # a CLI may keep the first turn's for the whole session
-          {"instructions": "The marker for this turn is BRAVO.", "input": marked}, "BRAVO", never="ALPHA")
-    tried("memory: it is told a thing", {"input": "Remember this: the codeword is HERON. Reply with OK."}, "", new=True)
-    tried("memory: it knows the thing a turn later", {"input": "What is the codeword?"}, "HERON")
-
-    print("\n--- a stop: a turn is stopped, and the session carries on")
-    cut = turn(package, manifest, {"input": "Run this shell command and wait for it to finish: sleep 60"},
-               stop_after=20, given=given)
-    results.append(("a stop: it ends within its grace", not cut.wrong, "; ".join(cut.wrong) or "it ended in time"))
-    tried("a stop: the session carries on, and knows it was stopped",
-          {"input": "Did the last thing I asked you to do finish? Answer yes or no. Then tell me the codeword."},
-          "HERON")
-
-    print("\n--- a tool server the request names")
-    server = subprocess.Popen([sys.executable, str(Path(__file__).with_name("toolserver.py"))],
-                              stdout=subprocess.PIPE, text=True)
-    assert server.stdout is not None
-    port = server.stdout.readline().strip()
-    try:
-        # It is on this machine, where a real one is reached through the egress proxy: so not through the proxy.
-        local = (*given, "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
-        tools = [{"type": "mcp", "server_label": "numbers", "server_url": f"http://127.0.0.1:{port}/mcp",
-                  "require_approval": "never"}]
-        read = turn(package, manifest, {"tools": tools, "input": "Call the tool that returns the secret number, and "
-                                        "reply with the number."}, given=local, new=True)
-    finally:
-        server.terminate()
-    called = [item for item in read.items if item["type"] == "mcp_call"]
-    results.append(("a tool server the request names: its tool is called", "4242" in read.said and not read.wrong,
-                    "; ".join(read.wrong) or f"it said: {read.said.strip()[:160] or '(nothing)'}"))
-    results.append(("a tool server the request names: the call is printed as an mcp_call", bool(called),
-                    f"{len(called)} mcp_call item(s) printed"))
-
-    home = Path(os.environ["HG_WORK"]) / ".trial" / str(manifest["name"]) / "mind"
-    sizes = {top.name: sum(file.stat().st_size for file in top.rglob("*") if file.is_file() and not file.is_symlink())
-             for top in home.iterdir() if top.is_dir()}
-    large = [f"{name} ({size // (1024 * 1024)} MB)" for name, size in sorted(sizes.items()) if size > BIG]
-    declared = manifest.get("cache") or []
-    print("\nverify: SUITE")
-    for what, held, seen in results:
-        print(f"  {'PASS' if held else 'FAIL'}  {what}\n        {seen}")
-    print(f"  NOTE  the home holds {sum(sizes.values()) // (1024 * 1024)} MB after these turns"
-          + (f"; large folders: {', '.join(large)}. Whatever of that is downloads or a cache belongs in `cache` "
-             f"(now {json.dumps(declared)})." if large else "."))
-    return all(held for _, held, _ in results)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("folder", type=Path, nargs="?")
-    parser.add_argument("--suite", action="store_true")
     parser.add_argument("--say", metavar="PROMPT")
     parser.add_argument("--request", type=Path, metavar="FILE")
     parser.add_argument("--new", action="store_true")
@@ -381,10 +313,6 @@ def main() -> int:
         print(f"verify: NOT VERIFIED: {label}:\n  " + "\n  ".join(wrong))
         return 1
     print(f"verify: VERIFIED: {label} installs, and answered a hello world.")
-    if args.suite and not suite(package, manifest, given):
-        print(f"verify: SUITE NOT PASSED: {label}. Each FAIL above is a thing to fix, or a thing this CLI cannot do: "
-              "find out which, and say which at the hand-over.")
-        return 1
     return 0
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.1.1
+
+`hg-fde` (now `2.1.330-2`) is made simple again. It does one thing: it researches an agent CLI, writes
+`harness.json`, `install` and `run`, checks that the package runs, and hands it over.
+
+- Its skill is six short steps. The `agent/` folder, the step that asked what agent was wanted, and the section on
+  keeping a package up to date are gone.
+- Its verifier no longer has a suite (`--suite`) or a tool server of its own. It still runs a package's install and
+  a hello world, holds every line to the schema, and sends any request (`--say`, `--request`, `--new`,
+  `--stop-after`, `--shape`).
+- Nothing of the platform changes.
+
 ## 5.1.0
 
 The OpenAI Responses API is now the only schema a harness package deals in. A package's `run` reads the caller's

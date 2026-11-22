@@ -33,7 +33,7 @@ installed, sandboxes run under it; without it, isolation is `none`, and the log 
 |---|---|
 | `default` | An environment on a common image (`node:22`), with the default limits and an open network: a sandbox reaches any public host, through the proxy |
 | `shell` | The smallest harness: it runs a request's input as a command. `default/shell/none/none` tries an environment before any agent is set up |
-| `hg-fde` | HG FDE, the forward deployed engineer for the platform: it builds every other harness package. Tell it the agent you want; it researches the agent CLI, writes the package, proves what the package does, and ends with a link that adds it. It needs a provider that speaks the Anthropic API |
+| `hg-fde` | HG FDE, the forward deployed engineer for the platform: it builds every other harness package. Name an agent CLI; it researches the CLI, writes `harness.json`, `install` and `run`, checks that the package runs, and ends with a link that adds it. It needs a provider that speaks the Anthropic API |
 
 They are given once, at setup, and are yours from then on: change them, delete them, add your own. Nothing else
 ships: no provider, and no other agent.

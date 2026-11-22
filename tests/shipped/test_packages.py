@@ -133,46 +133,6 @@ def test_what_the_platform_would_refuse_is_not_verified_and_says_why(tmp_path: P
     assert stopped.returncode == 0 and "said: begun" in stopped.stdout and "stopped after 1 seconds" in stopped.stdout
 
 
-CAPABLE = """#!/usr/bin/env python3
-# An agent that needs no model: it does what the suite asks for, the way a package for a real agent CLI would.
-import json, os, re, signal, sys, time, urllib.request
-turn, home = os.environ["HG_TURN"], os.environ["HG_STATE"]
-request, previous = json.load(open(f"{turn}/request.json")), json.load(open(f"{turn}/previous.json"))
-def say(line): print(json.dumps(line), flush=True)
-os.makedirs(home, exist_ok=True)
-memory, text, said = os.path.join(home, "memory"), request["input"], ""
-if "codeword is" in text:
-    open(memory, "w").write(re.search(r"codeword is (\\w+)", text)[1]); said = "OK"
-elif "sleep 60" in text:
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0)); time.sleep(60)
-elif "codeword" in text:
-    cut = previous and previous["status"] != "completed"
-    said = ("No: it was " + previous["status"] + ". " if cut else "") + "The codeword is " + (open(memory).read() if os.path.exists(memory) else "unknown")
-for tool in request.get("tools", []):
-    call = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "secret_number", "arguments": {}}}).encode()
-    asked = urllib.request.Request(tool["server_url"], call, {"Content-Type": "application/json"})
-    got = json.load(urllib.request.urlopen(asked))["result"]["content"][0]["text"]
-    say({"type": "mcp_call", "server_label": tool["server_label"], "name": "secret_number", "arguments": "{}", "status": "completed", "output": got})
-    said = "The number is " + got
-FIRST
-marker = re.search(r"marker for this turn is (\\w+)", told or "")
-say({"type": "response.output_text.delta", "delta": marker[1] if marker and "marker" in text else said or "Hello."})
-say({"type": "response.completed"})
-"""
-
-
-def test_the_suite_proves_what_a_caller_relies_on_each_by_a_marker(tmp_path: Path):
-    honours = verify(tmp_path, agent(tmp_path, CAPABLE.replace("FIRST", 'told = request.get("instructions")')), "--suite", api="anthropic")
-    assert honours.returncode == 0 and "verify: SUITE" in honours.stdout and "FAIL" not in honours.stdout, honours.stdout[-3000:]
-    assert honours.stdout.count("PASS  ") == 8 and "No: it was cancelled. The codeword is HERON" in honours.stdout
-    assert "1 mcp_call item(s) printed" in honours.stdout and "NOTE  the home holds" in honours.stdout
-    # What an agent CLI does when it keeps a session's first instructions for good: found, and named.
-    keeps = 'kept = os.path.join(home, "told")\nif not os.path.exists(kept): open(kept, "w").write(request.get("instructions") or "")\ntold = open(kept).read()'
-    stale = verify(tmp_path, agent(tmp_path, CAPABLE.replace("FIRST", keeps)), "--suite", api="anthropic")
-    assert stale.returncode == 1 and "SUITE NOT PASSED" in stale.stdout
-    assert "FAIL  instructions, on a continued turn" in stale.stdout and "PASS  instructions, on a session's first turn" in stale.stdout
-
-
 def load_run(tmp_path: Path, **turn_files: str):
     """HG FDE's `run`, as a module: with the variables a sandbox gives it, and a turn's inputs in place."""
     import importlib.machinery
