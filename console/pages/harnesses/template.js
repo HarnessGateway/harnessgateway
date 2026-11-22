@@ -11,31 +11,39 @@ set -eu
 command -v python3 >/dev/null 2>&1 || { echo "this image has no python3, which this package's run needs" >&2; exit 1; }
 ` }],
   ["run", { executable: true, text: `#!/usr/bin/env python3
-"""run: one turn. Called in /work, with the request under /turn."""
+"""run: one turn. It reads the Responses request and prints Responses output: there is no other schema."""
+import json
 import os
-import sys
+import signal
+import subprocess
 
-sys.path.insert(0, os.path.join(os.environ["HG_HARNESS"], "kit"))
 
-import hgkit  # noqa: E402 - the kit is found through the path set above
+def say(line):
+    print(json.dumps(line), flush=True)
 
-# 1. Read the request.
-request, emit = hgkit.Request(), hgkit.Emitter()
-if not request.prompt.strip():
-    emit.failed("no_command", "The input is empty: there is no command to run.")
-    sys.exit(0)
 
-# 2. Start the CLI the way it runs headless. Here: the shell, with errors joined to the output.
-cli = hgkit.Cli(["sh", "-c", "exec 2>&1\\n" + request.prompt])
+# 1. Read the request: the caller's body, as it was sent. Use as much of it as the agent can.
+with open(os.path.join(os.environ["HG_TURN"], "request.json"), encoding="utf-8") as file:
+    request = json.load(file)
+command = request["input"] if isinstance(request["input"], str) else "\\n".join(
+    part["text"] for item in request["input"] if item.get("role") == "user" and isinstance(item.get("content"), list)
+    for part in item["content"] if part.get("type") == "input_text")
 
-# 3. Print what it does as Responses events. Here: every line it prints is a piece of the answer.
-for line in cli.lines():
-    emit.say(line + "\\n")
+# 2. Start the CLI the way it runs headless. Here: the shell, with errors joined to the output. A stop is sent
+#    to this program and to the CLI at once: take it, and go on until the CLI has ended.
+signal.signal(signal.SIGTERM, lambda *_: None)
+cli = subprocess.Popen(["sh", "-c", "exec 2>&1\\n" + command], stdout=subprocess.PIPE, text=True, errors="replace")
 
-# 4. Print one terminal line, and exit 0.
-if cli.exit_code == 0:
-    emit.done()
+# 3. Print what it does as Responses output. Here: every line is a piece of the answer. A step the agent takes
+#    is an output item, printed whole: {"type": "shell_call", ...}, {"type": "apply_patch_call", ...}.
+for line in cli.stdout:
+    say({"type": "response.output_text.delta", "delta": line})
+
+# 4. Print the stream's last event, and exit 0.
+if cli.wait() == 0:
+    say({"type": "response.completed"})
 else:
-    emit.failed("command_failed", f"The command exited with code {cli.exit_code}.")
+    say({"type": "response.failed", "response": {"error": {
+        "code": "command_failed", "message": f"The command exited with code {cli.returncode}."}}})
 ` }],
 ]);
