@@ -27,8 +27,13 @@ function step(item) {
     const operation = item.operation || {}, verb = VERBS[operation.type] || "Changed";
     return { id, kind: "file", verb, path: operation.path || "", label: `${verb} ${operation.path || ""}`, detail: operation.diff || "" };
   }
-  if (item.type === "mcp_call") return { id, kind: "tool", label: `${item.server_label}.${item.name}`, detail: item.arguments || "", output: item.output || "" };
-  if (item.type === "web_search_call") return { id, kind: "search", label: "Searched the web" };
+  if (item.type === "mcp_call") return { id, kind: "tool", label: `${item.server_label}.${item.name}`, detail: item.arguments || "",
+                                         output: item.output || (item.error ? `failed: ${item.error.content || item.error.message || ""}` : "") };
+  if (item.type === "web_search_call") {
+    const action = item.action || {};
+    return { id, kind: "search", label: action.url ? `Opened ${action.url}` : `Searched the web${action.query ? ` for ${action.query}` : ""}`,
+             detail: (action.sources || []).map(source => source.url).join("\n") };
+  }
   if (item.type.endsWith("_call")) return { id, kind: "tool", label: item.name || item.type.replace(/_call$/, ""), detail: item.arguments || item.input || "" };
   if (item.type.endsWith("_output")) return { id, output: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "") };
   return null;
