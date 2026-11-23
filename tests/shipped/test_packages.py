@@ -80,9 +80,113 @@ def test_hg_fde_is_told_who_it_is_the_contract_and_every_schema_in_full_each_tur
     args = run.command({"instructions": "x"}, "sess-1")
     assert args[args.index("--system-prompt-snapshot") + 1] == "off" and args[-2:] == ["--resume", "sess-1"]
     assert "--append-system-prompt" not in args                    # too long for an argument: it is given as a file
-    assert run.asked({"input": "Carry on."}) == "Carry on."
+    assert run.asked({"input": "Carry on."}) == ([{"type": "text", "text": "Carry on."}], [])
     cut = load_run(tmp_path, **{"previous.json": '{"status": "cancelled"}', "handover.txt": "Handover from shell."})
-    assert cut.asked({"input": "Carry on."}) == "Your last turn did not finish: it ended as cancelled.\n\nHandover from shell.\n\nCarry on."
+    assert [block["text"] for block in cut.asked({"input": "Carry on."})[0]] == [
+        "Your last turn did not finish: it ended as cancelled.", "Handover from shell.", "Carry on."]
+
+
+def test_hg_fde_gives_its_cli_every_field_of_the_request_the_cli_has_a_flag_for(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                                                capsys: pytest.CaptureFixture[str]):
+    """It is the example every package it builds is written from: what it does with a request is what they will."""
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    (tmp_path / "turn" / "files" / "file_1").mkdir(parents=True)
+    (tmp_path / "turn" / "files" / "file_1" / "shot.png").write_bytes(b"png")
+    (tmp_path / "turn" / "files" / "file_2").mkdir()
+    (tmp_path / "turn" / "files" / "file_2" / "notes.txt").write_text("notes")
+    run = load_run(tmp_path)
+    monkeypatch.setattr(run, "GIVEN", str(tmp_path / "given"))
+    blocks, told = run.asked({"input": [
+        {"role": "developer", "content": "Be brief."}, {"role": "assistant", "content": [{"type": "output_text", "text": "Hello."}]},
+        {"role": "user", "content": [
+            {"type": "input_text", "text": "Look."}, {"type": "input_image", "image_url": "data:image/png;base64,QUJD"},
+            {"type": "input_image", "image_url": "https://example.com/a.png"}, {"type": "input_image", "file_id": "file_1"},
+            {"type": "input_file", "file_id": "file_2"}, {"type": "input_file", "filename": "../word.txt", "file_data": "data:text/plain;base64,SEVST04="},
+            {"type": "input_file", "file_url": "https://example.com/a.pdf"}, {"type": "input_file", "file_id": "file_gone"},
+            {"type": "input_image", "file_id": "file_2"}]},      # an upload that is no image by its name
+        {"type": "function_call_output", "call_id": "c", "output": "x"}]})
+    assert told == ["Be brief."] and (tmp_path / "given" / "word.txt").read_text() == "HERON"      # a file's name is its last part
+    assert blocks == [
+        {"type": "text", "text": "Earlier, you said: Hello."}, {"type": "text", "text": "Look."},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"}},
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "cG5n"}},
+        {"type": "text", "text": f"A file given with this request: {tmp_path}/turn/files/file_2/notes.txt"},
+        {"type": "text", "text": f"A file given with this request: {tmp_path}/given/word.txt"},
+        {"type": "text", "text": "A file given with this request: https://example.com/a.pdf"}]
+    assert Path(run.knows({"instructions": "Answer in French."}, told)).read_text().endswith("Answer in French.\n\nBe brief.")
+    schema = {"type": "object", "properties": {"word": {"type": "string"}}}
+    args = run.command({"reasoning": {"effort": "minimal"}, "text": {"format": {"type": "json_schema", "name": "n", "schema": schema}}, "tools": [
+        {"type": "mcp", "server_label": "docs", "server_url": "https://mcp.example.com/mcp", "authorization": "hgs_1", "headers": {"X-Key": "hgs_2"}},
+        {"type": "function", "name": "f", "parameters": {}}]}, None)
+    assert args[args.index("--effort") + 1] == "low" and json.loads(args[args.index("--json-schema") + 1]) == schema
+    assert json.loads(args[args.index("--mcp-config") + 1]) == {"mcpServers": {"docs": {
+        "type": "http", "url": "https://mcp.example.com/mcp", "headers": {"Authorization": "Bearer hgs_1", "X-Key": "hgs_2"}}}}
+    alone = run.command({"reasoning": {"effort": "none"}, "tool_choice": "none", "tools": [{"type": "mcp", "server_label": "d", "server_url": "https://x"}]}, None)
+    assert "--effort" not in alone and "--mcp-config" not in alone and alone[alone.index("--tools") + 1] == ""
+    assert args[args.index("--input-format") + 1] == "stream-json"            # how an image reaches it
+    said = capsys.readouterr().err                                              # and what it has no use for, it names
+    assert "a part of type input_file" in said and "a part of type input_image" in said and "an input item of type function_call_output" in said and "a tool of type function" in said
+
+
+def test_what_hg_fde_prints_is_what_the_platform_takes_each_thing_as_the_item_that_says_what_it_was(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    run, steps = load_run(tmp_path), {}
+
+    def call(name: str, given: dict, text: object, detail: object = None, failed: bool = False) -> None:
+        call_id = f"call_{len(steps)}"
+        steps[call_id] = begun = run.called(call_id, name, given)
+        if begun:
+            run.say({"type": "response.output_item.added", "item": {**begun, "status": "in_progress"}})
+        run.returned(call_id, name, given, begun, {"content": text, "is_error": failed}, detail)
+
+    run.servers({"mcp_servers": [{"name": "docs", "status": "connected"}, {"name": "gone", "status": "failed"}],
+                 "tools": ["Bash", "mcp__docs__lookup"]})
+    call("Bash", {"command": "ls", "timeout": 5000}, "a.txt", {"stdout": "a.txt", "stderr": "", "interrupted": False})
+    call("Bash", {"command": "false"}, "Exit code 3\nbad", "Error: Exit code 3\nbad", failed=True)
+    call("Bash", {"command": "sleep 99"}, "", {"stdout": "", "stderr": "", "interrupted": True})
+    call("Write", {"file_path": "/work/a.txt", "content": "one\ntwo\n"}, "created", {"type": "create", "structuredPatch": []})
+    patch = [{"oldStart": 1, "oldLines": 2, "newStart": 1, "newLines": 2, "lines": [" one", "-two", "+TWO"]}]
+    call("Edit", {"file_path": "/work/a.txt", "old_string": "two", "new_string": "TWO"}, "updated", {"structuredPatch": patch})
+    call("Edit", {"file_path": "/work/b.txt", "old_string": "x", "new_string": "y"}, "no such file", "Error: no such file", failed=True)
+    call("mcp__docs__lookup", {"key": "bird"}, [{"type": "text", "text": "OSPREY"}], [{"type": "text", "text": "OSPREY"}])
+    call("mcp__docs__broken", {}, "it broke", "Error: it broke", failed=True)
+    call("WebSearch", {"query": "osprey"}, "Links: …", {"query": "osprey", "results": [{"content": [{"title": "t", "url": "https://example.com/o"}]}, "words"]})
+    call("WebFetch", {"url": "https://example.com", "prompt": "title?"}, "Example Domain", {"url": "https://example.com", "code": 200})
+    call("Read", {"file_path": "/work/a.txt"}, "1\tone", {"type": "text"})
+    run.say(run.ending({"subtype": "success", "structured_output": {"word": "OSPREY"}, "usage": {
+        "input_tokens": 10, "cache_read_input_tokens": 5, "cache_creation_input_tokens": 2, "output_tokens": 7,
+        "output_tokens_details": {"thinking_tokens": 3}}}, schema=True))
+    output = RunOutput()
+    for line in capsys.readouterr().out.splitlines():
+        output.read(line)                                              # each is a line the platform takes
+    items = output.output()
+    assert [item["type"] for item in items] == [
+        "mcp_list_tools", "mcp_list_tools", *["shell_call", "shell_call_output"] * 3, *["apply_patch_call", "apply_patch_call_output"] * 3,
+        "mcp_call", "mcp_call", "web_search_call", "web_search_call", "custom_tool_call", "custom_tool_call_output", "message"]
+    lists, gone, ran, _, _, failed, _, slept = items[:8]
+    assert lists["tools"] == [{"name": "lookup", "input_schema": {}}] and gone["error"] == "the server is failed"
+    assert (ran["call_id"], ran["action"]) == ("call_0", {"commands": ["ls"], "timeout_ms": 5000})
+    assert failed["output"] == [{"stdout": "bad", "stderr": "", "outcome": {"type": "exit", "exit_code": 3}}]      # its own exit code
+    assert slept["output"][0]["outcome"] == {"type": "timeout"}
+    made, _, edited, _, refused, said = items[8:14]
+    assert made["operation"] == {"type": "create_file", "path": "/work/a.txt", "diff": "+one\n+two\n"}
+    assert edited["operation"] == {"type": "update_file", "path": "/work/a.txt", "diff": "@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n"}
+    assert refused["operation"]["type"] == "update_file" and said == {**said, "status": "failed", "output": "no such file"}
+    found, broke, searched, opened = items[14:18]
+    assert (found["id"], found["server_label"], found["name"], found["status"], found["output"]) == ("call_6", "docs", "lookup", "completed", "OSPREY")
+    assert (broke["status"], broke["error"]) == ("failed", {"type": "mcp_tool_execution_error", "content": "it broke"})
+    assert searched["action"] == {"type": "search", "query": "osprey", "sources": [{"type": "url", "url": "https://example.com/o"}]}
+    assert (opened["action"], opened["status"]) == ({"type": "open_page", "url": "https://example.com"}, "completed")
+    assert items[-1]["content"][0]["text"] == '{"word": "OSPREY"}'             # with a schema, the answer is what fits it
+    assert output.terminal.usage == {"input_tokens": 17, "output_tokens": 7, "total_tokens": 24,
+                                     "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 2},
+                                     "output_tokens_details": {"reasoning_tokens": 3}}
+    failed_turn = run.ending({"subtype": "error_during_execution", "is_error": True, "result": "it stopped"})
+    assert RunOutput().read(json.dumps(failed_turn)) == [] and failed_turn["response"]["error"]["code"] == "error_during_execution"
 
 
 def test_hg_fde_says_so_when_its_provider_does_not_speak_its_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
