@@ -46,13 +46,15 @@ In a language the image already has (Python 3, standard library only, unless the
 of `/harness/run`:
 
 - Read `$HG_TURN/request.json`. Give the CLI what it can take of it: `input` as the prompt, `instructions` as its
-  system prompt, and any other field of `request.schema.json` the CLI has a flag or a setting for.
+  system prompt, and any other field of `request.schema.json` the CLI has a flag or a setting for. What it has no
+  use for, leave alone, and say so on standard error.
 - Start the CLI on the request's provider. For each API the provider speaks there is a variable with its base
   URL: `$HG_PROVIDER_ANTHROPIC`, `$HG_PROVIDER_OPENAI_RESPONSES`, `$HG_PROVIDER_OPENAI_CHAT`,
   `$HG_PROVIDER_GEMINI`. Use the first one the CLI speaks, with `$HG_PROVIDER_KEY` and `$HG_MODEL`; when the
   provider speaks none of them, end with `response.failed` and say which APIs the CLI needs.
 - Print each thing the CLI reports as a line of `lines.schema.json`, using the item that says what happened: a
   command is a `shell_call`, a file written is an `apply_patch_call`, a call to a tool server is an `mcp_call`.
+  Print a call when the CLI makes it, and what came of it when it returns.
   Only Responses output goes to standard output; everything else goes to standard error.
 - Save the CLI's session id under `$HG_STATE` the moment it is known, and resume with it on the next turn.
 - When `$HG_TURN/previous.json` says the turn before did not complete, tell the CLI so.

@@ -125,7 +125,8 @@ requests to that server's host. Everything else is the package's to make of what
 | `max_output_tokens`, `temperature`, `top_p`, `truncation`, `context_management` | Passed to the CLI or its provider, where the CLI has a setting for it |
 | `metadata`, `user`, `safety_identifier` | The caller's own labels |
 
-A field the CLI has no use for is left alone. Say in the package's README which fields it honours.
+A field the CLI has no use for is left alone, and `run` says so on standard error: nothing is ignored unsaid. Say
+in the package's README which fields it honours.
 
 ### What it prints
 
@@ -171,12 +172,17 @@ and the first one that is wrong fails the turn, with a message naming the field.
 
 ### What an agent does, as output items
 
+Print a call when the CLI makes it, and what came of it when it returns, with the CLI's own id for the call as
+the `call_id` of both: a step that takes long is then seen while it runs. An item that is one thing from its
+start to its end (an `mcp_call`, a `web_search_call`) is printed as it begins and as it ends, with
+`response.output_item.added` and `response.output_item.done`.
+
 | The agent | The item |
 |---|---|
 | Says something | `message`. Its `phase` tells narration between steps (`commentary`) from the answer (`final_answer`); a `refusal` part is a refusal; an `output_text` part's `annotations` cite a web page (`url_citation`) or a file it made (`container_file_citation`) |
 | Thinks | `reasoning`, with `summary` parts |
-| Runs a command | `shell_call`, then `shell_call_output` with the same `call_id` |
-| Creates, changes or deletes a file | `apply_patch_call` (`operation.type`: `create_file`, `update_file`, `delete_file`), then `apply_patch_call_output` |
+| Runs a command | `shell_call`, then `shell_call_output` with the same `call_id`, and the command's own exit code |
+| Creates, changes or deletes a file | `apply_patch_call` (`operation.type`: `create_file`, `update_file`, `delete_file`; `operation.diff`: what changed), then `apply_patch_call_output` |
 | Connects to an MCP server, and calls one of its tools | `mcp_list_tools` (with `error` when it could not connect), `mcp_call` |
 | Searches the web, runs code, makes an image, uses a browser | `web_search_call`, `code_interpreter_call`, `image_generation_call`, `computer_call` |
 | Shortens its own context | `compaction` |
