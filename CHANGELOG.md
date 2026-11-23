@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.2.1
+
+`hg-fde` uses the Responses API as far as its agent CLI goes. Every package it builds is written from its own
+`run`, so that is the example of what a package can do with the one schema. Nothing of the platform changes. An
+installation's `hg-fde` is its own, as given at setup: add the package again to have this one
+(`tar -czf hg-fde.tar.gz -C packages/hg-fde .`, then `PUT /v1/harnesses/hg-fde` with it).
+
+- **More of a request reaches the agent.** `reasoning.effort`; `text.format`, a JSON schema, which the response's
+  one message then fits; an `input_image`, as an image; an `input_file`, sent inside the request or by address;
+  what a `developer` or a `system` message says, as instructions; what the agent said earlier (`assistant`); the
+  `authorization` of an MCP server, which was dropped; and `tool_choice: "none"`, with which it answers and does
+  nothing.
+- **What it leaves alone, it names.** A field, a tool or a part of the input its agent CLI has no use for is said
+  in the turn's log, and the contract now asks that of every package.
+- **Each thing it does is the item that says what it was.** A command is printed when it is called and its output
+  when it returns, with its own exit code. A file's change says whether it was created or updated, with the diff
+  the CLI reports. A tool server is listed with its tools (`mcp_list_tools`), or with the error when it did not
+  connect; a call to one begins and ends as one `mcp_call`, with its `output` or its `error`. A search and an
+  opened page are `web_search_call`. A call keeps the CLI's own id. Usage has cache writes beside cache reads.
+- **The console** shows what was searched for, the address of a page that was opened, and why a call to a tool
+  server failed.
+
 ## 5.2.0
 
 A harness package is two programs. This is a change of the package contract, to contract 2.
