@@ -133,7 +133,9 @@ def test_hg_fde_fails_a_request_it_cannot_honour_naming_what_and_starts_nothing(
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
     (tmp_path / "turn" / "files" / "file_2").mkdir(parents=True)
     (tmp_path / "turn" / "files" / "file_2" / "notes.txt").write_text("notes")
-    user = lambda *parts: {"input": [{"role": "user", "content": list(parts)}]}
+
+    def user(*parts: dict) -> dict:
+        return {"input": [{"role": "user", "content": list(parts)}]}
     for request, named in [
             ({"input": "x", "temperature": 0.2}, "the request's temperature"),
             ({"input": "x", "tools": [{"type": "function", "name": "f", "parameters": {}}]}, "a tool of type function"),
