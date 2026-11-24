@@ -4,8 +4,8 @@ and given this package's skill.
 
 It is also the example every package HG FDE builds is written from, so it uses the Responses API as far as Claude
 Code goes: every field of the request that Claude Code has a flag or a setting for is given to it, and each thing
-it does is printed as the output item or the stream event that says what it was. What it leaves alone, it names
-in the turn's log.
+it does is printed as the output item or the stream event that says what it was. What Claude Code cannot be given
+fails the turn, naming it: nothing is ignored unsaid.
 
 Claude Code prints one JSON object a line (`--output-format stream-json`): the provider's own stream events as
 they arrive, each finished block of a message, each tool's result, and a last `result` line.
@@ -23,12 +23,15 @@ import uuid
 
 HARNESS, TURN, CONTRACT = os.environ["HG_HARNESS"], os.environ["HG_TURN"], os.environ["HG_CONTRACT"]
 CLAUDE = os.path.join(HARNESS, "tools", "node_modules", ".bin", "claude")
-SESSION = os.path.join(os.environ["HG_STATE"], "session")      # Claude Code's own id for this session, kept with it
+STATE = os.environ["HG_STATE"]
+SESSION = os.path.join(STATE, "session")           # Claude Code's own id for this session, kept with it
+MEMORY = os.path.join(STATE, "memory")             # where Claude Code keeps its record, for the harness after this one
 GIVEN = "/tmp/given"                               # where a file sent inside the request is put, for this turn
-# What of a request this package acts on, and what the platform acts on or is the caller's own label: the rest
-# is named in the turn's log, so that nothing is ignored unsaid.
-ACTED_ON = {"input", "instructions", "reasoning", "text", "tools", "tool_choice"}
-ELSEWHERE = {"model", "previous_response_id", "stream", "background", "store", "metadata", "user", "safety_identifier"}
+# What of a request this package honours, and what the platform acts on or is the caller's own label: anything
+# else in a request fails the turn, so that nothing is ignored unsaid.
+HONOURED = {"input", "instructions", "reasoning", "text", "tools", "tool_choice"}
+ELSEWHERE = {"model", "stream", "stream_options", "background", "store", "previous_response_id", "metadata",
+             "user", "safety_identifier", "prompt_cache_key"}
 EFFORTS = {"minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"}
 FILE_TOOLS = ("Write", "Edit", "MultiEdit")        # how Claude Code changes a file: what changed is in the result
 WEB_TOOLS = {"WebSearch": lambda given: {"type": "search", "query": given.get("query", "")},
@@ -44,6 +47,10 @@ def say(line):
 def note(text):
     """A line for the turn's log, which is everything on standard error."""
     print(text, file=sys.stderr, flush=True)
+
+
+class Unsupported(Exception):
+    """The request asks for something Claude Code cannot be given. The message names it."""
 
 
 def read(path):
@@ -81,8 +88,8 @@ def part_of(part):
             file.write(base64.b64decode(inline[2] if inline else part["file_data"]))
     if kind == "input_file" and (path or part.get("file_url")):
         return {"type": "text", "text": f"A file given with this request: {path or part['file_url']}"}
-    note(f"left alone: a part of type {kind}, which this package cannot give Claude Code")
-    return None
+    raise Unsupported(f"an input part of type {kind}" + (
+        " that is no image or names no file it was given" if kind in ("input_image", "input_file") else ""))
 
 
 def asked(request):
@@ -105,7 +112,7 @@ def asked(request):
         elif role == "assistant":
             blocks += [{"type": "text", "text": f"Earlier, you said: {part['text']}"} for part in parts if part]
         else:
-            note(f"left alone: an input item of type {item.get('type')}")
+            raise Unsupported(f"an input item of type {item.get('type')}")
     return blocks, told
 
 
@@ -134,12 +141,19 @@ def command(request, session, told=()):
             # Too long for an argument, so a file; and read anew every turn, where Claude Code would otherwise
             # keep the first turn's for the whole session, this request's instructions never reaching it.
             "--append-system-prompt-file", knows(request, told), "--system-prompt-snapshot", "off"]
-    effort = EFFORTS.get((request.get("reasoning") or {}).get("effort"))
+    effort = (request.get("reasoning") or {}).get("effort")
+    if effort is not None and effort not in EFFORTS:
+        raise Unsupported(f"reasoning.effort {effort!r}")
     if effort:                                     # reasoning.effort: how hard it thinks
-        args += ["--effort", effort]
-    answer = (request.get("text") or {}).get("format") or {}
+        args += ["--effort", EFFORTS[effort]]
+    text = request.get("text") or {}
+    answer = text.get("format") or {}
     if answer.get("type") == "json_schema":        # text.format: the schema its answer must fit
         args += ["--json-schema", json.dumps(answer["schema"])]
+    elif answer.get("type") not in (None, "text"):
+        raise Unsupported(f"text.format of type {answer.get('type')}")
+    if text.get("verbosity") is not None:
+        raise Unsupported("text.verbosity")
     servers = {}                                   # tools of type mcp: servers it is connected to. A credential
     for tool in request.get("tools") or []:        # is a placeholder: the egress proxy puts the real one in
         if tool.get("type") == "mcp" and tool.get("server_url"):
@@ -147,8 +161,11 @@ def command(request, session, told=()):
             servers[tool["server_label"]] = {"type": "http", "url": tool["server_url"],
                                              "headers": {**token, **(tool.get("headers") or {})}}
         else:
-            note(f"left alone: a tool of type {tool.get('type')}, which Claude Code cannot be given")
-    if request.get("tool_choice") == "none":       # tool_choice none: it answers, and does nothing
+            raise Unsupported(f"a tool of type {tool.get('type')}" + (" with no server_url" if tool.get("type") == "mcp" else ""))
+    choice = request.get("tool_choice")
+    if choice not in (None, "auto", "none"):
+        raise Unsupported(f"tool_choice {json.dumps(choice)}")
+    if choice == "none":                           # tool_choice none: it answers, and does nothing
         args += ["--tools", "", "--strict-mcp-config"]
     elif servers:
         args += ["--mcp-config", json.dumps({"mcpServers": servers})]
@@ -278,9 +295,13 @@ def turn(request, session):
         if ended:
             continue
         if kind == "system" and event.get("subtype") == "init":
-            os.makedirs(os.path.dirname(SESSION), exist_ok=True)
+            os.makedirs(STATE, exist_ok=True)
             with open(SESSION, "w", encoding="utf-8") as file:
                 file.write(event["session_id"])                # kept at once: a stopped turn is continued too
+            with open(MEMORY, "w", encoding="utf-8") as file:   # and where its record is, for whoever takes over
+                file.write(f"{os.environ['HOME']}/.claude/projects/*/{event['session_id']}.jsonl: Claude Code's "
+                           "transcript of this session, one JSON object a line, oldest first: the person's "
+                           "messages, the agent's, and each tool call with its result.\n")
             servers(event)
         elif kind == "stream_event" and not event.get("parent_tool_use_id"):   # a subagent's words are not the answer
             if delta.get("type") == "text_delta" and not schema:
@@ -316,10 +337,14 @@ def main():
             "HG FDE needs a provider that speaks the Anthropic API: name one in the model line, as "
             "environment/hg-fde/provider/model.")}}})
     request = json.loads(read(os.path.join(TURN, "request.json")))
-    if unused := sorted(set(request) - ACTED_ON - ELSEWHERE):
-        note(f"left alone: Claude Code has no flag or setting for {', '.join(unused)}")
     session = read(SESSION) if os.path.exists(SESSION) else None
-    ended, code = turn(request, session)
+    try:
+        if unused := sorted(name for name in set(request) - HONOURED - ELSEWHERE if request[name] is not None):
+            raise Unsupported(f"the request's {unused[0]}")
+        ended, code = turn(request, session)
+    except Unsupported as what:                    # found before Claude Code is started: nothing has been done
+        return say({"type": "response.failed", "response": {"error": {"code": "unsupported_parameter", "message": (
+            f"HG FDE cannot give Claude Code {what}. Leave it out, or name another harness.")}}})
     if session and not ended and code != 0 and not stopped:
         # Its own record of the session is gone or unusable (a stopped turn can leave it so): start a new one.
         note(f"Claude Code could not resume session {session} (exit code {code}): starting a new one")

@@ -26,7 +26,10 @@ Find out:
 - How it is given a base URL, a key and a model, and which provider APIs it speaks: `anthropic`,
   `openai-responses`, `openai-chat`, `gemini`. A CLI that speaks only to its makers' service is named
   `environment/<name>/none/none`, and takes its makers' key from a secret of its environment.
-- Where it keeps a session, and how one is continued.
+- Where it keeps its record of a session, in what form, and how a session is continued. If that place is not
+  under `$HOME`, how it is moved there: only `/mind` (which is `$HOME`) and `/work` are kept between turns.
+- How it is given more tools, and how one run of it is ended from inside a tool call: that is how a tool the
+  caller runs is handed back.
 - Where its system prompt goes for one run, and whether that still applies on a continued session.
 - What it needs to act without asking, to load its configuration with no person there, and to turn off updates.
 
@@ -45,9 +48,12 @@ version it got. It names no CPU architecture.
 In a language the image already has (Python 3, standard library only, unless there is a reason). It has the shape
 of `/harness/run`:
 
-- Read `$HG_TURN/request.json`. Give the CLI what it can take of it: `input` as the prompt, `instructions` as its
-  system prompt, and any other field of `request.schema.json` the CLI has a flag or a setting for. What it has no
-  use for, leave alone, and say so on standard error.
+- Read `$HG_TURN/request.json`. Give the CLI what it can take of it: all of `input` as the prompt (a list may hold
+  a whole conversation), `instructions` as its system prompt for this turn only, and any other field of
+  `request.schema.json` the CLI has a flag or a setting for.
+- **Honour or fail.** A field the package does not honour, and that is not the platform's or a label (the contract
+  lists both), ends the turn with `response.failed`, code `unsupported_parameter`, and a message naming the field.
+  So does a value the CLI cannot take. Find this before the CLI is started. Nothing is left alone unsaid.
 - Start the CLI on the request's provider. For each API the provider speaks there is a variable with its base
   URL: `$HG_PROVIDER_ANTHROPIC`, `$HG_PROVIDER_OPENAI_RESPONSES`, `$HG_PROVIDER_OPENAI_CHAT`,
   `$HG_PROVIDER_GEMINI`. Use the first one the CLI speaks, with `$HG_PROVIDER_KEY` and `$HG_MODEL`; when the
@@ -57,6 +63,10 @@ of `/harness/run`:
   Print a call when the CLI makes it, and what came of it when it returns.
   Only Responses output goes to standard output; everything else goes to standard error.
 - Save the CLI's session id under `$HG_STATE` the moment it is known, and resume with it on the next turn.
+- Write `$HG_STATE/memory`: a few lines saying where the CLI keeps its record of this session, as paths under
+  `/mind`, and what form it is in. The harness that takes the session over is pointed at it.
+- When `$HG_TURN/handover.txt` is not empty, give its text to the CLI before the person's words: another harness
+  worked on the session, and the text says where its memory is.
 - When `$HG_TURN/previous.json` says the turn before did not complete, tell the CLI so.
 - Take `SIGTERM`, wait for the CLI to end, and print the stream's last event: `response.completed`, or
   `response.failed` with a message a person can act on.

@@ -5,8 +5,9 @@ one is in its package, and every package is run the same way. An organization st
 `hg-fde`, and owns every package it has.
 
 The platform speaks one schema, the OpenAI Responses API's. A caller sends a Responses request; the package's `run`
-reads that request, exactly as it was sent, and prints Responses output; the caller receives it. A package uses as
-much of the request and of the response as its agent can: nothing stands between the two but this page.
+reads that request, exactly as it was sent, and prints Responses output; the caller receives it. Nothing stands
+between the two but this page. What the request asks for, a package does or says it cannot: nothing is ignored
+unsaid.
 
 This is the whole contract. Every sandbox is given it, read-only, in `$HG_CONTRACT` (`/etc/hg/contract`): this
 page, and the Responses API as schemas.
@@ -55,7 +56,7 @@ or on its CLI's command line), and whoever sets up the environment gives it a se
 goes to. Say in the package's `README.md` what its environment must give it: what the image must have, the
 provider APIs its CLI speaks, and the variables, secrets and hosts it uses.
 
-This is contract `2`, which `GET /v1/platform` reports as `contract`.
+This is contract `3`, which `GET /v1/platform` reports as `contract`.
 
 ## The sandbox
 
@@ -93,12 +94,11 @@ while it works, prints the stream's last event, and exits 0.
 | `$HG_TURN/request.json` | The Responses request, as it was sent: every field of it |
 | `$HG_TURN/files/<id>/<name>` | Each uploaded file the request's input names by `file_id` |
 | `$HG_TURN/previous.json` | The response this request continues from (what its `previous_response_id` names), as the API returns it; `null` when it continues from none. Its `status` says how that turn ended, and its `output` holds what it asked its caller |
-| `$HG_TURN/history.json` | Earlier turns of the session this harness has not seen (another harness ran them), each with its `input` and its `output` |
-| `$HG_TURN/handover.txt` | One line naming those harnesses, or nothing |
-| `$HG_MIND` (`$HOME`), `$HG_WORK` | `/mind` and `/work`, the session's two folders: they persist from turn to turn |
+| `$HG_TURN/handover.txt` | The session's handover history, in words, when another harness worked on the session since this one last did; empty otherwise (see "Memory and handover") |
+| `$HG_MIND` (`$HOME`), `$HG_WORK` | `/mind` and `/work`, the session's two folders: they persist from turn to turn, whichever harness runs it |
 | `$HG_HARNESS` | `/harness`: the installed package |
 | `$HG_CONTRACT` | `/etc/hg/contract`: this page, and the schemas |
-| `$HG_STATE` | A folder under the mind for small values of the package's own: its CLI's session id, to resume it |
+| `$HG_STATE` | A folder under the mind for small values of the package's own: its CLI's session id, to resume it, and `memory`, its note of where its CLI keeps its record |
 | `$HG_PROVIDER_ANTHROPIC`, `$HG_PROVIDER_OPENAI_RESPONSES`, `$HG_PROVIDER_OPENAI_CHAT`, `$HG_PROVIDER_GEMINI` | The provider's base URL for each API it speaks, as the organization wrote it: one variable for each, and none for an API it does not speak. `run` uses the one its CLI speaks, and ends the turn with `response.failed`, saying which it needs, when there is none |
 | `$HG_MODEL`, `$HG_PROVIDER_KEY` | The model to call, and a placeholder for the provider's key. Both are empty when the request names no model (`none/none`) |
 | `$HG_ENVIRONMENT`, `$HG_HARNESS_NAME`, `$HG_PROVIDER` | The names in the request's `model` |
@@ -107,26 +107,32 @@ while it works, prints the stream's last event, and exits 0.
 
 ### The request
 
-`request.json` is the caller's body, checked only for being a Responses request. `model` is
-`environment/harness/provider/model`, which the platform has acted on already, as it has on `stream`, `background`,
-`store` and `previous_response_id`: streaming, storing and continuing a session are the same to `run` whichever
-the caller chose. A credential the request carries for an MCP server it names (`authorization`, a value of
-`headers`) is a placeholder here, as every secret in a sandbox is: the egress proxy puts the real one into
-requests to that server's host. Everything else is the package's to make of what its CLI can:
+`request.json` is the caller's body, checked only for being a Responses request. A credential the request carries
+for an MCP server it names (`authorization`, a value of `headers`) is a placeholder here, as every secret in a
+sandbox is: the egress proxy puts the real one into requests to that server's host.
 
-| In the request | What a package does with it |
+Every field of it is one of four things:
+
+| | Fields | What `run` does |
+|---|---|---|
+| The platform's | `model`, `stream`, `stream_options`, `background`, `store`, `previous_response_id`, `metadata` | Nothing: the platform has acted on each. Streaming, storing, and continuing a session are the same to `run` whichever the caller chose |
+| A label | `user`, `safety_identifier`, `prompt_cache_key` | Nothing: it changes nothing of the answer |
+| Honoured | Whichever of the rest the CLI has a flag or a setting for | Gives it to the CLI |
+| Not honoured | Whatever is left, and present | Ends the turn with `response.failed`, code `unsupported_parameter`, and a message that names the field and says to leave it out |
+
+There is no fifth: a field is never left alone and passed over. A value the CLI cannot take (a tool of a type it
+has no way to offer, an input part it cannot read, a `reasoning.effort` it has no level for) fails the turn the same
+way, naming it. Say in the package's README which fields it honours.
+
+| In the request | What honouring it means |
 |---|---|
-| `input` | The task. A string, or a list of items: messages (`user`, `developer`, `system`, `assistant`) with `input_text`, `input_image` and `input_file` parts, and the items that answer what an earlier turn ended on (`function_call_output`, `mcp_approval_response`, …) |
-| `instructions` | The CLI's system prompt for this turn |
+| `input` | The task: all of it. A string, or a list of items. A list may hold a whole conversation, when the caller keeps it and sends it each time: messages (`user`, `developer`, `system`, `assistant`) with `input_text`, `input_image`, and `input_file` parts, earlier calls with their outputs, and the items that answer what an earlier turn ended on (`function_call_output`, `mcp_approval_response`, …). Give the CLI every item, in order |
+| `instructions` | The CLI's system prompt for this turn, and for this turn only: they do not carry from one response to the next, so a CLI that keeps a session's first ones must be given each turn's anew |
 | `reasoning` | `effort`: how hard the CLI thinks. `summary`: whether its reasoning is printed |
 | `text` | `format`: a JSON schema the final answer must fit. `verbosity` |
 | `tools` | What the agent may use beyond its own tools. `mcp`: servers to connect its CLI to. `function` and `custom`: tools the caller runs (see "Asking the caller"). The rest (`web_search`, `shell`, `apply_patch`, …) name tools a CLI has of its own, to switch on or set up |
 | `tool_choice`, `parallel_tool_calls`, `max_tool_calls` | Which tools it may call, and how many steps it may take |
-| `max_output_tokens`, `temperature`, `top_p`, `truncation`, `context_management` | Passed to the CLI or its provider, where the CLI has a setting for it |
-| `metadata`, `user`, `safety_identifier` | The caller's own labels |
-
-A field the CLI has no use for is left alone, and `run` says so on standard error: nothing is ignored unsaid. Say
-in the package's README which fields it honours.
+| `max_output_tokens`, `temperature`, `top_p`, `truncation`, `context_management` | Passed to the CLI or its provider |
 
 ### What it prints
 
@@ -197,16 +203,45 @@ The Responses API has no status for a response that waits. A turn that needs its
 `previous_response_id`, and the CLI carries on from the session it saved. `previous.json` holds the response
 that asked, so a package can match an answer to the call it answers.
 
+A tool the caller runs is offered to the CLI as any other tool is: most take more tools from a tool server, so
+`run` starts a small one inside the sandbox that lists the request's `function` tools. When the CLI calls one, that
+server answers that the call is with the caller, `run` stops the CLI, and the call is printed. On the next turn
+`run` gives the CLI the output and resumes its session. A package that cannot do this fails a request that has such
+a tool, as it does any field it does not honour.
+
 | The agent needs | The turn's last item | The next request's input holds |
 |---|---|---|
 | A tool the caller runs (a `function` or `custom` tool of the request) | `function_call`, or `custom_tool_call` | `function_call_output`, or `custom_tool_call_output`, with the same `call_id` |
 | Leave to call an MCP tool | `mcp_approval_request` | `mcp_approval_response` |
 
-### Sessions and stopping
+### Memory and handover
+
+A session's whole state is its two folders. The platform saves both after every turn and puts them back before the
+next, whichever environment, harness, provider, or model that turn names. Everything else is gone with the sandbox.
+So a package has two duties to its CLI's memory, and both are things only a package can know:
+
+1. **Keep it inside the mind.** Most CLIs keep their record of a session under `$HOME`, which is the mind, and
+   need nothing. One that keeps it anywhere else is pointed into the mind by its package. `~/.cache` is never
+   saved.
+2. **Say where it is.** Write `$HG_STATE/memory` every turn: a few lines, in your own words, of where your CLI
+   keeps its record of this session, as paths under `/mind`, and what form it is in.
+
+   ```
+   /mind/.my-agent/sessions/0199a2.jsonl: this session's transcript, one JSON object a line, oldest first:
+   the person's messages, the agent's, and each tool call with its result.
+   ```
 
 A session continues when `run` gives its CLI the CLI's own session id from the turn before: save it under
 `$HG_STATE` the moment the CLI reports it, and resume with it. When it cannot be resumed, start a new session and
 say so on standard error.
+
+A session may change harness from one turn to the next. The platform hands the new harness nothing of what was
+said. When another harness worked on the session since yours last did, `handover.txt` holds the session's handover
+history: who worked on it, in order, the responses each gave, and each one's `memory` note. **When `handover.txt` is
+not empty, give its text to your CLI with the request, before the person's words.** The CLI reads what it needs
+from the other harness's memory by itself. A harness that returns to a session is handed over to as well.
+
+### Stopping
 
 When a turn is stopped (cancelled, or past its environment's time limit), `SIGTERM` is sent to `run` and to
 everything it started, at once, and they have 15 seconds to end. The sandbox ends when `run` does,
@@ -235,3 +270,7 @@ for line in cli.stdout:                                 # the CLI's output, a li
                           "action": {"commands": [event["command"]]}}), flush=True)
 print(json.dumps({"type": "response.completed"}), flush=True)
 ```
+
+It is the shape, and not yet the whole contract: a finished `run` also fails a request with a field it does not
+honour, gives its CLI `handover.txt`, resumes the CLI's session, and writes `$HG_STATE/memory`. The `shell` package
+does each of them, in a few lines.
