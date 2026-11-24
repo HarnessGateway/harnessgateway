@@ -1,5 +1,30 @@
 # Changelog
 
+## 6.0.0
+
+The platform, rebuilt to its specification ([SPEC.md](SPEC.md)). The API's routes, the definitions, the sandbox,
+the egress proxy, the console and the deployment are as they were. What changes is how a session is handed from
+one harness to another, what a package owes a request, and what `store: false` means. This is a change of the
+package contract, to contract 3: a package that reads `history.json` no longer finds it, and every package should
+be brought to 3.
+
+- **A handover gives a harness no history.** `history.json` is gone. `handover.txt` is the session's handover
+  history, in words: who worked on it, in order, the responses each gave, and where each harness keeps its memory.
+  The new harness reads what it needs from the mind the session's harnesses share. It is empty unless the turn
+  before was another harness's.
+- **A package keeps its harness's memory in the mind, and says where.** `run` writes `$HG_STATE/memory`: a few
+  lines of where its CLI keeps its record of the session, and in what form. That note is what the next harness is
+  pointed at.
+- **Honour or fail.** A field of a request that a package does not honour, and that is not the platform's or a
+  label, ends the turn with `response.failed`, code `unsupported_parameter`, and a message naming the field. It
+  was left alone, and noted in the turn's log.
+- **`store: false` keeps nothing.** The turn runs in a session of its own and is never saved. With
+  `previous_response_id` it starts from that response's state and leaves that session as it was; it used to
+  become that session's next turn, and be deleted from it.
+- **`shell` and `hg-fde` are brought to contract 3.** `shell` honours `input` alone and keeps a record of the
+  commands it ran. `hg-fde` fails what its CLI cannot be given before the CLI is started, and notes where its
+  CLI's transcript is. An installation's own copies are as given at setup: add the packages again to have these.
+
 ## 5.2.1
 
 `hg-fde` uses the Responses API as far as its agent CLI goes. Every package it builds is written from its own

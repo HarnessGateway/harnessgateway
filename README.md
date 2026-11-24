@@ -79,7 +79,23 @@ again = client.responses.create(model="dev/my-agent/deepseek/deepseek-flash", in
 ```
 
 Blocking, `stream`, `background`, `store`, cancel, delete and input items work as the API describes them.
-`previous_response_id` of a session's latest response continues it; of an earlier one, forks it.
+`previous_response_id` of a session's latest response continues it; of an earlier one, forks it: that is rewind.
+
+Nothing is ignored unsaid. A request the API would not take is refused, naming the field; a field a harness cannot
+honour fails the response, naming the field.
+
+## A session, and changing what runs it
+
+A session's whole state is two folders: the mind (`/mind`, the agent's home, where a harness keeps its own memory)
+and the work (`/work`). Both are saved after every turn, as a snapshot that costs only what changed, so any
+response can be returned to.
+
+Any part of the model line may change from one turn to the next. When the harness changes, the new one is handed
+nothing that was said: it is told who worked on the session and where each keeps its memory, and reads up by
+itself, in the mind they share.
+
+A caller may keep the conversation instead, as the API allows: send the whole of it in `input`, with
+`store: false`, and nothing is held here.
 
 ## The whole API
 
@@ -132,6 +148,7 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `packages/`, `environments/` | What an organization starts with: the `shell` and `hg-fde` packages, and the `default` environment that carries them |
 | `console/` | The console: plain JavaScript modules, served as they are. `lib/` (the API, the DOM, files), `components/` (what pages are made of), `pages/` (one for each), `styles/` |
 
+[SPEC.md](SPEC.md) is the specification: everything needed to build the platform, and what the code is held to.
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) says how the parts work together.
 
 ## Checks

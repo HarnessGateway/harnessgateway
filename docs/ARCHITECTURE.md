@@ -29,10 +29,10 @@ POST /v1/responses ──▶ validate ──▶ resolve the model line ──▶
         │
         ├─ install     the harness's package for the environment's image, once ever, held by a database lock
         ├─ restore     the session's two folders from its last snapshot, unless they already hold it
-        ├─ inputs      request.json, history.json, handover.txt, uploaded files, the startup script
+        ├─ inputs      request.json, previous.json, handover.txt, uploaded files, the startup script
         ├─ grant       what this sandbox may reach, with its secrets, kept sealed until the sandbox ends
         ├─ sandbox     one hardened container; each line it prints is an event, a log line, or the end
-        ├─ save        the two folders as a snapshot: only chunks not already kept are written
+        ├─ save        the two folders as a snapshot: only chunks not already kept are written (unless store is false)
         └─ conclude    the response, once; the event that ends its stream
 ```
 
@@ -97,6 +97,25 @@ restores them first.
 
 The Docker driver keeps every folder as a sub-folder of one data volume and does the file work itself. A sandbox is
 given its own sub-folders with `volume-subpath`, and never the volume.
+
+## Handover
+
+A session may change harness from one turn to the next, and the platform hands the new one nothing that was said.
+It writes the session's handover history into the turn's inputs (`handover.txt`): every stint, which is consecutive
+turns on one model line, with its responses, and for each harness the note its own package left of where its memory
+is (`$HG_STATE/memory`, read from the snapshot the turn continues from). The harness reads what it needs from the
+mind, which every harness of a session shares.
+
+The history is derived from the turn chain, so it is stored nowhere and follows a fork by itself. Only a package
+knows where its harness keeps its record, so only a package says; the words around what it says are in
+`domain/handover.py`, the one place, and are the same for every harness.
+
+## Who keeps the conversation
+
+Both of the Responses API's ways work. With `previous_response_id` the server keeps it: the session continues (or
+forks, from an earlier response), its folders are restored, and the harness resumes its own memory. Or the caller
+keeps it and sends the whole of it in `input`; with `store: false` nothing is held here at all: the turn runs in a
+session of its own, no snapshot is taken, and the session is removed once the answer is given.
 
 ## Many processes
 
