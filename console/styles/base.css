@@ -1,0 +1,54 @@
+/* What everything is drawn with: the colours, light or dark as the browser prefers, the elements and the controls. */
+:root {
+  --bg: #fafaf9; --surface: #ffffff; --sunk: #f4f4f2; --line: #e8e6e3; --line-strong: #d6d3cf;
+  --ink: #1b1a19; --muted: #6e6b66; --faint: #a19d97;
+  --accent: #5b5bd6; --accent-soft: #eeeefc; --on-ink: #ffffff;
+  --ok: #18794e; --ok-soft: #e4f4ea; --warn: #99600a; --warn-soft: #fbf1dc; --bad: #c0362c; --bad-soft: #fcebe9;
+  --shadow: 0 1px 2px rgba(24, 22, 18, .04), 0 2px 8px rgba(24, 22, 18, .04);
+  --lift: 0 4px 10px rgba(24, 22, 18, .06), 0 16px 40px rgba(24, 22, 18, .10);
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e0e0f; --surface: #171718; --sunk: #1e1e20; --line: #29292c; --line-strong: #3a3a3f;
+    --ink: #ededee; --muted: #9a9aa2; --faint: #6c6c74;
+    --accent: #9b9bf7; --accent-soft: #23233f; --on-ink: #101011;
+    --ok: #5fcf93; --ok-soft: #142a1e; --warn: #e2ad57; --warn-soft: #2f2410; --bad: #ff8d83; --bad-soft: #391a17;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4); --lift: 0 12px 36px rgba(0, 0, 0, .55);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+[hidden] { display: none !important; }
+a { color: inherit; text-decoration: none; }
+h1 { font-size: 24px; line-height: 1.2; letter-spacing: -.02em; font-weight: 650; margin: 0; }
+h2 { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 28px 0 10px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--muted); } .bad { color: var(--bad); } .small { font-size: 12.5px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* controls */
+button { font: inherit; font-weight: 550; height: 34px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 9px;
+         background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px;
+         transition: background .12s, border-color .12s, opacity .12s, transform .06s; }
+button:hover { background: var(--sunk); } button:active { transform: translateY(.5px); } button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); } button.primary:hover:not(:disabled) { opacity: .86; background: var(--ink); }
+button.quiet { border-color: transparent; background: none; color: var(--muted); } button.quiet:hover { background: var(--sunk); color: var(--ink); }
+button.danger:hover { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+button.primary.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+button.link { height: auto; padding: 0; border: 0; background: none; color: var(--accent); font-weight: 500; }
+button.square { width: 34px; padding: 0; justify-content: center; }
+input, select, textarea { font: inherit; width: 100%; height: 36px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 9px;
+                          background: var(--surface); color: var(--ink); transition: border-color .12s, box-shadow .12s; }
+textarea { height: auto; padding: 9px 11px; font: 12.5px/1.6 var(--mono); resize: vertical; min-height: 76px; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input[readonly] { background: var(--sunk); color: var(--muted); }
+input[type=checkbox], input[type=radio] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); flex: none; padding: 0; }
+label { display: block; font-size: 12.5px; font-weight: 600; margin: 16px 0 6px; }
+.hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.check { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 400; cursor: pointer; margin: 14px 0 0; }

@@ -1,0 +1,5 @@
+{
+  "image": "node:22",
+  "harnesses": ["hg-fde", "shell"],
+  "network": { "mode": "open" }
+}

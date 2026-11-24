@@ -1,0 +1,21 @@
+#!/bin/sh
+# install: Claude Code at a pinned version, by its makers' own method (npm), under $HG_HARNESS/tools.
+set -eu
+VERSION=2.1.330
+
+for need in node npm python3; do
+  command -v "$need" >/dev/null 2>&1 || {
+    echo "this image has no $need: Claude Code needs Node.js 22 or later, and this package's run needs python3" >&2
+    exit 1
+  }
+done
+
+# Claude Code's own install script puts the binary for this machine in place. It is run here by name, so that the
+# result is the same whether or not this image's npm runs packages' scripts by itself.
+npm install --prefix "$HG_HARNESS/tools" --no-audit --no-fund --loglevel=error --ignore-scripts \
+  "@anthropic-ai/claude-code@$VERSION"
+node "$HG_HARNESS/tools/node_modules/@anthropic-ai/claude-code/install.cjs"
+
+got=$("$HG_HARNESS/tools/node_modules/.bin/claude" --version | cut -d' ' -f1)
+[ "$got" = "$VERSION" ] || { echo "installed Claude Code $got, and $VERSION was wanted" >&2; exit 1; }
+echo "Claude Code $got is installed"

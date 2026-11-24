@@ -1,0 +1,7 @@
+#!/bin/sh
+# install: runs once for each environment image, before the first turn on it.
+#
+# A package for a real agent CLI installs that CLI here, at a pinned version, into $HG_HARNESS (this folder is
+# read-only once a turn runs). This one has nothing to install: it checks the image has what its `run` needs.
+set -eu
+command -v python3 >/dev/null 2>&1 || { echo "this image has no python3, which this package's run needs" >&2; exit 1; }

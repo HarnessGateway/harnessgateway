@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""run: one turn. The request's input is the command; every line it prints is a piece of the answer.
+
+This is the whole of the contract, at its smallest: read the Responses request, print Responses output, and end
+with the stream's last event.
+"""
+import json
+import os
+import signal
+import subprocess
+
+
+def say(line):
+    print(json.dumps(line), flush=True)
+
+
+def failed(code, message):
+    say({"type": "response.failed", "response": {"error": {"code": code, "message": message}}})
+
+
+def asked(given):
+    """What the caller sent, as text: a string input as it is, or the text of a list input's user messages."""
+    if isinstance(given, str):
+        return given
+    texts = []
+    for item in given:
+        content = item.get("content") if item.get("role") == "user" else None
+        texts += [content] if isinstance(content, str) else [
+            part["text"] for part in content or [] if part.get("type") == "input_text"]
+    return "\n\n".join(texts)
+
+
+with open(os.path.join(os.environ["HG_TURN"], "request.json"), encoding="utf-8") as file:
+    command = asked(json.load(file)["input"])
+if not command.strip():
+    failed("no_command", "The input is empty: there is no command to run.")
+    raise SystemExit
+# A stop is sent to this program and to the command at once. This one waits for the command to end, and so does
+# the sandbox: taking the signal, and doing nothing with it, is how it outlives what it started.
+signal.signal(signal.SIGTERM, lambda *_: None)
+ran = subprocess.Popen(["sh", "-c", "exec 2>&1\n" + command], stdout=subprocess.PIPE, text=True, errors="replace")
+for line in ran.stdout:
+    say({"type": "response.output_text.delta", "delta": line})       # a piece of the answer: the platform keeps the item
+if ran.wait() == 0:
+    say({"type": "response.completed"})
+else:
+    failed("command_failed", f"The command exited with code {ran.returncode}.")
