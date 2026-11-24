@@ -107,7 +107,10 @@ while it works, prints the stream's last event, and exits 0.
 
 ### The request
 
-`request.json` is the caller's body, checked only for being a Responses request. A credential the request carries
+`request.json` is the caller's body, checked only for being a Responses request: nothing in it is a field the API
+does not have, or a value of the wrong kind. What a caller left out is not put in. The schema calls fields required
+that OpenAI fills in when they are missing, so read each as OpenAI would have it: an image with no `detail` is
+`auto`. A credential the request carries
 for an MCP server it names (`authorization`, a value of `headers`) is a placeholder here, as every secret in a
 sandbox is: the egress proxy puts the real one into requests to that server's host.
 

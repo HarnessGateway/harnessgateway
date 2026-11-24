@@ -73,8 +73,10 @@ In this order; the first failure is the answer, as the OpenAI error envelope
 2. `model` and `input` are present.
 3. `conversation` and `prompt` are refused with words that say what to do instead: they name state OpenAI keeps,
    and there is none of it here. (A session is continued with `previous_response_id`; a prompt is sent as text.)
-4. The body validates, strictly, against the SDK's `ResponseCreateParamsBase` plus `stream`, with unknown fields
-   forbidden. The refusal names the field.
+4. The body validates, strictly, against the SDK's `ResponseCreateParamsBase` plus `stream`: an unknown field, or
+   a value of the wrong kind, is refused at any depth, and the refusal says where (`input.0.content.1.detail`).
+   What is left out is not refused. The SDK's types call fields required that OpenAI's server fills in (an image's
+   `detail`), so only `type` is asked of everything that has one; the rest is the package's to default.
 5. `metadata` has at most 16 pairs, none with a key beginning `hg_` (the platform writes those).
 6. `store: false` with `background: true` is refused: a background response is fetched later.
 7. The model line parses (four parts; the last may hold slashes and is at most 200 characters; the first three
