@@ -212,7 +212,8 @@ consecutive turns with the same model line, oldest first. For each harness in th
 harness's note, `mind/.harnessgateway/<harness>/memory`, from the parent snapshot's manifest and chunks. A note
 longer than 16 KiB is not copied: the history gives its path instead.
 
-`handover.txt` is empty unless the turn is a handover. Then it is, with the session's own values:
+`handover.txt` is empty unless the turn is a handover. Then it is this, with the session's own values (each
+paragraph is one line; they are wrapped here to fit the page):
 
 ```
 Handover. Other agent harnesses worked on this session before this turn. To the person you are all one

@@ -53,7 +53,7 @@ def handover(worked: Sequence[Stint], harness: str, notes: Mapping[str, str | No
         return "Its memory: " + (note.replace("\n", "\n   ") or f"it left no note of where; look in {contract.MIND}.")
 
     return "\n".join([
-        "Handover. Other agent harnesses worked on this session before this turn. To the person you are all one",
+        "Handover. Other agent harnesses worked on this session before this turn. To the person you are all one "
         "assistant: carry on from where the last one stopped.",
         "",
         "Nothing of what was said or done is repeated here. Every harness of a session shares its two folders: the "
