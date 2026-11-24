@@ -62,7 +62,8 @@ def load_run(tmp_path: Path, **turn_files: str):
     (tmp_path / "turn").mkdir(exist_ok=True)
     for name, text in {"previous.json": "null", "handover.txt": "", **turn_files}.items():
         (tmp_path / "turn" / name).write_text(text)
-    os.environ.update(HG_HARNESS=str(FDE), HG_TURN=str(tmp_path / "turn"), HG_CONTRACT=str(GIVEN), HG_STATE=str(tmp_path / "state"))
+    os.environ.update(HG_HARNESS=str(FDE), HG_TURN=str(tmp_path / "turn"), HG_CONTRACT=str(GIVEN), HG_STATE=str(tmp_path / "state"),
+                      HG_MODEL="a-model", HG_PROVIDER_KEY="hgs_key")
     loader = importlib.machinery.SourceFileLoader("hg_fde_run", str(FDE / "run"))
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader("hg_fde_run", loader))
     loader.exec_module(module)
@@ -70,7 +71,7 @@ def load_run(tmp_path: Path, **turn_files: str):
 
 
 def test_hg_fde_is_told_who_it_is_the_contract_and_every_schema_in_full_each_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(os, "environ", {**os.environ, "HG_PROVIDER_ANTHROPIC": "https://api.example.com"})
     monkeypatch.setattr(sys, "dont_write_bytecode", True)          # loading it leaves nothing in the package's folder
     run = load_run(tmp_path)
     known = Path(run.knows({"instructions": "Answer in French."})).read_text()
@@ -78,19 +79,23 @@ def test_hg_fde_is_told_who_it_is_the_contract_and_every_schema_in_full_each_tur
     for name in ("request", "response", "stream", "lines"):
         whole = json.loads((GIVEN / f"{name}.schema.json").read_text())
         assert json.dumps(whole, separators=(",", ":")) in known, name            # whole: nothing of it left out
-    args = run.command({"instructions": "x"}, "sess-1")
-    assert args[args.index("--system-prompt-snapshot") + 1] == "off" and args[-2:] == ["--resume", "sess-1"]
+    args, variables, message = run.command({"input": "Carry on.", "instructions": "x"}, "sess-1")
+    assert args[args.index("--system-prompt-snapshot") + 1] == "off" and args[args.index("--resume") + 1] == "sess-1"
     assert "--append-system-prompt" not in args                    # too long for an argument: it is given as a file
-    assert run.asked({"input": "Carry on."}) == ([{"type": "text", "text": "Carry on."}], [])
+    assert variables["ANTHROPIC_BASE_URL"] == "https://api.example.com" and variables["ANTHROPIC_MODEL"] == "a-model"
+    assert message == {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "Carry on."}]}}
+    # one function for each primitive of a harness, which together are the command: it is the example a package is written from
+    assert args[:len(run.control_flow())] == run.control_flow() and args[-len(run.output({})):] == run.output({})
+    assert all(callable(getattr(run, name)) for name in ("as_input", "context", "model_interface", "output", "control_flow"))
     cut = load_run(tmp_path, **{"previous.json": '{"status": "cancelled"}', "handover.txt": "Handover. Other agent harnesses worked on this session.\n"})
-    assert [block["text"] for block in cut.asked({"input": "Carry on."})[0]] == [      # the handover before the person's words
+    assert [block["text"] for block in cut.command({"input": "Carry on."}, None)[2]["message"]["content"]] == [      # the handover before the person's words
         "Your last turn did not finish: it ended as cancelled.", "Handover. Other agent harnesses worked on this session.", "Carry on."]
 
 
 def test_hg_fde_gives_its_cli_every_field_of_the_request_the_cli_has_a_flag_for(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                                                 capsys: pytest.CaptureFixture[str]):
     """It is the example every package it builds is written from: what it does with a request is what they will."""
-    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(os, "environ", {**os.environ, "HG_PROVIDER_ANTHROPIC": "https://api.example.com"})
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
     (tmp_path / "turn" / "files" / "file_1").mkdir(parents=True)
     (tmp_path / "turn" / "files" / "file_1" / "shot.png").write_bytes(b"png")
@@ -98,7 +103,7 @@ def test_hg_fde_gives_its_cli_every_field_of_the_request_the_cli_has_a_flag_for(
     (tmp_path / "turn" / "files" / "file_2" / "notes.txt").write_text("notes")
     run = load_run(tmp_path)
     monkeypatch.setattr(run, "GIVEN", str(tmp_path / "given"))
-    blocks, told = run.asked({"input": [
+    blocks, told = run.as_input({"input": [
         {"role": "developer", "content": "Be brief."}, {"role": "assistant", "content": [{"type": "output_text", "text": "Hello."}]},
         {"role": "user", "content": [
             {"type": "input_text", "text": "Look."}, {"type": "input_image", "image_url": "data:image/png;base64,QUJD"},
@@ -116,12 +121,12 @@ def test_hg_fde_gives_its_cli_every_field_of_the_request_the_cli_has_a_flag_for(
         {"type": "text", "text": "A file given with this request: https://example.com/a.pdf"}]
     assert Path(run.knows({"instructions": "Answer in French."}, told)).read_text().endswith("Answer in French.\n\nBe brief.")
     schema = {"type": "object", "properties": {"word": {"type": "string"}}}
-    args = run.command({"reasoning": {"effort": "minimal"}, "text": {"format": {"type": "json_schema", "name": "n", "schema": schema}}, "tools": [
+    args, _, _ = run.command({"input": "x", "reasoning": {"effort": "minimal"}, "text": {"format": {"type": "json_schema", "name": "n", "schema": schema}}, "tools": [
         {"type": "mcp", "server_label": "docs", "server_url": "https://mcp.example.com/mcp", "authorization": "hgs_1", "headers": {"X-Key": "hgs_2"}}]}, None)
     assert args[args.index("--effort") + 1] == "low" and json.loads(args[args.index("--json-schema") + 1]) == schema
     assert json.loads(args[args.index("--mcp-config") + 1]) == {"mcpServers": {"docs": {
         "type": "http", "url": "https://mcp.example.com/mcp", "headers": {"Authorization": "Bearer hgs_1", "X-Key": "hgs_2"}}}}
-    alone = run.command({"reasoning": {"summary": "auto"}, "text": {"format": {"type": "text"}}, "tool_choice": "none", "tools": [{"type": "mcp", "server_label": "d", "server_url": "https://x"}]}, None)
+    alone, _, _ = run.command({"input": "x", "reasoning": {"summary": "auto"}, "text": {"format": {"type": "text"}}, "tool_choice": "none", "tools": [{"type": "mcp", "server_label": "d", "server_url": "https://x"}]}, None)
     assert "--effort" not in alone and "--mcp-config" not in alone and alone[alone.index("--tools") + 1] == ""
     assert args[args.index("--input-format") + 1] == "stream-json"            # how an image reaches it
 

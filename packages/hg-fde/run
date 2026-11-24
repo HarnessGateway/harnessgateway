@@ -7,6 +7,10 @@ Code goes: every field of the request that Claude Code has a flag or a setting f
 it does is printed as the output item or the stream event that says what it was. What Claude Code cannot be given
 fails the turn, naming it: nothing is ignored unsaid.
 
+It has the shape the skill teaches: one function for each primitive of a harness (`as_input`, `context`,
+`model_interface`, `output`, `control_flow`), which together are Claude Code's command, and then the reading of what
+Claude Code prints.
+
 Claude Code prints one JSON object a line (`--output-format stream-json`): the provider's own stream events as
 they arrive, each finished block of a message, each tool's result, and a last `result` line.
 """
@@ -58,7 +62,7 @@ def read(path):
         return file.read()
 
 
-# the request
+# the request, by the five primitives of a harness: input, context, model interface, output, control flow
 
 
 def uploaded(file_id):
@@ -92,25 +96,21 @@ def part_of(part):
         " that is no image or names no file it was given" if kind in ("input_image", "input_file") else ""))
 
 
-def asked(request):
-    """The request's input as Claude Code takes it: one message from the person, and what a developer or the
-    system said in the input, which is instructions. Before the person's words it is told how the turn before
-    ended, if it did not finish, and who worked on the session since; what the agent itself said earlier is given
-    as that."""
-    before = (json.loads(read(os.path.join(TURN, "previous.json"))) or {}).get("status")
-    cut = f"Your last turn did not finish: it ended as {before}." if before not in (None, "completed") else ""
-    blocks = [{"type": "text", "text": text} for text in (cut, read(os.path.join(TURN, "handover.txt")).strip()) if text]
-    given, told = request["input"], []
+def as_input(request):
+    """Input: the request's input as the one message Claude Code takes. The person's words, images and files are
+    the message; what a developer or the system said in the input is instructions; and what the agent itself said
+    earlier, when the caller keeps the conversation and sends all of it, is given as that."""
+    given, blocks, told = request["input"], [], []
     for item in [{"role": "user", "content": given}] if isinstance(given, str) else given:
         content, role = item.get("content"), item.get("role")
         parts = [part_of(part) for part in ([{"type": "input_text", "text": content}] if isinstance(content, str)
                                             else content or [])]
         if role == "user":
-            blocks += [part for part in parts if part]
+            blocks += parts
         elif role in ("developer", "system"):
-            told += [part["text"] for part in parts if part and part["type"] == "text"]
+            told += [part["text"] for part in parts if part["type"] == "text"]
         elif role == "assistant":
-            blocks += [{"type": "text", "text": f"Earlier, you said: {part['text']}"} for part in parts if part]
+            blocks += [{"type": "text", "text": f"Earlier, you said: {part['text']}"} for part in parts]
         else:
             raise Unsupported(f"an input item of type {item.get('type')}")
     return blocks, told
@@ -132,20 +132,39 @@ def knows(request, told=()):
     return path
 
 
-def command(request, session, told=()):
-    """Claude Code, headless, acting without asking (the sandbox is what holds it), with everything of the
-    request it has a flag for."""
-    args = [CLAUDE, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-            "--include-partial-messages", "--dangerously-skip-permissions",
-            "--plugin-dir", HARNESS,               # the package is a plugin: its skills are found there
-            # Too long for an argument, so a file; and read anew every turn, where Claude Code would otherwise
-            # keep the first turn's for the whole session, this request's instructions never reaching it.
-            "--append-system-prompt-file", knows(request, told), "--system-prompt-snapshot", "off"]
+def context(request, told, session):
+    """Context: what Claude Code knows before the person speaks. Everything in `knows`, as its system prompt:
+    too long for an argument, so a file, and read anew every turn, where Claude Code would otherwise keep the
+    first turn's for the whole session and this request's instructions would never reach it. The package itself,
+    as a plugin: its skill is found there. Its own session, resumed. And, said first in the message, how the turn
+    before ended if it did not finish, and the session's handover history when another harness worked on it."""
+    before = (json.loads(read(os.path.join(TURN, "previous.json"))) or {}).get("status")
+    cut = f"Your last turn did not finish: it ended as {before}." if before not in (None, "completed") else ""
+    first = [{"type": "text", "text": text} for text in (cut, read(os.path.join(TURN, "handover.txt")).strip()) if text]
+    return ["--plugin-dir", HARNESS, "--append-system-prompt-file", knows(request, told), "--system-prompt-snapshot", "off",
+            *(["--resume", session] if session else [])], first
+
+
+def model_interface(request):
+    """Model interface: the provider's endpoint, its key and the model, which Claude Code takes as variables, and
+    how hard it thinks. The key is a placeholder: the egress proxy puts the real one in."""
     effort = (request.get("reasoning") or {}).get("effort")
     if effort is not None and effort not in EFFORTS:
         raise Unsupported(f"reasoning.effort {effort!r}")
-    if effort:                                     # reasoning.effort: how hard it thinks
-        args += ["--effort", EFFORTS[effort]]
+    model = os.environ["HG_MODEL"]
+    return ["--effort", EFFORTS[effort]] if effort else [], {
+        **os.environ, "ANTHROPIC_BASE_URL": os.environ["HG_PROVIDER_ANTHROPIC"],
+        "ANTHROPIC_AUTH_TOKEN": os.environ["HG_PROVIDER_KEY"], "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_SMALL_FAST_MODEL": model, "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,      # its background model, by both its names
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
+        "npm_config_cache": os.path.join(os.environ["HOME"], ".cache", "npm")}      # ~/.cache is never saved
+
+
+def output(request):
+    """Output: every step as a line of JSON, with the provider's own events as they arrive; an answer that fits
+    the schema the request asks for; and the tools it may use beyond its own, which are the tool servers the
+    request names. A credential of one is a placeholder: the egress proxy puts the real one in."""
+    args = ["--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     text = request.get("text") or {}
     answer = text.get("format") or {}
     if answer.get("type") == "json_schema":        # text.format: the schema its answer must fit
@@ -154,8 +173,8 @@ def command(request, session, told=()):
         raise Unsupported(f"text.format of type {answer.get('type')}")
     if text.get("verbosity") is not None:
         raise Unsupported("text.verbosity")
-    servers = {}                                   # tools of type mcp: servers it is connected to. A credential
-    for tool in request.get("tools") or []:        # is a placeholder: the egress proxy puts the real one in
+    servers = {}
+    for tool in request.get("tools") or []:
         if tool.get("type") == "mcp" and tool.get("server_url"):
             token = {"Authorization": f"Bearer {tool['authorization']}"} if tool.get("authorization") else {}
             servers[tool["server_label"]] = {"type": "http", "url": tool["server_url"],
@@ -169,20 +188,26 @@ def command(request, session, told=()):
         args += ["--tools", "", "--strict-mcp-config"]
     elif servers:
         args += ["--mcp-config", json.dumps({"mcpServers": servers})]
-    return args + (["--resume", session] if session else [])
+    return args
 
 
-def environment():
-    """How Claude Code is told its provider. The key is a placeholder: the egress proxy puts the real one in."""
-    model = os.environ["HG_MODEL"]
-    return {**os.environ, "ANTHROPIC_BASE_URL": os.environ["HG_PROVIDER_ANTHROPIC"],
-            "ANTHROPIC_AUTH_TOKEN": os.environ["HG_PROVIDER_KEY"], "ANTHROPIC_MODEL": model,
-            "ANTHROPIC_SMALL_FAST_MODEL": model, "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,      # its background model, by both its names
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
-            "npm_config_cache": os.path.join(os.environ["HOME"], ".cache", "npm")}      # ~/.cache is never saved
+def control_flow():
+    """Control flow: run once with nobody there and exit, given its message on standard input, and acting
+    without asking: the sandbox is what holds it. A stop is a signal, which `main` takes."""
+    return [CLAUDE, "-p", "--input-format", "stream-json", "--dangerously-skip-permissions"]
 
 
-# the response
+def command(request, session):
+    """The five primitives together: Claude Code's command, its variables, and the message it is given. What
+    the request asks that Claude Code cannot be given is found here, before anything is started."""
+    blocks, told = as_input(request)
+    known, first = context(request, told, session)
+    thinking, variables = model_interface(request)
+    return ([*control_flow(), *known, *thinking, *output(request)], variables,
+            {"type": "user", "message": {"role": "user", "content": first + blocks}})
+
+
+# the response: each line Claude Code prints, as the Responses output that says what it was
 
 
 def text_of(content):
@@ -277,12 +302,11 @@ def ending(result, schema=False):
 
 def turn(request, session):
     """Run Claude Code once. Returns whether it reached its last line, and its exit code."""
-    blocks, told = asked(request)
-    args = command(request, session, told)
+    args, variables, message = command(request, session)
     schema = "--json-schema" in args
-    cli = subprocess.Popen(args, env=environment(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    cli = subprocess.Popen(args, env=variables, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                            text=True, encoding="utf-8", errors="replace")
-    cli.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": blocks}}) + "\n")
+    cli.stdin.write(json.dumps(message) + "\n")
     cli.stdin.close()
     calls, ended = {}, False                       # tool calls awaiting their results
     for line in cli.stdout:
