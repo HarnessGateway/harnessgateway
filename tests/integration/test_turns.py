@@ -217,6 +217,29 @@ async def test_a_harness_taking_a_session_over_is_told_where_those_before_it_kee
     assert back.session_id == first.session_id
 
 
+async def test_a_turn_that_is_not_stored_leaves_nothing_and_its_parents_session_as_it_was(platform: Platform):
+    await ready(platform)
+    driver = platform.driver
+    driver.writes = {"a.txt": b"one"}
+    first = await run(platform)
+    driver.writes = {"b.txt": b"two"}
+    unkept = await run(platform, store=False, previous_response_id=first.id)
+    assert unkept.status == "completed" and unkept.snapshot_id is None and unkept.session_id != first.session_id
+    assert sorted(path.name for path in driver.folder(driver.plans[-1], "/work").iterdir()) == ["a.txt", "b.txt"]     # it began from its parent
+    assert (await platform.sessions.get(ORG, first.session_id)).head_turn_id == first.id
+    assert len(await platform.db.all(None, "SELECT id FROM snapshots")) == 1
+    await platform.forget(ORG, unkept.id)
+    with pytest.raises(NotFound):
+        await platform.sessions.get(ORG, unkept.session_id)
+    assert not driver.folder(driver.plans[-1], "/work").exists()
+    driver.writes = {}
+    again = await run(platform, previous_response_id=first.id)              # the session continues, as if it had not been
+    assert again.session_id == first.session_id and await work_files(platform, again) == {"a.txt": b"one"}
+    alone = await run(platform, store=False)                                # with no parent: a session that is gone with it
+    await platform.forget(ORG, alone.id)
+    assert [row["id"] for row in await platform.db.all(None, "SELECT id FROM sessions")] == [first.session_id]
+
+
 async def test_housekeeping_and_deleting_remove_what_nobody_needs(platform: Platform):
     await ready(platform)
     driver = platform.driver
@@ -232,10 +255,6 @@ async def test_housekeeping_and_deleting_remove_what_nobody_needs(platform: Plat
     driver.writes = {}
     again = await run(platform, previous_response_id=turn.id)
     assert (await work_files(platform, again))["big.bin"] == b"x" * 1000 and (work / "big.bin").is_file()
-    unkept = await run(platform, store=False)
-    await platform.forget(ORG, unkept.id)
-    with pytest.raises(NotFound):
-        await platform.sessions.get(ORG, unkept.session_id)
     await platform.remove_session(ORG, turn.session_id)
     assert await platform.db.all(None, "SELECT id FROM turns") == [] and await platform.db.all(None, "SELECT id FROM snapshots") == []
     assert all(row["refs"] == 0 for row in await chunk_rows(platform)) and not work.exists()

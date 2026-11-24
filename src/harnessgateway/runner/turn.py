@@ -108,7 +108,7 @@ class TurnRunner:
         try:
             ready = await self._prepare(turn)
             seen, used = await self._sandbox(ready, stop, output, record)
-            if seen.started:                       # whatever happened inside, what it left is kept
+            if seen.started and turn.store:        # whatever happened inside, what it left is kept
                 snapshot = await self._save(ready, record)
                 seen = replace(seen, saved=snapshot is not None)
         except _Failed as failure:

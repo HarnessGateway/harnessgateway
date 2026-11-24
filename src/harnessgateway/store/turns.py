@@ -51,6 +51,7 @@ class Turn:
     output: list[dict[str, Any]]
     usage: dict[str, Any] | None
     snapshot_id: str | None
+    store: bool                                # False: nothing of it is kept once it is answered
     log: str
     created_at: datetime
     started_at: datetime | None
@@ -88,14 +89,15 @@ class Turns:
     async def create(self, who: Principal, *, resolved: Resolved, request: Mapping[str, Any],
                      parent: Turn | None, credentials: Sequence[BoundSecret] = ()) -> Turn:
         """Queue a turn. With no parent it starts a session; with a session's latest turn as its parent it
-        continues that session; with any other parent it starts a session forked from that turn. The request's
-        credentials are kept sealed beside it until the turn ends."""
-        turn_id, line, org_id = new_id("response"), resolved.line, who.org_id
+        continues that session; with any other parent it starts a session forked from that turn. A turn that is
+        not to be stored always has a session of its own, forked from its parent, so that forgetting it leaves
+        its parent's session as it was. The request's credentials are kept sealed beside it until the turn ends."""
+        turn_id, line, org_id, stored = new_id("response"), resolved.line, who.org_id, request.get("store") is not False
         sealed = {secret.placeholder: {"hosts": list(secret.hosts), "value": self._sealer.seal(
             secret.value, org_id, "turns", turn_id, secret.placeholder)} for secret in credentials}
         async with self._db.tx(org_id) as conn:
             session_id = None
-            if parent is not None:
+            if parent is not None and stored:
                 head = await (await conn.execute(
                     "SELECT head_turn_id FROM sessions WHERE org_id = %s AND id = %s FOR UPDATE",
                     [org_id, parent.session_id])).fetchone()
@@ -112,7 +114,7 @@ class Turns:
                 [turn_id, org_id, session_id, parent.id if parent else None, parent.number + 1 if parent else 1,
                  line.environment, line.harness,
                  line.provider if resolved.provider else None, resolved.model or None, Jsonb(dict(request)),
-                 Jsonb(sealed), request.get("store") is not False, who.subject])).fetchone()
+                 Jsonb(sealed), stored, who.subject])).fetchone()
             assert row is not None
             turn = Turn(**row)
             await conn.execute("UPDATE sessions SET head_turn_id = %s, last_active_at = now() WHERE id = %s",
