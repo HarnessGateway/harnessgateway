@@ -115,6 +115,10 @@ class Snapshots:
         for digest in entry.hashes:
             yield await self._blobs.get(_chunk_key(org_id, digest))
 
+    async def text(self, org_id: str, entry: Entry) -> str:
+        """A small file of a snapshot, as text."""
+        return b"".join([piece async for piece in self.content(org_id, entry)]).decode(errors="replace")
+
     async def release(self, org_id: str, snapshot_ids: Sequence[str]) -> None:
         """Forget snapshots. Each chunk they named is named once less; one nothing names starts its grace period."""
         for snapshot_id in snapshot_ids:

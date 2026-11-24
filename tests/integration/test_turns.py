@@ -44,7 +44,7 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
     assert (laid / "run").stat().st_mode & 0o100 and sorted(path.name for path in laid.iterdir()) == ["install", "run"]
     assert sandbox.env["HG_CONTRACT"] == "/etc/hg/contract"    # the contract is in what every sandbox is given
     given = driver.found[0]                                   # what the sandbox found under /turn
-    assert json.loads(given["request.json"])["input"] == "hi" and given["startup.sh"] == "echo ready\n" and given["history.json"] == "[]"
+    assert json.loads(given["request.json"])["input"] == "hi" and given["startup.sh"] == "echo ready\n" and given["handover.txt"] == ""
     assert given["previous.json"] == "null" and response["completed_at"] >= response["created_at"]
     used = await platform.usage.total(ORG)                    # what the install and the turn used, added up
     assert (used["cpu_seconds"], used["memory_byte_seconds"]) == (3.0, 5e9)
@@ -117,7 +117,9 @@ async def test_a_session_continues_forks_and_changes_harness(platform: Platform)
     driver.writes = {}
     changed = await run(platform, model="default/other/none/none", previous_response_id=second.id)
     assert changed.session_id == first.session_id and changed.harness == "other"
-    assert driver.found[-1]["handover.txt"] == "Handover from echo." and len(json.loads(driver.found[-1]["history.json"])) == 2
+    told = driver.found[-1]["handover.txt"]                               # who worked on it, and nothing of what was said
+    assert told.startswith("Handover. ") and "history.json" not in driver.found[-1]
+    assert f"1. echo, as {LINE}: {first.id}, {second.id}\n   Its memory: it left no note of where; look in /mind.\n" in told
     assert await work_files(platform, changed) == {"a.txt": b"one", "b.txt": b"two"}
     assert [row["refs"] for row in await chunk_rows(platform)] == [1, 2, 4]     # a chunk is kept once, however often named
     waiting = await accept(platform, WHO, {"model": LINE, "input": "x"})
@@ -185,6 +187,34 @@ async def test_a_turn_whose_runner_is_gone_is_ended_by_another(platform: Platfor
     ended = await Runner(platform, silent_for_s=0).recover()
     assert [turn.id for turn in ended] == [left.id] and "stopped while this turn was running" in ended[0].message
     assert platform.driver.discarded == [left.session_id] and await Runner(platform, silent_for_s=0).recover() == []
+
+
+async def test_a_harness_taking_a_session_over_is_told_where_those_before_it_keep_their_memory(platform: Platform):
+    await ready(platform)
+    driver = platform.driver
+    for name in ("other", "third"):
+        await platform.resources.add_package(ORG, name, package(**{"README.md": name.encode()}))
+    await platform.resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "other", "third"]})
+    driver.remembers = {".harnessgateway/echo/memory": b"/mind/.echo/log.jsonl: a JSON line for each message.\n",
+                        ".echo/log.jsonl": b'{"said": "the code is HERON"}\n'}
+    first = await run(platform)
+    assert driver.found[-1]["handover.txt"] == ""                           # a session's first turn is no handover
+    driver.remembers = {".harnessgateway/other/memory": b"x" * 20_000}       # a note too long to repeat
+    second = await run(platform, model="default/other/none/none", previous_response_id=first.id)
+    told = driver.found[-1]["handover.txt"]
+    assert f"1. echo, as {LINE}: {first.id}\n   Its memory: /mind/.echo/log.jsonl: a JSON line for each message.\n" in told
+    assert "HERON" not in told and "HERON" not in json.dumps(driver.found[-1])       # nothing said is handed over: it is read
+    assert (driver.folder(driver.plans[-1], "/mind") / ".echo/log.jsonl").read_text() == '{"said": "the code is HERON"}\n'
+    driver.remembers = {}
+    same = await run(platform, model="default/other/none/none", previous_response_id=second.id)
+    assert driver.found[-1]["handover.txt"] == ""                           # its own turn came last
+    back = await run(platform, previous_response_id=same.id)                # the first harness returns
+    assert driver.found[-1]["handover.txt"].endswith(
+        f"1. echo, as {LINE}: {first.id}\n   This is the harness you are: its memory is your own.\n"
+        f"2. other, as default/other/none/none: {second.id}, {same.id}\n   Its memory: it says where in /mind/.harnessgateway/other/memory\n")
+    await run(platform, model="default/third/none/none", previous_response_id=first.id)     # a fork is told of its own past only
+    assert "other" not in driver.found[-1]["handover.txt"] and f": {first.id}\n" in driver.found[-1]["handover.txt"]
+    assert back.session_id == first.session_id
 
 
 async def test_housekeeping_and_deleting_remove_what_nobody_needs(platform: Platform):

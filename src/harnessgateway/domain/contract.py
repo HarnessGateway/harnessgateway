@@ -6,7 +6,7 @@ version, which the platform reports.
 
 from typing import Literal
 
-VERSION = 2
+VERSION = 3
 ApiName = Literal["anthropic", "openai-responses", "openai-chat", "gemini"]     # the provider APIs a harness may speak
 
 SANDBOX_UID = 10000                            # who everything in a sandbox runs as: never root
@@ -18,6 +18,7 @@ GIVEN = "/etc/hg"                              # what the platform gives every s
 CA_BUNDLE = f"{GIVEN}/ca.pem"                  # the certificates it trusts,
 CONTRACT = f"{GIVEN}/contract"                 # and the contract, in words and as schemas
 STATE_DIR = ".harnessgateway"                  # under the mind: where a package keeps small values of its own
+MEMORY = "memory"                              # in a package's state: its note of where its harness keeps its memory
 STARTUP = f"{TURN}/startup.sh"                 # the environment's startup script, when it has one
 STARTUP_FAILED = 78                            # what a sandbox exits with when that script fails
 INSTALL_TIMEOUT_S = 900                        # how long a package's install may take
