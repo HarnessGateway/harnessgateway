@@ -22,7 +22,8 @@ and where you found it (help, docs, or test). The next turn carries on from the 
 ## 1. Find the latest stable version
 
 Look it up where the CLI is published: its package registry or its releases. Take the latest stable one, not a
-preview, beta, or nightly. Write the exact version down. Everything you learn is true of that version. You can
+preview, beta, or nightly. Where its makers mark a version as stable (a `stable` tag beside `latest`), that is the
+one. Write the exact version down. Everything you learn is true of that version. You can
 reach the web: use `curl`.
 
 ## 2. Install it
@@ -95,8 +96,9 @@ What the contract asks of every `run`, each of which the platform's own checks h
 
 - **Honour or fail.** Every field of the request is the platform's, a label (the contract lists both), one the
   package honours, or one that ends the turn with `response.failed`, code `unsupported_parameter`, and a message
-  naming the field. So does a value the CLI cannot take. Find this before the CLI is started. A field the schema
-  calls required may be missing: read it as OpenAI would (an image with no `detail` is `auto`).
+  naming the field. So does a value the CLI cannot take. Find this before the CLI is started. A value that asks
+  only for what `run` does anyway is honoured, not failed: `require_approval: "never"`, to a CLI that never asks.
+  A field the schema calls required may be missing: read it as OpenAI would (an image with no `detail` is `auto`).
 - **The provider.** Use the first API the CLI speaks that the provider has a variable for; when there is none, end
   with `response.failed` and say which APIs the CLI needs.
 - **Responses output, and nothing else on standard output.** Print each thing the CLI reports as the item that
@@ -129,7 +131,8 @@ cd /tmp/tried && HG_HARNESS=/tmp/try HG_TURN=/tmp/turn HG_STATE=/tmp/home/.harne
 ```
 
 Every line it prints must be one of `lines.schema.json`, the last of them the stream's last event. Run it again with
-another `input` to see the session continue, and once with a field it does not honour.
+another `input` to see the session continue, and once with a field it does not honour. Then check `instructions`:
+a turn that has them must follow them, and the next turn of the same session, sent without them, must not.
 
 ## 8. Hand over
 
