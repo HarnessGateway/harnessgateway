@@ -450,6 +450,9 @@ providers, environments, harnesses, sessions, and usage. The chat is an applicat
 alone: streamed replies with thinking and steps, files given with a message, a message that interrupts a running
 turn, rewind and branch (the API's fork), and a panel that previews what the agent made through a view link.
 
+A harness begun in the console starts as a working package that keeps the contract (`pages/harnesses/template.js`),
+so it runs before anything in it is changed.
+
 An edition adds a folder of files served at the same paths; its `edition.js` names the pages it adds.
 
 ## 13. Storage
