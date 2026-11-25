@@ -6,7 +6,7 @@ from harnessgateway import shipped
 from harnessgateway.domain import schema
 from harnessgateway.domain.events import ENDINGS, EVENTS, ITEMS
 
-CONTRACT = shipped.folder("contract")
+CONTRACT = shipped.contract()
 
 
 def test_the_kept_schemas_are_what_the_pin_gives():

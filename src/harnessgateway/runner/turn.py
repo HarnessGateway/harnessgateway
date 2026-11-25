@@ -4,12 +4,13 @@ import asyncio
 import json
 import logging
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 
 from harnessgateway.domain.contract import CACHE, STARTUP_FAILED
 from harnessgateway.domain.egress import Policy
 from harnessgateway.domain.events import LineError, RunOutput, storable
-from harnessgateway.domain.handover import handover_line, unseen
+from harnessgateway.domain.handover import NOTE_MAX, handover, note_path, pointer, stints
 from harnessgateway.domain.outcome import Observed, decide
 from harnessgateway.domain.request import file_ids
 from harnessgateway.domain.resolve import Resolved
@@ -21,7 +22,7 @@ from harnessgateway.domain.sandbox import (
     turn_plan,
     turn_policy,
 )
-from harnessgateway.domain.snapshot import ManifestError
+from harnessgateway.domain.snapshot import Manifest, ManifestError
 from harnessgateway.driver.base import DriverError, Measured, SandboxExit
 from harnessgateway.errors import Conflict, Refused
 from harnessgateway.ids import new_placeholder, new_token
@@ -84,7 +85,7 @@ class _Ready:
     turn: Turn
     resolved: Resolved
     plan: SandboxPlan
-    parent_snapshot: str | None
+    parent: Manifest                           # what the turn it continues from left: empty when it continues from none
 
 
 class TurnRunner:
@@ -107,7 +108,7 @@ class TurnRunner:
         try:
             ready = await self._prepare(turn)
             seen, used = await self._sandbox(ready, stop, output, record)
-            if seen.started:                       # whatever happened inside, what it left is kept
+            if seen.started and turn.store:        # whatever happened inside, what it left is kept
                 snapshot = await self._save(ready, record)
                 seen = replace(seen, saved=snapshot is not None)
         except _Failed as failure:
@@ -149,25 +150,18 @@ class TurnRunner:
         environment = resolved.environment
 
         chain = await platform.turns.chain(org_id, turn.id)
-        pasts = [earlier.harness for earlier in chain]
-        handover = handover_line(pasts, turn.harness)
         parent_snapshot = chain[-1].snapshot_id if chain else None
         session = await platform.sessions.get(org_id, turn.session_id)
-        history = [{"id": earlier.id, "harness": earlier.harness, "status": earlier.status,
-                    "input": earlier.request["input"], "output": earlier.output}
-                   for earlier in chain[len(chain) - unseen(pasts, turn.harness):]
-                   if earlier.request is not None]               # a deleted turn has nothing to show
         previous = chain[-1].response() if chain and chain[-1].deleted_at is None else None
-        inputs = {"request.json": json.dumps(turn.request).encode(), "previous.json": json.dumps(previous).encode(),
-                  "history.json": json.dumps(history).encode(), "handover.txt": handover.encode()}
+        inputs = {"request.json": json.dumps(turn.request).encode(), "previous.json": json.dumps(previous).encode()}
         if environment.scripts.startup:            # run as a program: its first line may name its interpreter
             inputs["startup.sh"] = (environment.scripts.startup.rstrip() + "\n").encode()
         try:
             files = [await platform.files.get(org_id, file_id) for file_id in file_ids(turn.request or {})]
+            parent = await platform.snapshots.manifest(org_id, parent_snapshot)
+            inputs["handover.txt"] = (await self._handover(turn, chain, parent)).encode()
             if not chain or session.folder_snapshot_id != parent_snapshot:       # the folders hold something else
-                await driver.restore(session_folders(turn.session_id),
-                                     await platform.snapshots.manifest(org_id, parent_snapshot),
-                                     platform.snapshots.chunks(org_id))
+                await driver.restore(session_folders(turn.session_id), parent, platform.snapshots.chunks(org_id))
             await driver.fill(turn_folder(turn.id), inputs, executable=["startup.sh"], streams={
                 f"files/{file.id}/{file.filename}": platform.files.content(org_id, file.id) for file in files})
         except (Refused, ManifestError, BlobMissing, DriverError, OSError) as error:
@@ -183,7 +177,18 @@ class TurnRunner:
         plan = turn_plan(session_id=turn.session_id, turn_id=turn.id, install_id=install_id, image_id=image_id,
                          resolved=resolved, proxy_token=proxy_token, provider_key=provider_key,
                          placeholders=placeholders)
-        return _Ready(turn, resolved, plan, parent_snapshot)
+        return _Ready(turn, resolved, plan, parent)
+
+    async def _handover(self, turn: Turn, chain: Sequence[Turn], parent: Manifest) -> str:
+        """What the turn's harness is told when it takes the session over from another: who worked on it, each
+        with its package's own note of where its memory is, read from what the turn before left."""
+        worked = stints([(earlier.id, earlier.harness, str(earlier.line)) for earlier in chain])
+        notes: dict[str, str | None] = {}
+        for harness in sorted({stint.harness for stint in worked} - {turn.harness}):
+            note = parent.entries.get(note_path(harness).lstrip("/"))     # a manifest's paths begin with no slash
+            notes[harness] = None if note is None or note.kind != "f" else pointer(harness) if note.size > NOTE_MAX \
+                else await self._platform.snapshots.text(turn.org_id, note)
+        return handover(worked, turn.harness, notes)
 
     async def _sandbox(self, ready: _Ready, stop: _Stop, output: RunOutput, record: _Log,
                        ) -> tuple[Observed, Measured]:
@@ -256,8 +261,8 @@ class TurnRunner:
         org_id = turn.org_id
         try:
             manifest = await platform.driver.save(
-                session_folders(turn.session_id), await platform.snapshots.manifest(org_id, ready.parent_snapshot),
-                frozenset({f"mind/{CACHE}"}), platform.snapshots.chunks(org_id))
+                session_folders(turn.session_id), ready.parent, frozenset({f"mind/{CACHE}"}),
+                platform.snapshots.chunks(org_id))
             if manifest.size() > environment.disk_mb * _MIB:
                 record.add(f"not saved: the session's folders hold {manifest.size() // _MIB} MiB, and the "
                            f"environment's disk limit is {environment.disk_mb} MiB")

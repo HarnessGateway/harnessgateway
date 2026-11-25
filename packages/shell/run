@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """run: one turn. The request's input is the command; every line it prints is a piece of the answer.
 
-This is the whole of the contract, at its smallest: read the Responses request, print Responses output, and end
-with the stream's last event.
+This is the contract at its smallest: read the Responses request, do what it asks or say what cannot be done, print
+Responses output, say where the record of what was done is kept, and end with the stream's last event.
 """
 import json
 import os
 import signal
 import subprocess
+
+# Every field of a request is the platform's, a label, one this package honours, or one it fails the turn on.
+ELSEWHERE = {"model", "stream", "stream_options", "background", "store", "previous_response_id", "metadata",
+             "user", "safety_identifier", "prompt_cache_key"}
+HONOURED = {"input"}
+STATE = os.environ["HG_STATE"]
+RECORD = os.path.join(STATE, "commands.jsonl")     # this package's memory of the session: under the mind, so it is kept
 
 
 def say(line):
@@ -16,32 +23,51 @@ def say(line):
 
 def failed(code, message):
     say({"type": "response.failed", "response": {"error": {"code": code, "message": message}}})
+    raise SystemExit
+
+
+def unsupported(what):
+    failed("unsupported_parameter", f"The shell harness runs a command and nothing else: it has no use for {what}. "
+                                    "Leave it out, or name another harness.")
 
 
 def asked(given):
-    """What the caller sent, as text: a string input as it is, or the text of a list input's user messages."""
+    """The command: a string input as it is, or the text of a list input's user messages."""
     if isinstance(given, str):
         return given
     texts = []
     for item in given:
-        content = item.get("content") if item.get("role") == "user" else None
-        texts += [content] if isinstance(content, str) else [
-            part["text"] for part in content or [] if part.get("type") == "input_text"]
+        content = item.get("content")
+        if item.get("role") != "user":
+            unsupported(f"an input item of type {item.get('type') or item.get('role')}")
+        for part in [{"type": "input_text", "text": content}] if isinstance(content, str) else content or []:
+            if part.get("type") != "input_text":
+                unsupported(f"an input part of type {part.get('type')}")
+            texts.append(part["text"])
     return "\n\n".join(texts)
 
 
 with open(os.path.join(os.environ["HG_TURN"], "request.json"), encoding="utf-8") as file:
-    command = asked(json.load(file)["input"])
+    request = json.load(file)
+for field in sorted(name for name in set(request) - ELSEWHERE - HONOURED if request[name] is not None):
+    unsupported(f"the request's {field}")
+command = asked(request["input"])
 if not command.strip():
     failed("no_command", "The input is empty: there is no command to run.")
-    raise SystemExit
+# Where this harness keeps its memory, for whichever harness works on the session after it.
+os.makedirs(STATE, exist_ok=True)
+with open(os.path.join(STATE, "memory"), "w", encoding="utf-8") as file:
+    file.write(f"{RECORD}: one JSON line for each command this harness ran in /work, with its exit code, oldest "
+               "first. It keeps no output: run a command again to see it.\n")
 # A stop is sent to this program and to the command at once. This one waits for the command to end, and so does
 # the sandbox: taking the signal, and doing nothing with it, is how it outlives what it started.
 signal.signal(signal.SIGTERM, lambda *_: None)
 ran = subprocess.Popen(["sh", "-c", "exec 2>&1\n" + command], stdout=subprocess.PIPE, text=True, errors="replace")
 for line in ran.stdout:
     say({"type": "response.output_text.delta", "delta": line})       # a piece of the answer: the platform keeps the item
-if ran.wait() == 0:
+with open(RECORD, "a", encoding="utf-8") as file:
+    file.write(json.dumps({"command": command, "exit_code": ran.wait()}) + "\n")
+if ran.returncode == 0:
     say({"type": "response.completed"})
 else:
     failed("command_failed", f"The command exited with code {ran.returncode}.")

@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("proxy", help="run the egress proxy")
     init = commands.add_parser("init", help="set the installation up: its defaults, and its first API key, printed")
     init.add_argument("--new-key", action="store_true", help="make another key even though keys exist")
-    commands.add_parser("schema", help="write the Responses schemas the pinned OpenAI SDK gives, into contract/")
+    commands.add_parser("schema", help="write the Responses schemas the pinned OpenAI SDK gives, into the contract")
     args = parser.parse_args(argv)
     logging.basicConfig(level=os.environ.get("HG_LOG_LEVEL", "info").upper(),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "schema":               # for whoever changes the pin: nothing of an installation is read
             from harnessgateway import shipped
             from harnessgateway.domain import schema
-            changed = schema.write(shipped.folder("contract"))
+            changed = schema.write(shipped.contract())
             print(f"{schema.SDK}: " + (f"wrote {', '.join(changed)}" if changed else "the schemas are up to date"))
             return 0
         if args.command == "proxy":                # imported where it runs: the proxy never loads the platform

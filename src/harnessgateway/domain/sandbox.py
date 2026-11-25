@@ -11,7 +11,7 @@ from harnessgateway.domain.resolve import Resolved
 from harnessgateway.domain.resources import Environment
 from harnessgateway.domain.snapshot import ROOTS
 
-GIVEN_FOLDER = "given"                         # holds what every sandbox is given: its certificates, and the contract
+GIVEN_FOLDER = "given"                         # holds what every sandbox is given: the certificates it trusts
 # The startup script first, with what it prints sent to the log (standard output is the harness's events), then
 # the harness in its place.
 _AFTER_STARTUP = (f'{contract.STARTUP} 1>&2 || {{ echo "the startup script exited with code $?" >&2; '
@@ -93,7 +93,7 @@ def turn_plan(*, session_id: str, turn_id: str, install_id: str, image_id: str, 
     environment, line, provider = resolved.environment, resolved.line, resolved.provider
     networked = environment.network.mode != "closed" or provider is not None
     env = {
-        "HOME": contract.MIND, "HG_CONTRACT": contract.CONTRACT, "HG_TURN": contract.TURN,
+        "HOME": contract.MIND, "HG_TURN": contract.TURN,
         "HG_MIND": contract.MIND, "HG_WORK": contract.WORK, "HG_HARNESS": contract.HARNESS,
         "HG_STATE": f"{contract.MIND}/{contract.STATE_DIR}/{line.harness}", "HG_SESSION": session_id,
         "HG_RESPONSE": turn_id, "HG_HARNESS_NAME": line.harness, "HG_ENVIRONMENT": line.environment,
@@ -120,7 +120,7 @@ def install_plan(*, install_id: str, image_id: str, environment: Environment, pr
     provider, no secret and no variable, and its own folder to write into."""
     return SandboxPlan(
         name=install_id, image=image_id, command=f"{contract.HARNESS}/install", args=(), workdir=contract.HARNESS,
-        env={"HOME": "/tmp/home", "HG_CONTRACT": contract.CONTRACT, "HG_HARNESS": contract.HARNESS,  # noqa: S108
+        env={"HOME": "/tmp/home", "HG_HARNESS": contract.HARNESS,  # noqa: S108
              **_through_the_proxy(install_id, proxy_token)},
         mounts=(Mount(install_folder(install_id), contract.HARNESS, False),
                 Mount(GIVEN_FOLDER, contract.GIVEN, True)),

@@ -1,0 +1,34 @@
+{
+  "model": "sandbox/harness/deepseek/deepseek-flash",
+  "instructions": "You are advising PELICAN Logistics. Answer plainly and briefly.",
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_client_budget",
+      "description": "The budget a client has approved for an engagement. It runs in the caller's own system.",
+      "strict": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "stream": true,
+  "store": true,
+  "metadata": {
+    "engagement": "e_4417"
+  },
+  "reasoning": {
+    "effort": "low",
+    "summary": "auto"
+  },
+  "input": "We are starting an engagement. Create client.md saying the client is PELICAN Logistics and that they run a nightly ten-minute data job, then tell me what the file holds."
+}

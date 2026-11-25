@@ -3,7 +3,6 @@
 import pytest
 from openai.types.responses import Response
 
-from harnessgateway.domain.handover import handover_line, unseen
 from harnessgateway.domain.outcome import Observed, Outcome, Terminal, decide
 from harnessgateway.domain.response import envelope_event, response_object
 
@@ -72,11 +71,3 @@ def test_a_response_reports_back_what_its_request_asked_for():
     assert {name: response[name] for name in asked} == asked and response["completed_at"] == 9
     assert "stream" not in response and "store" not in response and "input" not in response     # the request's alone
     Response.model_validate(response)
-
-
-def test_a_harness_is_told_who_worked_on_the_session_since_it_last_did():
-    pasts = ["first", "second", "third", "third"]
-    assert handover_line(pasts, "first") == "Handover from third. Before it: second."
-    assert (handover_line(pasts, "third"), handover_line([], "first")) == ("", "")
-    assert handover_line(pasts[:1], "shell") == "Handover from first."
-    assert (unseen(pasts, "first"), unseen(pasts, "third"), unseen(pasts, "new")) == (3, 0, 4)

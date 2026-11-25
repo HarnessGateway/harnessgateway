@@ -14,7 +14,8 @@ Everything else may change. These are what users, packages and editions are writ
    against the SDK's response type. The only field with a meaning of the platform's own is `model`.
 2. **The three definitions** (providers, environments, harnesses) share one shape: a name, a definition, and
    secrets sealed beside it. They have one set of verbs.
-3. **The harness package** is two programs, `install` and `run` ([PACKAGES.md](../contract/PACKAGES.md)). The
+3. **The harness package** is two programs, `install` and `run`
+   ([the example package](../packages/harness-package-builder/example/README.md)). The
    platform knows no agent CLI: everything about one is in its package. A package declares nothing: what a turn
    may reach and hold is its environment's to say.
 4. **The sandbox** is what a package finds inside it: `/mind`, `/work`, `/turn`, `/harness`, the variables, the
@@ -29,10 +30,10 @@ POST /v1/responses ──▶ validate ──▶ resolve the model line ──▶
         │
         ├─ install     the harness's package for the environment's image, once ever, held by a database lock
         ├─ restore     the session's two folders from its last snapshot, unless they already hold it
-        ├─ inputs      request.json, history.json, handover.txt, uploaded files, the startup script
+        ├─ inputs      request.json, previous.json, handover.txt, uploaded files, the startup script
         ├─ grant       what this sandbox may reach, with its secrets, kept sealed until the sandbox ends
         ├─ sandbox     one hardened container; each line it prints is an event, a log line, or the end
-        ├─ save        the two folders as a snapshot: only chunks not already kept are written
+        ├─ save        the two folders as a snapshot: only chunks not already kept are written (unless store is false)
         └─ conclude    the response, once; the event that ends its stream
 ```
 
@@ -50,7 +51,7 @@ the process that answers need not be the one that runs the turn.
 | `proxy/` | The sandbox's only way out | A process of its own, with no database and no sealing key: what faces untrusted code holds nothing worth stealing but the secrets of sandboxes running right now |
 | `api/` | HTTP in, HTTP out | It validates and delegates; it decides nothing |
 | `extensions.py` | The seams | So that an edition adds to the core instead of changing it |
-| `packages/`, `environments/` (the repository's, beside `src/`) | What an organization starts with | Given once, at setup, through the same stores as anything an organization adds: the platform still knows no harness |
+| `packages/`, `environments/` (the repository's, beside `src/`) | The packages that ship, and the environment an organization starts with | Given through the same stores as anything an organization adds: the platform still knows no harness |
 | `console/` (the repository's, beside `src/`) | The pages people use the platform through | A client of the API, served beside it: it has no route of its own, so the API is whole without it |
 
 Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain`; `store` and `driver` use
@@ -58,12 +59,17 @@ Dependencies point one way: `api` and `runner` use `store`, `driver` and `domain
 
 ## What ships beside the program
 
-Four of the repository's folders are not the server's code: `console/`, `contract/`, `packages/` and
-`environments/`. The last two are on the other side of the contract. They know the platform only by `contract/`
-and import nothing of it; the server reaches all four only through `shipped.py`, to serve the console, to give
-every sandbox the contract, and to give a new organization its packages and its environment. Their tests are
-`tests/shipped/`, which hold them to the contract. So they can be lifted out to a repository of their own without
-the server changing: only where `shipped.py` looks.
+Three of the repository's folders are not the server's code: `console/`, `packages/` and `environments/`. The last
+two are on the other side of the contract. They know the platform only by the contract and import nothing of it;
+the server reaches all three only through `shipped.py`, to serve the console, to keep the packages that ship at the
+running version's, and to give a new organization its environment. Their tests are `tests/shipped/`, which hold
+them to the contract. So they can be lifted out to a repository of their own without the server changing: only
+where `shipped.py` looks.
+
+The contract itself (how the platform runs a package, the three schemas, an example package, and a session of
+requests) is inside one of those packages, `harness-package-builder`: building a package is the one thing done
+from it. The packages that ship are the platform's, and every start puts each at the running version's, so the
+builder an installation has always holds the contract and the schemas of the platform it runs on.
 
 ## One schema
 
@@ -74,15 +80,15 @@ bookkeeping a response needs (the events' numbers, the items' places and ids, th
 itself is kept in), checking each against the OpenAI SDK's model of it.
 
 "The Responses API" means one pinned version of the OpenAI SDK, named in `pyproject.toml` and reported by
-`GET /v1/platform`. `domain/schema.py` writes that version as four JSON Schemas, kept in `contract/` beside the
-contract in words: a request, a response and the stream's events, which are OpenAI's own and unchanged, and the
-platform's rule for one printed line. A test fails when the kept files are not what the pin gives, so a change of
-the pin shows as a change of them: `harnessgateway schema` writes them. Every sandbox is given the folder,
-read-only, written when the platform starts, so a package in any language reads and checks against exactly what
-the platform it runs on is pinned to.
+`GET /v1/platform`. `domain/schema.py` writes that version as four JSON Schemas, kept beside the contract in words,
+in the builder's package: a request, a response and the stream's events, which are OpenAI's own and unchanged, and
+the platform's rule for one printed line. A test fails when the kept files are not what the pin gives, so a change
+of the pin shows as a change of them: `harnessgateway schema` writes them. The server never reads those files: it
+checks requests and printed lines against the SDK's types themselves.
 
 The platform names no agent CLI: not in its code, not in the console, not in the contract. A test keeps that so.
-What is known about any one CLI is in its package, and how packages are built is what `hg-fde` is taught.
+What is known about any one CLI is in its package, and how packages are built is what `harness-package-builder`
+is told.
 
 ## Sessions and storage
 
@@ -97,6 +103,25 @@ restores them first.
 
 The Docker driver keeps every folder as a sub-folder of one data volume and does the file work itself. A sandbox is
 given its own sub-folders with `volume-subpath`, and never the volume.
+
+## Handover
+
+A session may change harness from one turn to the next, and the platform hands the new one nothing that was said.
+It writes the session's handover history into the turn's inputs (`handover.txt`): every stint, which is consecutive
+turns on one model line, with its responses, and for each harness the note its own package left of where its memory
+is (`$HG_STATE/memory`, read from the snapshot the turn continues from). The harness reads what it needs from the
+mind, which every harness of a session shares.
+
+The history is derived from the turn chain, so it is stored nowhere and follows a fork by itself. Only a package
+knows where its harness keeps its record, so only a package says; the words around what it says are in
+`domain/handover.py`, the one place, and are the same for every harness.
+
+## Who keeps the conversation
+
+Both of the Responses API's ways work. With `previous_response_id` the server keeps it: the session continues (or
+forks, from an earlier response), its folders are restored, and the harness resumes its own memory. Or the caller
+keeps it and sends the whole of it in `input`; with `store: false` nothing is held here at all: the turn runs in a
+session of its own, no snapshot is taken, and the session is removed once the answer is given.
 
 ## Many processes
 

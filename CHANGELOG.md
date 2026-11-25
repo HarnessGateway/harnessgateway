@@ -1,5 +1,53 @@
 # Changelog
 
+## 6.0.0
+
+The platform, rebuilt to its specification ([SPEC.md](SPEC.md)). The API's routes, the definitions, the sandbox,
+the egress proxy, the console and the deployment are as they were. What changes is how a session is handed from
+one harness to another, what a package owes a request, what `store: false` means, and what ships. This is a change
+of the package contract, to contract 3: a package that reads `history.json` or `$HG_CONTRACT` no longer finds it,
+and every package should be brought to 3.
+
+- **A handover gives a harness no history.** `history.json` is gone. `handover.txt` is the session's handover
+  history, in words: who worked on it, in order, the responses each gave, and where each harness keeps its memory.
+  The new harness reads what it needs from the mind the session's harnesses share. It is empty unless the turn
+  before was another harness's.
+- **A package keeps its harness's memory in the mind, and says where.** `run` writes `$HG_STATE/memory`: a few
+  lines of where its CLI keeps its record of the session, and in what form. That note is what the next harness is
+  pointed at.
+- **Honour or fail.** A field of a request that a package does not honour, and that is not the platform's or a
+  label, ends the turn with `response.failed`, code `unsupported_parameter`, and a message naming the field. It
+  was left alone, and noted in the turn's log.
+- **`store: false` keeps nothing.** The turn runs in a session of its own and is never saved. With
+  `previous_response_id` it starts from that response's state and leaves that session as it was; it used to
+  become that session's next turn, and be deleted from it.
+- **`hg-fde` is now `harness-package-builder`, and it carries the contract.** The Responses API as three schemas (a
+  request, a response, and the stream's events) is in its package (`contract/`), and no sandbox is given them any
+  more: `$HG_CONTRACT` is gone. `PACKAGES.md` and `lines.schema.json` are gone too: what they said is in what the
+  builder is told and shown. What it is told
+  is general: what a harness package is, why it exists, how a developer uses one through the Responses API, how the
+  platform works, and the framework for building one. Whether a package is a CLI as it comes or an agent shaped
+  for a purpose depends only on what is asked of it.
+- **The packages that ship are the platform's, and follow it.** Every start puts `shell` and
+  `harness-package-builder` at the running version's, so an update of the platform updates the builder and the
+  schemas it builds to. They are not changed in place: `PUT` and `DELETE` on their names are refused, and a copy
+  under another name is yours. The `default` environment is still given once, at setup, and yours from then on. An
+  installation that has `hg-fde` keeps it as its own harness: delete it, and name the new builder in your
+  environments.
+- **The packages that ship are brought to contract 3.** `shell` honours `input` alone and keeps a record of the
+  commands it ran. The builder fails what its CLI cannot be given before the CLI is started, and notes where its
+  CLI's transcript is.
+- **The builder is shown a whole package, and the requests a developer sends.** Its `example/` is a harness package
+  to read, a cloud consultant on Claude Code: `README.md`, `install`, and `run` are required, and everything else (who the agent is, skills, tool
+  servers, settings) is optional, and is where a customized agent begins. Its `requests/` is one session of
+  Responses requests, which a package is tested with. It is given the three schemas of the API: a request, a
+  response, and the stream's events. Its CLI is pinned to the version its makers mark stable.
+- **A conversation the caller keeps can be sent back whole.** The platform takes back an item a response held as
+  it was, though the SDK's input form of it lacks a field (a tool output's `status`): it refused its own output
+  before. The builder takes back every item it prints, as what it said, thought, and did earlier.
+- **The console's chat sends a picture as an image.** A PNG, JPEG, GIF, or WebP given with a message is an
+  `input_image`, which the model is shown. It was sent as a file, as everything else still is.
+
 ## 5.2.1
 
 `hg-fde` uses the Responses API as far as its agent CLI goes. Every package it builds is written from its own

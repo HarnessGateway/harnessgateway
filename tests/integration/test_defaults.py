@@ -1,4 +1,5 @@
-"""First-time setup: the defaults are given once, with the first key, and are the organization's from then on."""
+"""What ships: the packages are the platform's and follow it, and the environment is given once, with the first key,
+and is the organization's from then on."""
 
 import os
 from pathlib import Path
@@ -8,16 +9,19 @@ from harnessgateway.domain.line import Line
 from harnessgateway.platform import Platform
 from harnessgateway.serve import init, opened
 from harnessgateway.store.db import Database
+from tests.helpers import package
 from tests.integration.conftest import ORG, run, settings_for
+
+SHIPS = ["harness-package-builder", "shell"]
 
 
 async def test_the_defaults_are_an_environment_and_the_two_harnesses_it_carries(platform: Platform):
     await defaults.give(platform, ORG)
     environments = await platform.resources.all(ORG, "environments")
     harnesses = {each.name: each.shown() for each in await platform.resources.all(ORG, "harnesses")}
-    assert [each.name for each in environments] == ["default"] and sorted(harnesses) == ["hg-fde", "shell"]
-    assert environments[0].shown()["harnesses"] == ["hg-fde", "shell"]
-    assert environments[0].shown()["network"]["mode"] == "open"                          # the engineer reads a CLI's own pages
+    assert [each.name for each in environments] == ["default"] and sorted(harnesses) == SHIPS == defaults.names()
+    assert environments[0].shown()["harnesses"] == SHIPS
+    assert environments[0].shown()["network"]["mode"] == "open"                          # the builder reads a CLI's own pages
     assert all(set(harness) == {"name", "digest", "secrets_set", "created_at", "updated_at"} for harness in harnesses.values())
     assert (await platform.resources.resolve(ORG, Line.parse("default/shell/none/none"))).provider is None
     assert await platform.resources.all(ORG, "providers") == []            # a provider is the organization's to add
@@ -25,16 +29,30 @@ async def test_the_defaults_are_an_environment_and_the_two_harnesses_it_carries(
     assert turn.status == "completed"
 
 
-async def test_setup_gives_the_defaults_with_the_first_key_and_never_again(db: Database, tmp_path: Path):
+async def test_the_packages_that_ship_follow_the_platform_and_one_that_is_unchanged_is_left_alone(platform: Platform):
+    """Every start puts each package that ships at this version's: an update of the platform updates them."""
+    resources = platform.resources
+    await defaults.packages(platform, ORG)
+    given = {each.name: each for each in await resources.all(ORG, "harnesses")}
+    assert sorted(given) == SHIPS
+    await defaults.packages(platform, ORG)                                 # the same version again: nothing is touched
+    assert {each.name: each.updated_at for each in await resources.all(ORG, "harnesses")} == {name: each.updated_at for name, each in given.items()}
+    await resources.add_package(ORG, "shell", package())                   # as an earlier version of the platform left it
+    await resources.delete(ORG, "harnesses", "harness-package-builder")
+    await defaults.packages(platform, ORG)
+    again = {each.name: each.spec["digest"] for each in await resources.all(ORG, "harnesses")}
+    assert again == {name: each.spec["digest"] for name, each in given.items()}        # each is this version's again
+
+
+async def test_setup_gives_the_environment_with_the_first_key_and_never_again(db: Database, tmp_path: Path):
     settings = settings_for(os.environ["HG_TEST_DATABASE_URL"], tmp_path)
     key = await init(settings)
     assert key is not None and key.startswith("hg_")
     async with opened(settings) as platform:
-        assert len(await platform.resources.all(ORG, "harnesses")) == 2
-        await platform.resources.delete(ORG, "environments", "default")
-        await platform.resources.delete(ORG, "harnesses", "shell")         # they are the organization's: it may remove one
+        assert [each.name for each in await platform.resources.all(ORG, "harnesses")] == SHIPS
+        await platform.resources.delete(ORG, "environments", "default")    # it is the organization's: it may remove it
     assert await init(settings) is None                                    # already set up
     assert (await init(settings, new_key=True)) not in (None, key)         # another key, and nothing else
     async with opened(settings) as platform:
-        assert [each.name for each in await platform.resources.all(ORG, "harnesses")] == ["hg-fde"]
-        assert await platform.resources.all(ORG, "environments") == []
+        assert await platform.resources.all(ORG, "environments") == []     # an environment is given once
+        assert await platform.orgs.all() == [ORG]

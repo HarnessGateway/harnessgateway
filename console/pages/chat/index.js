@@ -203,7 +203,7 @@ export async function chat(main, params) {
     log.querySelector(".chat-note")?.remove();
     place(index);
     log.scrollTop = log.scrollHeight;
-    watch(index, arriving(model), (onEvent, signal) => start({ model, text, attachments: attachments.map(file => file.id), previous }, onEvent, signal),
+    watch(index, arriving(model), (onEvent, signal) => start({ model, text, attachments, previous }, onEvent, signal),
       new Map(panel.files().map(file => [file.path, file])));
   }
   function stop() {

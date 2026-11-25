@@ -1,0 +1,52 @@
+{
+  "model": "sandbox/harness/deepseek/deepseek-flash",
+  "instructions": "You are advising PELICAN Logistics. Answer plainly and briefly.",
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_client_budget",
+      "description": "The budget a client has approved for an engagement. It runs in the caller's own system.",
+      "strict": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "stream": true,
+  "store": true,
+  "metadata": {
+    "engagement": "e_4417"
+  },
+  "previous_response_id": "resp_turn_1",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Which client is this engagement for? Their brand swatch is this picture: what colour is its top half, and what colour is its bottom half? And add up the compute hours in usage.csv, and tell me the total."
+        },
+        {
+          "type": "input_image",
+          "detail": "auto",
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAT0lEQVR42u3RQQkAMAzAwPg33Wnos+wgBo40dboAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANYADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAC+Azy47PDiI4pA2wAAAABJRU5ErkJggg=="
+        },
+        {
+          "type": "input_file",
+          "filename": "usage.csv",
+          "file_data": "data:text/csv;base64,bW9udGgsY29tcHV0ZV9ob3VycwpqYW4sMTIwCmZlYiw4MAptYXIsNTAK"
+        }
+      ]
+    }
+  ]
+}

@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
+from harnessgateway import defaults
 from harnessgateway.api.http import Api, page_of, parse_object, read_body
 from harnessgateway.domain.package import PACKED_MAX, UNPACKED_MAX, PackageFile, is_stray, write_archive
 from harnessgateway.domain.principal import Principal
@@ -20,6 +21,13 @@ _GZIP = b"\x1f\x8b"                            # how a package archive begins, a
 def routes(api: Api) -> list[Route]:
     platform = api.platform
     resources, sessions, snapshots = platform.resources, platform.sessions, platform.snapshots
+    ships = frozenset(defaults.names())
+
+    def not_the_platforms(kind: str, name: str) -> None:
+        """A package that ships is the platform's: it follows the platform, and is not changed in place."""
+        if kind == "harnesses" and name in ships:
+            raise Invalid(f"{name} ships with the platform and follows it: to change it, export it and add it under "
+                          "another name", param="name")
 
     async def listed(kind: str, request: Request, who: Principal) -> Any:
         found = await resources.all(who.org_id, kind)
@@ -50,6 +58,7 @@ def routes(api: Api) -> list[Route]:
         """Make or replace a definition. A harness is made from its package, and is nothing else: an archive
         sent as the body, or a folder of a session's work (`{"session", "path"}`)."""
         name = request.path_params["name"]
+        not_the_platforms(kind, name)
         body = await read_body(request, PACKED_MAX)
         if kind == "harnesses" and body[:2] == _GZIP:
             made = await resources.add_package(who.org_id, name, body)
@@ -72,6 +81,7 @@ def routes(api: Api) -> list[Route]:
 
     async def delete(kind: str, request: Request, who: Principal) -> Any:
         name = request.path_params["name"]
+        not_the_platforms(kind, name)
         await resources.delete(who.org_id, kind, name)
         await platform.announce(f"{kind}.deleted", who.org_id, by=who, target=name)
         return {"name": name, "deleted": True}

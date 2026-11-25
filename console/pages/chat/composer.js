@@ -5,9 +5,11 @@ import { add, clear, h, icon } from "../../lib/dom.js";
 import { bytes } from "../../lib/format.js";
 import { upload } from "./turns.js";
 
+const IMAGE = /^image\/(png|jpeg|gif|webp)$/;     // the pictures a model is shown: any other file is given as a file
+
 /** `onSend(text, attachments)` returns false when the message was not taken; `onStop()` stops the running turn. */
 export function composer({ onSend, onStop }) {
-  const pending = [];                              // files for the next message: {name, bytes, id | uploading | error}
+  const pending = [];                              // files for the next message: {name, bytes, image, id | uploading | error}
   const tray = h("div", { class: "pending" }), picker = h("input", { type: "file", multiple: true, hidden: true });
   const input = h("textarea", { rows: 1 }), button = h("button", { class: "primary square" });
   let busy = false;
@@ -18,7 +20,7 @@ export function composer({ onSend, onStop }) {
     h("button", { class: "quiet", title: "Remove", onclick: () => { pending.splice(pending.indexOf(file), 1); drawTray(); } }, icon("close")))));
   function attach(files) {
     for (const file of files) {
-      const held = { name: file.name, bytes: file.size, uploading: true };
+      const held = { name: file.name, bytes: file.size, image: IMAGE.test(file.type), uploading: true };
       pending.push(held);
       upload(file).then(stored => { held.id = stored.id; }, error => { held.error = error.message; }).finally(() => { held.uploading = false; drawTray(); });
     }
@@ -28,7 +30,7 @@ export function composer({ onSend, onStop }) {
     const text = input.value.trim();
     if (!text) return;
     if (pending.some(file => file.uploading)) return fail(new Error("A file is still uploading."));
-    const given = pending.filter(file => file.id).map(file => ({ id: file.id, name: file.name }));
+    const given = pending.filter(file => file.id).map(file => ({ id: file.id, name: file.name, image: file.image }));
     if (onSend(text, given) === false) return;
     input.value = "";
     pending.length = 0;
