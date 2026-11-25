@@ -4,7 +4,6 @@ import json
 
 from harnessgateway import shipped
 from harnessgateway.domain import schema
-from harnessgateway.domain.events import ENDINGS, EVENTS, ITEMS
 
 CONTRACT = shipped.contract()
 
@@ -17,14 +16,8 @@ def test_the_kept_schemas_are_what_the_pin_gives():
     assert all(schema.SDK in json.loads(text)["$comment"] for text in kept.values())
 
 
-def test_three_are_openais_own_and_one_is_the_platforms():
+def test_the_three_are_openais_own_with_nothing_added():
     request, response, stream = schema.request(), schema.response(), schema.stream()
     assert "required" not in request["$defs"]["ResponseCreateParamsNonStreaming"]      # as OpenAI has it: nothing added
     assert {"conversation", "prompt", "model", "input"} <= set(request["$defs"]["ResponseCreateParamsNonStreaming"]["properties"])
     assert {"id", "output", "status", "usage", "completed_at"} <= set(response["properties"]) and len(stream["anyOf"]) == 59
-    lines = schema.lines()
-    kinds = {lines["$defs"][option["$ref"].rpartition("/")[2]]["properties"]["type"]["const"] if "$ref" in option
-             else option["properties"]["type"]["const"] for option in lines["anyOf"]}
-    assert kinds == {*ITEMS, *EVENTS, *ENDINGS} and "response.created" not in kinds
-    message = lines["$defs"]["ResponseOutputMessage"]             # what the platform fills in is not asked of a line
-    assert "id" not in message["required"] and "id" in response["$defs"]["ResponseOutputMessage"]["required"]
