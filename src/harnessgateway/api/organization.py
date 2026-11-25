@@ -31,21 +31,20 @@ def routes(api: Api) -> list[Route]:
                 **await platform.usage.total(who.org_id, start=start, end=end)}
 
     async def key_create(request: Request, who: Principal) -> Any:
-        key, text = await keys.create(who.org_id, parse_object(await read_body(request)).get("name"))
-        await platform.announce("keys.created", who.org_id, by=who, target=key.id)
+        key, text = await keys.create(who.org_id, parse_object(await read_body(request)).get("name"), by=who.subject)
         return {**key.shown(), "key": text}        # the only time the key itself is shown
 
     async def key_list(request: Request, who: Principal) -> Any:
         return listing([key.shown() for key in await keys.all(who.org_id)])
 
     async def key_revoke(request: Request, who: Principal) -> Any:
-        await keys.revoke(who.org_id, request.path_params["id"])
-        await platform.announce("keys.revoked", who.org_id, by=who, target=request.path_params["id"])
+        await keys.revoke(who.org_id, request.path_params["id"], by=who.subject)
         return {"id": request.path_params["id"], "object": "key", "revoked": True}
 
     async def about(request: Request, who: Principal) -> Any:
         return {"object": "platform", "version": __version__, "contract": contract.VERSION, "sdk": schema.SDK,
-                "driver": platform.driver.name, "isolation": await platform.driver.isolation()}
+                "driver": platform.driver.name, "isolation": await platform.driver.isolation(),
+                "extensions": platform.extensions.described()}
 
     return [
         api.route("/v1/usage", "GET", "usage.read", usage),

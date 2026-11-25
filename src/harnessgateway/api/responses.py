@@ -96,10 +96,10 @@ def routes(api: Api) -> list[Route]:
         return turn.response()
 
     async def cancel(request: Request, who: Principal) -> Any:
-        return (await turns.cancel(who.org_id, turn_id(request))).response()
+        return (await turns.cancel(who.org_id, turn_id(request), by=who.subject)).response()
 
     async def delete(request: Request, who: Principal) -> Any:
-        await turns.delete(who.org_id, turn_id(request))
+        await turns.delete(who.org_id, turn_id(request), by=who.subject)
         return {"id": request.path_params["id"], "object": "response", "deleted": True}
 
     async def inputs(request: Request, who: Principal) -> Any:

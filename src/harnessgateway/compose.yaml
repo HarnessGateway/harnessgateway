@@ -1,0 +1,76 @@
+# HarnessGateway on one host with Docker: a database, the platform, and the egress proxy. Its values come from
+# the .env file beside it, which `harnessgateway secrets` writes once.
+#
+# Sandboxes are sibling containers the platform starts through the Docker socket, each given a few folders of the
+# data volume. Everything is named after HG_NAMESPACE, so two installations can share one host.
+name: ${HG_NAMESPACE:-hg}
+
+x-platform: &platform
+  image: ${HG_IMAGE:-harnessgateway:dev}
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hg
+      POSTGRES_PASSWORD: ${HG_DB_PASSWORD:?}
+      POSTGRES_DB: hg
+    volumes:
+      - db:/var/lib/postgresql
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hg -d hg"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  serve:
+    <<: *platform
+    command: ["harnessgateway", "serve"]
+    env_file: .env                                     # everything in it: an edition's settings reach it unnamed here
+    environment:
+      HG_DATABASE_URL: postgresql://hg:${HG_DB_PASSWORD:?}@db:5432/hg
+      HG_NAMESPACE: ${HG_NAMESPACE:-hg}
+      HG_PORT: "8000"                                  # in its container; HG_PORT in .env is the host's, below
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock      # how it starts sandboxes, and measures them
+      - data:/data
+    ports:
+      - "${HG_BIND:-127.0.0.1}:${HG_PORT:-8000}:8000"
+    networks: [control]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:                                       # ready: it reaches its database and what runs its sandboxes
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  proxy:
+    <<: *platform
+    command: ["harnessgateway", "proxy"]
+    environment:                                       # its own three settings: never the database, never a key
+      HG_PROXY_KEY: ${HG_PROXY_KEY:?}
+      HG_PRIVATE_HOSTS: ${HG_PRIVATE_HOSTS:-}
+      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+    networks:
+      control:
+      sandbox:
+        aliases: [egress]                              # the name a sandbox knows it by
+    depends_on: [serve]
+
+networks:
+  control:
+    name: ${HG_NAMESPACE:-hg}-control
+  sandbox:
+    name: ${HG_NAMESPACE:-hg}-sandbox
+    internal: true                                     # no way out but the proxy
+
+volumes:
+  db:
+    name: ${HG_NAMESPACE:-hg}-db
+  data:
+    name: ${HG_NAMESPACE:-hg}-data

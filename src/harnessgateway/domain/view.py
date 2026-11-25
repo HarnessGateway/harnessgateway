@@ -2,7 +2,7 @@
 
 A page shows an image, plays a video or runs a page an agent built by giving the browser an address, and a browser
 sends no API key with such a request. So the address is the permission: it holds a token that names one session
-of one organization until a time, signed with the installation's key. What is served through it is served
+of one organization until a time, signed with a key of the installation's own. What is served through it is served
 sandboxed (`POLICY`): what an agent made runs in an origin of its own, and can neither read the page that shows
 it nor call the API as anyone.
 """

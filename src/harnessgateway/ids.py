@@ -23,11 +23,16 @@ def check_name(value: object, what: str) -> str:
                   param=what)
 
 
-def new_id(kind: str) -> str:
-    """A prefix and a ULID: 48 bits of milliseconds, then 80 random bits. Ids of one kind sort by when they
-    were made, which is what paging through a list relies on."""
+def ulid() -> str:
+    """A ULID: 48 bits of milliseconds, then 80 random bits, as 26 characters. Those made later sort later."""
     number = (time.time_ns() // 1_000_000 << 80) | secrets.randbits(80)
-    return f"{PREFIXES[kind]}_" + "".join(_ALPHABET[(number >> (5 * place)) & 31] for place in reversed(range(26)))
+    return "".join(_ALPHABET[(number >> (5 * place)) & 31] for place in reversed(range(26)))
+
+
+def new_id(kind: str) -> str:
+    """A prefix and a ULID. Ids of one kind sort by when they were made, which is what paging through a list
+    relies on."""
+    return f"{PREFIXES[kind]}_{ulid()}"
 
 
 def is_id(value: object, kind: str) -> bool:

@@ -78,6 +78,7 @@ def test_a_sealed_value_opens_only_where_it_belongs_and_settings_are_checked_whe
     good = {"HG_DATABASE_URL": "postgresql://x", "HG_SECRET_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", "HG_PROXY_KEY": "k"}
     settings = Settings.from_env({**good, "HG_EXTENSIONS": "a:B, c:D"})
     assert (settings.namespace, settings.port, settings.blobs, settings.extensions) == ("hg", 8000, "/data/blobs", ("a:B", "c:D"))
+    assert Settings.from_env({**good, "HG_SECRET_KEY": ""}).secret_key is None       # an extension's sealer may stand in for it
     for wrong, why in (({"HG_SECRET_KEY": "short"}, "32 random bytes"), ({"HG_PORT": "0"}, "HG_PORT"), ({"HG_RUNTIME": "kata"}, "HG_RUNTIME"),
                        ({"HG_DATABASE_URL": ""}, "HG_DATABASE_URL is required")):
         with pytest.raises(SettingsError, match=why):

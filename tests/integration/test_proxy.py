@@ -6,22 +6,22 @@ import base64
 import httpx
 
 from harnessgateway.api.app import internal_app
-from harnessgateway.domain.egress import BoundSecret, EgressPolicy, Policy
+from harnessgateway.domain.egress import BoundSecret, Connection, EgressPolicy, Policy
 from harnessgateway.platform import Platform
 from harnessgateway.proxy.authority import Authority, new_authority
 from harnessgateway.proxy.control import PlatformLink
 from harnessgateway.proxy.server import EgressProxy
-from tests.helpers import package
-from tests.integration.conftest import ORG, run
+from harnessgateway.testing import package
+from tests.integration.conftest import BY, ORG, run
 
 
 async def test_the_proxy_is_told_what_a_running_sandbox_may_reach_and_no_secret_enters_the_sandbox(platform: Platform):
-    await platform.resources.add_package(ORG, "agent", package())
-    await platform.resources.apply(ORG, "providers", "claude", {"apis": {"anthropic": "https://api.example.com"}, "key": "sk-real"})
+    await platform.resources.add_package(ORG, "agent", package(), by=BY)
+    await platform.resources.apply(ORG, "providers", "claude", {"apis": {"anthropic": "https://api.example.com"}, "key": "sk-real"}, by=BY)
     await platform.resources.apply(ORG, "environments", "default", {
         "image": "node:22", "harnesses": ["agent"], "network": {"allow": ["db.example.com"]},
         "secrets": {"DB": {"hosts": ["db.example.com"], "header": "X-Key", "value": "db-secret"},
-                    "TOOL": {"hosts": ["tool.example.com"], "value": "tool-secret"}}})
+                    "TOOL": {"hosts": ["tool.example.com"], "value": "tool-secret"}}}, by=BY)
     transport, seen = httpx.ASGITransport(app=internal_app(platform)), {}
     link = PlatformLink("http://internal", "proxy-key", transport=transport)
     async with httpx.AsyncClient(transport=transport, base_url="http://internal") as stranger:
@@ -33,7 +33,8 @@ async def test_the_proxy_is_told_what_a_running_sandbox_may_reach_and_no_secret_
         subject, token = plan.env["HTTPS_PROXY"].split("//")[1].split("@")[0].split(":")
         seen["install" if plan.command.endswith("/install") else "turn"] = (plan, await link.policy(subject, token))
         assert await link.policy(subject, "not-its-token") is None
-        link.count(ORG, 10, 20)
+        link.report(Connection(ORG, subject, "default", "api.example.com", 443, sent=10, received=20))
+        link.report(Connection(ORG, subject, "default", "elsewhere.example.com", 443, refused="it is not allowed"))
         await link.tell()
         return await original(plan, on_stdout, on_stderr)
     platform.driver.run = sandbox
@@ -67,11 +68,11 @@ async def test_the_proxy_refuses_what_a_policy_does_not_allow_and_puts_secrets_i
     port = host.sockets[0].getsockname()[1]
     policy = Policy(ORG, "resp_1", "default", EgressPolicy("limited", (f"127.0.0.1:{port}", "127.0.0.9")),
                     (BoundSecret((f"127.0.0.1:{port}",), "real-value", "hgs_placeholder", "X-Key", "Key "),))
-    counted: list[tuple[str, int, int]] = []
+    counted: list[Connection] = []
 
     async def policy_of(subject: str, token: str) -> Policy | None:
         return policy if (subject, token) == ("resp_1", "token") else None
-    proxy = EgressProxy(policy_of, lambda *count: counted.append(count), Authority(*new_authority()),
+    proxy = EgressProxy(policy_of, counted.append, Authority(*new_authority()),
                         private_hosts=[f"127.0.0.1:{port}"])
     server = await proxy.start("127.0.0.1", 0)
     proxy_port = server.sockets[0].getsockname()[1]
@@ -96,6 +97,11 @@ async def test_the_proxy_refuses_what_a_policy_does_not_allow_and_puts_secrets_i
     sent = asked[0].decode()
     assert sent.startswith("GET /data?token=real-value HTTP/1.1") and "Authorization: Bearer real-value" in sent
     assert "X-Key: Key real-value" in sent and "Proxy-Authorization" not in sent and "hgs_placeholder" not in sent
-    assert counted[-1][0] == ORG and counted[-1][1] > 0 and counted[-1][2] > 0
+    made = counted[-1]                                         # each connection is reported: where to, and how much,
+    assert (made.org_id, made.subject_id, made.environment, made.host, made.port, made.refused) == (ORG, "resp_1", "default", "127.0.0.1", port, "")
+    assert made.sent > 0 and made.received > 0
+    assert [(each.host, each.port, bool(each.refused), each.sent) for each in counted[:-1]] == [      # and each refusal, with why
+        ("example.com", 80, True, 0), ("127.0.0.9", 80, True, 0)]
+    assert "network.allow" in counted[0].refused and "private or local network" in counted[1].refused
     server.close()
     host.close()

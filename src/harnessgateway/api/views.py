@@ -20,7 +20,12 @@ from harnessgateway.ids import is_id, session_of
 
 def routes(api: Api) -> list[Route]:
     platform, work = api.platform, Work(api.platform)
-    key = platform.settings.secret_key
+    made: list[bytes] = []                         # the key links are signed with: made once, and never changed
+
+    async def signing_key() -> bytes:
+        if not made:
+            made.append(await platform.view_key())
+        return made[0]
 
     async def link(request: Request, who: Principal) -> Any:
         container = request.path_params["id"]
@@ -31,7 +36,7 @@ def routes(api: Api) -> list[Route]:
         except NotFound:
             raise NotFound(f"there is no container {container}") from None
         expires_at = int(time.time()) + view.LASTS_S
-        token = view.sign(key, who.org_id, session.id, expires_at=expires_at)
+        token = view.sign(await signing_key(), who.org_id, session.id, expires_at=expires_at)
         return {"url": f"/view/{token}/", "expires_at": expires_at}
 
     async def span(org_id: str, entry: Entry, first: int, last: int) -> AsyncIterator[bytes]:
@@ -42,7 +47,8 @@ def routes(api: Api) -> list[Route]:
             yield (await chunks.get(entry.hashes[index]))[max(first - start, 0):last - start + 1]
 
     async def file(request: Request) -> Any:
-        named, path = view.read(key, request.path_params["token"], now=time.time()), request.path_params["path"]
+        key, path = await signing_key(), request.path_params["path"]
+        named = view.read(key, request.path_params["token"], now=time.time())
         entry = (await work.files(*named)).get(path) if named else None
         if named is None or entry is None:
             raise NotFound("there is nothing at this address: the link is past its time, or the file is not there")

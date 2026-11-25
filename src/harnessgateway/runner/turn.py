@@ -3,9 +3,11 @@
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
+from typing import Any
 
 from harnessgateway.domain.contract import CACHE, STARTUP_FAILED
 from harnessgateway.domain.egress import Policy
@@ -23,7 +25,7 @@ from harnessgateway.domain.sandbox import (
     turn_policy,
 )
 from harnessgateway.domain.snapshot import Manifest, ManifestError
-from harnessgateway.driver.base import DriverError, Measured, SandboxExit
+from harnessgateway.driver.base import DriverError, SandboxExit
 from harnessgateway.errors import Conflict, Refused
 from harnessgateway.ids import new_placeholder, new_token
 from harnessgateway.platform import Platform
@@ -103,8 +105,9 @@ class TurnRunner:
         """Take a claimed turn to its end. It never raises for what goes wrong inside the turn."""
         platform, org_id = self._platform, turn.org_id
         stop = self._stops.setdefault(turn.id, _Stop())
-        record, output, used = _Log(), RunOutput(), Measured()
+        record, output = _Log(), RunOutput()
         snapshot: Snapshot | None = None
+        used: dict[str, Any] | None = None         # what its sandbox used; None while it has not started
         try:
             ready = await self._prepare(turn)
             seen, used = await self._sandbox(ready, stop, output, record)
@@ -125,12 +128,13 @@ class TurnRunner:
         said = output.terminal
         try:
             final = await platform.turns.conclude(
-                turn, decide(seen), output=output.output(), usage=said.usage if said else None,
+                turn, decide(seen), output=output.output(), usage=said.usage if said else None, used=used,
                 snapshot_id=snapshot.id if snapshot else None, log=record.text())
         except Conflict:                           # ended meanwhile, by whoever thought this runner was gone
             return await platform.turns.get(org_id, turn.id)
         await platform.announce("turn.finished", org_id, target=final.id, session_id=final.session_id,
-                                model=str(final.line), status=final.status, reason=final.reason, **asdict(used))
+                                model=str(final.line), status=final.status, reason=final.reason, by=final.principal,
+                                usage=final.usage, **(used or {}))
         return final
 
     async def _prepare(self, turn: Turn) -> _Ready:
@@ -173,7 +177,8 @@ class TurnRunner:
             environment_secrets=await resources.secrets(org_id, "environments", line.environment))
         bound += await platform.turns.credentials(turn)        # the request's own, bound to where it said they go
         proxy_token = new_token()
-        await platform.grants.put(Policy(org_id, turn.id, line.environment, turn_policy(resolved), bound), proxy_token)
+        may_reach = await platform.extensions.egress(org_id, turn_policy(resolved))
+        await platform.grants.put(Policy(org_id, turn.id, line.environment, may_reach, bound), proxy_token)
         plan = turn_plan(session_id=turn.session_id, turn_id=turn.id, install_id=install_id, image_id=image_id,
                          resolved=resolved, proxy_token=proxy_token, provider_key=provider_key,
                          placeholders=placeholders)
@@ -191,9 +196,10 @@ class TurnRunner:
         return handover(worked, turn.harness, notes)
 
     async def _sandbox(self, ready: _Ready, stop: _Stop, output: RunOutput, record: _Log,
-                       ) -> tuple[Observed, Measured]:
+                       ) -> tuple[Observed, dict[str, Any] | None]:
         """Run the sandbox to its end, with its disk measured beside it, the time limit over it, and a stop
-        honoured. What was seen of it, and what it used."""
+        honoured. What was seen of it, and what it used: how long it ran, what it was allowed, and what its
+        driver measured; None when it never started."""
         platform, turn, driver = self._platform, ready.turn, self._platform.driver
         environment, folders = ready.resolved.environment, session_folders(ready.turn.session_id)
         invalid: list[str] = []
@@ -232,6 +238,7 @@ class TurnRunner:
                 await asyncio.sleep(_STOP_AGAIN_S)
 
         await platform.sessions.folders_hold(turn.org_id, turn.session_id, None)     # they are about to change
+        began = time.monotonic()
         if stop.reason is None:
             sandbox = asyncio.create_task(driver.run(ready.plan, on_stdout, on_stderr))
             guards = [asyncio.create_task(guard()) for guard in (measure, limit, enforce)]
@@ -251,9 +258,11 @@ class TurnRunner:
         # The startup script failed when the sandbox says so and the harness, which would have followed, said nothing.
         startup_failed = bool(environment.scripts.startup and result.exit_code == STARTUP_FAILED
                               and output.terminal is None and output.events == 0)
+        used = {"seconds": round(time.monotonic() - began, 3), "cpus": environment.cpus,
+                "memory_mb": environment.memory_mb, **asdict(result.measured)} if result.started else None
         return Observed(stopped=stop.reason, started=result.started, out_of_memory=result.out_of_memory,
                         startup_failed=startup_failed, exit_code=result.exit_code,
-                        invalid_output=invalid[0] if invalid else None, terminal=output.terminal), result.measured
+                        invalid_output=invalid[0] if invalid else None, terminal=output.terminal), used
 
     async def _save(self, ready: _Ready, record: _Log) -> Snapshot | None:
         """Snapshot the mind and the work. None when it could not be done."""

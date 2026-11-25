@@ -11,14 +11,14 @@ from harnessgateway.api.app import public_app
 from harnessgateway.domain.package import read_archive
 from harnessgateway.platform import Platform
 from harnessgateway.runner.runner import Runner
-from tests.helpers import package
-from tests.integration.conftest import LINE, ORG
+from harnessgateway.testing import extensions_under_test, package
+from tests.integration.conftest import BY, LINE, ORG
 
 
 @pytest.fixture
 async def http(platform: Platform) -> AsyncIterator[httpx.AsyncClient]:
     running = asyncio.create_task(Runner(platform, heartbeat_s=0.2).run())
-    _, key = await platform.keys.create(ORG, "tests")
+    _, key = await platform.keys.create(ORG, "tests", by=BY)
     transport = httpx.ASGITransport(app=public_app(platform))
     async with httpx.AsyncClient(transport=transport, base_url="http://hg", timeout=30,
                                  headers={"Authorization": f"Bearer {key}"}) as client:
@@ -38,7 +38,8 @@ async def test_every_route_needs_a_key_and_a_refusal_is_the_openai_error_envelop
         assert refused.status_code == 401 and refused.json()["error"]["code"] == "invalid_api_key"
     assert (await http.get("/healthz", headers={"Authorization": ""})).json() == {"status": "ok"}
     assert (await http.get("/readyz", headers={"Authorization": ""})).json() == {"status": "ready"}
-    assert (await http.get("/v1/platform")).json()["isolation"] == "none"
+    about = (await http.get("/v1/platform")).json()
+    assert about["isolation"] == "none" and len(about["extensions"]) == len(extensions_under_test())      # none, for the core alone
     wrong = (await http.post("/v1/responses", json={"model": LINE, "input": "x", "temperatur": 1})).json()["error"]
     assert (wrong["type"], wrong["param"]) == ("invalid_request_error", "temperatur")
     assert (await http.post("/v1/responses", content=b"not json")).status_code == 400
@@ -117,6 +118,8 @@ async def test_sessions_are_their_requests_and_responses_and_usage_is_the_organi
     turns = (await http.get(f"/v1/sessions/{session}/turns")).json()["data"]
     assert [turn["number"] for turn in turns] == [1, 2]
     assert turns[0]["request"] == {"model": LINE, "input": "one"} and turns[0]["response"] == first
+    used = turns[0]["used"]                                    # what its sandbox used: how long, what it was allowed, what was measured
+    assert set(used) == {"seconds", "cpus", "memory_mb", "cpu_seconds", "memory_byte_seconds"} and (used["cpus"], used["memory_mb"]) == (2, 4096)
     assert turns[1]["request"]["previous_response_id"] == first["id"] and turns[1]["response"] == second
     made = (await http.put("/v1/harnesses/made", json={"session": session, "path": "made"})).json()
     assert "no folder" in made["error"]["message"]

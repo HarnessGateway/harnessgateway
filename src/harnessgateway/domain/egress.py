@@ -3,7 +3,7 @@ about a running sandbox."""
 
 import ipaddress
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from harnessgateway.errors import Invalid
@@ -118,6 +118,12 @@ class EgressPolicy:
             return f"{host}:{port} is not reachable from a closed environment"
         return f"{host}:{port} is not in the environment's network.allow"
 
+    def narrowed_to(self, other: "EgressPolicy") -> bool:
+        """Whether `other` is this policy narrowed: it reaches nothing this one does not, and denies everything
+        this one denies. It is what an extension may make of a policy, and all it may."""
+        within = self.mode == "open" or (other.mode != "open" and set(other.allow) <= set(self.allow))
+        return within and set(self.deny) <= set(other.deny)
+
 
 @dataclass(frozen=True)
 class BoundSecret:
@@ -154,3 +160,27 @@ class Policy:
         return cls(data["org_id"], data["subject_id"], data["environment"],
                    EgressPolicy(data["mode"], tuple(data["allow"]), tuple(data["deny"])),
                    tuple(BoundSecret(**{**secret, "hosts": tuple(secret["hosts"])}) for secret in data["secrets"]))
+
+
+@dataclass(frozen=True)
+class Connection:
+    """One connection a sandbox made through the egress proxy, or was refused: what the proxy tells the platform."""
+
+    org_id: str
+    subject_id: str                            # the turn, or the install
+    environment: str
+    host: str
+    port: int
+    refused: str = ""                          # why it was refused; empty when it was made
+    sent: int = 0                              # bytes
+    received: int = 0
+
+    def __post_init__(self) -> None:
+        words = all(isinstance(value, str) for value in (self.org_id, self.subject_id, self.environment, self.host,
+                                                         self.refused))
+        counts = all(type(value) is int and value >= 0 for value in (self.port, self.sent, self.received))
+        if not (words and counts):
+            raise ValueError("a connection is its organization, sandbox, environment and host, a port, and bytes")
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)

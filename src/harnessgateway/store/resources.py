@@ -9,6 +9,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from harnessgateway.domain.change import Change
 from harnessgateway.domain.line import NONE, Line
 from harnessgateway.domain.package import read_archive, write_archive
 from harnessgateway.domain.resolve import Resolved, resolve
@@ -17,7 +18,7 @@ from harnessgateway.domain.sealing import Sealer
 from harnessgateway.errors import Invalid, NotFound
 from harnessgateway.ids import check_name, new_id
 from harnessgateway.store.blobs import BlobStore
-from harnessgateway.store.db import Connection, Database
+from harnessgateway.store.db import Connection, Database, Tell
 
 LOG_MAX = 64 * 1024
 _ROW = "kind, name, spec, sealed, created_at, updated_at"
@@ -78,10 +79,11 @@ def _split(kind: str, sent: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str
 
 
 class Resources:
-    def __init__(self, db: Database, blobs: BlobStore, sealer: Sealer) -> None:
+    def __init__(self, db: Database, blobs: BlobStore, sealer: Sealer, tell: Tell) -> None:
         self._db = db
         self._blobs = blobs
         self._sealer = sealer
+        self._tell = tell
 
     async def find(self, org_id: str, kind: str, name: str) -> Resource | None:
         row = await self._db.one(org_id, f"SELECT {_ROW} FROM resources WHERE org_id = %s AND kind = %s AND name = %s",
@@ -99,7 +101,7 @@ class Resources:
                                   [org_id, kind])
         return [Resource(**row) for row in rows]
 
-    async def apply(self, org_id: str, kind: str, name: str, sent: Mapping[str, Any]) -> Resource:
+    async def apply(self, org_id: str, kind: str, name: str, sent: Mapping[str, Any], *, by: str) -> Resource:
         """Make a definition, or replace the one of that name. A secret that is not sent keeps its value; null
         removes it. A harness is not made this way: it is its package."""
         check_name(name, "name")
@@ -130,9 +132,10 @@ class Resources:
                 if unknown := sorted(set(definition.harnesses) - {found["name"] for found in have}):
                     raise Invalid(f"harnesses: there is no harness named {unknown[0]!r}", param="harnesses")
             await conn.execute(_UPSERT, [org_id, kind, name, Jsonb(definition.dump()), Jsonb(sealed)])
+            await self._tell(conn, Change(f"{kind}.applied", org_id, by, name))
         return await self.get(org_id, kind, name)
 
-    async def add_package(self, org_id: str, name: str, archive: bytes) -> Resource:
+    async def add_package(self, org_id: str, name: str, archive: bytes, *, by: str) -> Resource:
         """Add a package as a harness, or replace the harness of that name with it. The package is checked in
         full first, and kept as its files alone, written one way: not as the archive that happened to carry
         them."""
@@ -145,9 +148,10 @@ class Resources:
                                "ON CONFLICT DO NOTHING", [org_id, package.digest, len(archive)])
             await conn.execute(_UPSERT, [org_id, "harnesses", name, Jsonb(Harness(digest=package.digest).dump()),
                                          Jsonb({})])
+            await self._tell(conn, Change("harnesses.applied", org_id, by, name))
         return await self.get(org_id, "harnesses", name)
 
-    async def delete(self, org_id: str, kind: str, name: str) -> None:
+    async def delete(self, org_id: str, kind: str, name: str, *, by: str) -> None:
         """Remove a definition. A harness is also taken off every environment that carries it."""
         async with self._db.tx(org_id) as conn:
             gone = await conn.execute("DELETE FROM resources WHERE org_id = %s AND kind = %s AND name = %s",
@@ -159,6 +163,7 @@ class Resources:
                     "UPDATE resources SET spec = jsonb_set(spec, '{harnesses}', (spec -> 'harnesses') - %s::text), "
                     "updated_at = now() WHERE org_id = %s AND kind = 'environments' AND spec -> 'harnesses' ? %s",
                     [name, org_id, name])
+            await self._tell(conn, Change(f"{kind}.deleted", org_id, by, name))
 
     async def secrets(self, org_id: str, kind: str, name: str) -> dict[str, str]:
         """A definition's secret values, opened. Only what the egress proxy is to be told ever asks."""

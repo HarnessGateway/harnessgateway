@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from harnessgateway.domain.change import Change
 from harnessgateway.errors import Invalid, NotFound, TooLarge
 from harnessgateway.ids import new_id
 from harnessgateway.store.blobs import BlobStore
-from harnessgateway.store.db import Database
+from harnessgateway.store.db import Database, Tell
 
 FILE_MAX = 512 * 1024 * 1024
 _COLUMNS = "id, filename, purpose, bytes, created_at"
@@ -33,15 +34,17 @@ def file_key(org_id: str, file_id: str) -> str:
 
 
 class Files:
-    def __init__(self, db: Database, blobs: BlobStore) -> None:
+    def __init__(self, db: Database, blobs: BlobStore, tell: Tell) -> None:
         self._db = db
         self._blobs = blobs
+        self._tell = tell
 
-    async def create(self, org_id: str, *, filename: str, purpose: str, parts: AsyncIterator[bytes]) -> File:
+    async def create(self, org_id: str, *, filename: str, purpose: str, parts: AsyncIterator[bytes],
+                     by: str) -> File:
         """Keep an upload. Its name must be a plain file name: a turn finds it in its sandbox under that name."""
         if filename in ("", ".", "..") or "/" in filename or "\x00" in filename or len(filename) > 255:
             raise Invalid(f"{filename!r} is not a plain file name", param="file")
-        file_id, key = new_id("file"), ""
+        file_id = new_id("file")
 
         async def limited() -> AsyncIterator[bytes]:
             size = 0
@@ -52,10 +55,17 @@ class Files:
                 yield part
         key = file_key(org_id, file_id)
         size = await self._blobs.write(key, limited())
-        row = await self._db.one(org_id, "INSERT INTO files (id, org_id, filename, purpose, bytes) "
-                                         f"VALUES (%s, %s, %s, %s, %s) RETURNING {_COLUMNS}",
-                                 [file_id, org_id, filename, purpose, size])
-        assert row is not None
+        try:
+            async with self._db.tx(org_id) as conn:
+                row = await (await conn.execute(
+                    f"INSERT INTO files (id, org_id, filename, purpose, bytes) VALUES (%s, %s, %s, %s, %s) "
+                    f"RETURNING {_COLUMNS}", [file_id, org_id, filename, purpose, size])).fetchone()
+                assert row is not None
+                await self._tell(conn, Change("files.created", org_id, by, file_id,
+                                              {"filename": filename, "bytes": size}))
+        except BaseException:                      # no row names the bytes: they are not kept
+            await self._blobs.delete(key)
+            raise
         return File(**row)
 
     async def get(self, org_id: str, file_id: str) -> File:
@@ -75,7 +85,10 @@ class Files:
     def content(self, org_id: str, file_id: str) -> AsyncIterator[bytes]:
         return self._blobs.read(file_key(org_id, file_id))
 
-    async def delete(self, org_id: str, file_id: str) -> None:
-        if not await self._db.run(org_id, "DELETE FROM files WHERE org_id = %s AND id = %s", [org_id, file_id]):
-            raise NotFound(f"there is no file {file_id}")
+    async def delete(self, org_id: str, file_id: str, *, by: str) -> None:
+        async with self._db.tx(org_id) as conn:
+            gone = await conn.execute("DELETE FROM files WHERE org_id = %s AND id = %s", [org_id, file_id])
+            if gone.rowcount == 0:
+                raise NotFound(f"there is no file {file_id}")
+            await self._tell(conn, Change("files.deleted", org_id, by, file_id))
         await self._blobs.delete(file_key(org_id, file_id))

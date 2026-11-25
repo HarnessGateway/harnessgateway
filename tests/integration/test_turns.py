@@ -12,8 +12,8 @@ from harnessgateway.platform import Platform
 from harnessgateway.runner import turn as turn_module
 from harnessgateway.runner.housekeeping import housekeep
 from harnessgateway.runner.runner import Runner
-from tests.helpers import DONE, TEXT, lines, package
-from tests.integration.conftest import LINE, ORG, WHO, ready, run, work_files
+from harnessgateway.testing import DONE, TEXT, lines, package
+from tests.integration.conftest import BY, LINE, ORG, WHO, ready, run, work_files
 
 
 async def chunk_rows(platform: Platform) -> list[dict]:
@@ -47,6 +47,8 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
     assert given["previous.json"] == "null" and response["completed_at"] >= response["created_at"]
     used = await platform.usage.total(ORG)                    # what the install and the turn used, added up
     assert (used["cpu_seconds"], used["memory_byte_seconds"]) == (3.0, 5e9)
+    assert {**turn.used, "seconds": 0} == {"seconds": 0, "cpus": 2, "memory_mb": 4096, "cpu_seconds": 2.0, "memory_byte_seconds": 4e9}
+    assert turn.used["seconds"] >= 0 and turn.principal == WHO.subject       # and what the turn's own sandbox did, kept on the turn
     assert not driver.folder(sandbox, "/turn").exists()       # the turn's inputs are gone
     token = sandbox.env["HTTPS_PROXY"].split("@")[0].rsplit(":", 1)[1]
     assert await platform.grants.policy(turn.id, token) is None       # and what it was granted is worth nothing
@@ -101,8 +103,8 @@ async def test_a_requests_credentials_reach_only_the_proxy(platform: Platform):
 async def test_a_session_continues_forks_and_changes_harness(platform: Platform):
     await ready(platform)
     driver = platform.driver
-    await platform.resources.add_package(ORG, "other", package(**{"README.md": b"another package"}))
-    await platform.resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "other"]})
+    await platform.resources.add_package(ORG, "other", package(**{"README.md": b"another package"}), by=BY)
+    await platform.resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "other"]}, by=BY)
     driver.writes = {"a.txt": b"one"}
     first = await run(platform)
     driver.writes = {"b.txt": b"two"}
@@ -135,6 +137,7 @@ async def test_what_goes_wrong_ends_the_turn_with_its_reason(platform: Platform,
     driver.exit = SandboxExit(False, error="no such image")
     never = await run(platform)
     assert (never.reason, never.snapshot_id) == ("sandbox_failed", None) and "no such image" in never.log
+    assert never.used is None                                  # a sandbox that never started used nothing
     driver.prints, driver.exit = [], SandboxExit(True, 78)
     failed = await run(platform)
     assert failed.reason == "startup_failed" and failed.snapshot_id is not None       # what it left is kept
@@ -151,9 +154,9 @@ async def test_what_goes_wrong_ends_the_turn_with_its_reason(platform: Platform,
         await accept(platform, WHO, {"model": LINE, "input": "x", "previous_response_id": full.id})
     driver.stopped.clear()
     driver.writes, driver.hold, driver.prints = {}, False, lines(*TEXT, DONE)
-    await platform.resources.apply(ORG, "environments", "broken", {"image": "missing:1", "harnesses": ["echo"]})
+    await platform.resources.apply(ORG, "environments", "broken", {"image": "missing:1", "harnesses": ["echo"]}, by=BY)
     assert (await run(platform, model="broken/echo/none/none")).reason == "sandbox_failed"
-    await platform.resources.add_package(ORG, "echo", package(**{"VERSION": b"2"}))
+    await platform.resources.add_package(ORG, "echo", package(**{"VERSION": b"2"}), by=BY)
     driver.install_exit = SandboxExit(True, 1)
     broken = await run(platform)
     assert broken.reason == "install_failed" and "install exited with code 1" in broken.log
@@ -164,14 +167,14 @@ async def test_what_goes_wrong_ends_the_turn_with_its_reason(platform: Platform,
 async def test_a_runner_takes_turns_from_the_queue_and_a_turn_is_cancelled_waiting_or_running(platform: Platform):
     await ready(platform)
     waiting = await accept(platform, WHO, {"model": LINE, "input": "x"})
-    assert (await platform.turns.cancel(ORG, waiting.id)).status == "cancelled"
+    assert (await platform.turns.cancel(ORG, waiting.id, by=BY)).status == "cancelled"
     assert await platform.turns.claim("runner-a") is None
     platform.driver.hold = True
     running = asyncio.create_task(Runner(platform, heartbeat_s=0.2).run())
     turn = await accept(platform, WHO, {"model": LINE, "input": "x"})
     async for event in platform.turns.follow(ORG, turn.id):
         if event["type"] == "response.output_item.done":                   # it is running: ask for it to stop
-            await platform.turns.cancel(ORG, turn.id)
+            await platform.turns.cancel(ORG, turn.id, by=BY)
     ended = await platform.turns.get(ORG, turn.id)
     assert (ended.status, ended.reason) == ("cancelled", "cancelled") and ended.snapshot_id is not None
     running.cancel()
@@ -192,8 +195,8 @@ async def test_a_harness_taking_a_session_over_is_told_where_those_before_it_kee
     await ready(platform)
     driver = platform.driver
     for name in ("other", "third"):
-        await platform.resources.add_package(ORG, name, package(**{"README.md": name.encode()}))
-    await platform.resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "other", "third"]})
+        await platform.resources.add_package(ORG, name, package(**{"README.md": name.encode()}), by=BY)
+    await platform.resources.apply(ORG, "environments", "default", {"image": "node:22", "harnesses": ["echo", "other", "third"]}, by=BY)
     driver.remembers = {".harnessgateway/echo/memory": b"/mind/.echo/log.jsonl: a JSON line for each message.\n",
                         ".echo/log.jsonl": b'{"said": "the code is HERON"}\n'}
     first = await run(platform)
@@ -254,7 +257,7 @@ async def test_housekeeping_and_deleting_remove_what_nobody_needs(platform: Plat
     driver.writes = {}
     again = await run(platform, previous_response_id=turn.id)
     assert (await work_files(platform, again))["big.bin"] == b"x" * 1000 and (work / "big.bin").is_file()
-    await platform.remove_session(ORG, turn.session_id)
+    await platform.remove_session(ORG, turn.session_id, by=BY)
     assert await platform.db.all(None, "SELECT id FROM turns") == [] and await platform.db.all(None, "SELECT id FROM snapshots") == []
     assert all(row["refs"] == 0 for row in await chunk_rows(platform)) and not work.exists()
     assert await platform.snapshots.collect(grace_s=3600) == 0 and await platform.snapshots.collect(grace_s=0) == 1

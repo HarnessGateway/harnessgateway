@@ -1,5 +1,6 @@
 """A sample edition: an extension that uses every seam the core has. It is here so that a seam which stops
-working fails a test, and as the shortest example of how an edition is written."""
+working fails a test, and as the shortest example of how an edition is written. Like any edition, it imports the
+core only through `harnessgateway.edition`, and `harnessgateway.testing` for its stand-in sandbox."""
 
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -8,16 +9,26 @@ from typing import Any
 from starlette.requests import Request
 from starlette.routing import BaseRoute
 
-from harnessgateway.api.http import Api
-from harnessgateway.domain.principal import Principal
-from harnessgateway.domain.sealing import Sealer
-from harnessgateway.driver.base import Driver
-from harnessgateway.errors import Forbidden, Invalid
-from harnessgateway.extensions import Extension
-from harnessgateway.ids import DEFAULT_ORG
-from harnessgateway.settings import Settings
-from harnessgateway.store.blobs import BlobMissing, BlobStore
-from tests.helpers import FakeDriver
+from harnessgateway.edition import (
+    Api,
+    BlobMissing,
+    BlobStore,
+    Change,
+    Connection,
+    Driver,
+    EgressPolicy,
+    Extension,
+    Forbidden,
+    Invalid,
+    Platform,
+    Principal,
+    Sealer,
+    Settings,
+)
+from harnessgateway.testing import FakeDriver
+
+HERE = Path(__file__).parent
+DENIED = "denied-by-sample.example.com"
 
 
 class MemoryBlobs:
@@ -49,20 +60,24 @@ class MarkingSealer:
     """A sealer that is not the core's: what it sealed can be told apart."""
 
     def seal(self, value: str, *where: str) -> str:
-        return f"edition:{'/'.join(where)}:{value}"
+        return f"sample:{'/'.join(where)}:{value}"
 
     def open(self, sealed: str, *where: str) -> str:
-        return sealed.removeprefix(f"edition:{'/'.join(where)}:")
+        return sealed.removeprefix(f"sample:{'/'.join(where)}:")
 
 
 class Edition(Extension):
+    name, version = "sample", "0.1.0"
+
     def __init__(self) -> None:
         self.blobs = MemoryBlobs()
+        self.platform: Platform | None = None
         self.heard: list[tuple[str, dict[str, Any]]] = []
-        self.api: Api | None = None
+        self.rounds: list[float] = []
+        self.failing: set[str] = set()             # the seams a test has told it to fail at
 
     def drivers(self) -> dict[str, Callable[[Settings], Driver]]:
-        return {"edition": lambda settings: FakeDriver(settings.data / "folders")}
+        return {"sample": lambda settings: FakeDriver(settings.data / "folders")}
 
     def blob_stores(self) -> dict[str, Callable[[str], BlobStore]]:
         return {"memory": lambda url: self.blobs}
@@ -70,9 +85,15 @@ class Edition(Extension):
     def sealer(self, settings: Settings) -> Sealer | None:
         return MarkingSealer()
 
+    def migrations(self) -> Path | None:
+        return HERE / "edition_schema"
+
+    async def start(self, platform: Platform) -> None:
+        self.platform = platform                   # where an extension is handed the platform
+
     async def authenticate(self, request: Request) -> Principal | None:
-        user = request.headers.get("x-edition-user")           # single sign-on, in miniature
-        return Principal(DEFAULT_ORG, user) if user else None
+        org_id, _, user = request.headers.get("x-sample-user", "").partition("/")      # single sign-on, in miniature
+        return Principal(org_id, user) if user else None
 
     async def authorize(self, who: Principal, action: str) -> None:
         if who.subject == "reader" and action.endswith(".write"):
@@ -82,23 +103,33 @@ class Edition(Extension):
         if who.subject == "over-quota":
             raise Invalid("this organization has used its quota")
 
+    async def egress(self, org_id: str, policy: EgressPolicy) -> EgressPolicy:
+        if "egress" in self.failing:               # what an extension must never do: allow more
+            return EgressPolicy("open")
+        return EgressPolicy(policy.mode, policy.allow, (*policy.deny, DENIED))
+
+    async def on_change(self, conn: Connection, change: Change) -> None:
+        if change.target == "unrecorded":
+            raise Forbidden("the sample edition could not record this change")
+        await conn.execute("INSERT INTO sample_audit (org_id, name, target, by) VALUES (%s, %s, %s, %s)",
+                           [change.org_id, change.name, change.target, change.by])
+
     async def on_event(self, name: str, about: dict[str, Any]) -> None:
+        if "on_event" in self.failing:
+            raise RuntimeError("the sample edition failed on an event")
         self.heard.append((name, about))
-        if self.api is not None:
-            await self.api.platform.db.run(about["org_id"], "INSERT INTO edition_audit (org_id, name, target) "
-                                                            "VALUES (%s, %s, %s)", [about["org_id"], name, about.get("target")])
+
+    async def housekeep(self, platform: Platform, elapsed_s: float) -> None:
+        if "housekeep" in self.failing:
+            raise RuntimeError("the sample edition failed in its housekeeping")
+        self.rounds.append(elapsed_s)
 
     def routes(self, api: Api) -> list[BaseRoute]:
-        self.api = api
-
         async def audit(request: Request, who: Principal) -> Any:
-            rows = await api.platform.db.all(who.org_id, "SELECT name, target FROM edition_audit WHERE org_id = %s "
+            rows = await api.platform.db.all(who.org_id, "SELECT name, target, by FROM sample_audit WHERE org_id = %s "
                                                          "ORDER BY id", [who.org_id])
             return {"object": "list", "data": rows}
         return [api.route("/v1/audit", "GET", "audit.read", audit)]
 
-    def migrations(self) -> list[Path]:
-        return [Path(__file__).parent / "edition_schema"]
-
     def console(self) -> Path | None:
-        return Path(__file__).parent / "edition_console"
+        return HERE / "edition_console"

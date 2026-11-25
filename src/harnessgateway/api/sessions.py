@@ -31,11 +31,13 @@ def _session(session: Session) -> dict[str, Any]:
 
 def _turn(turn: Turn) -> dict[str, Any]:
     """A turn as its two payloads: the request as it was sent, and the response as the Responses API returns it.
-    The log is what its sandbox printed beside them. A deleted turn has neither payload."""
+    The log is what its sandbox printed beside them, and `used` what that sandbox used. A deleted turn has neither
+    payload."""
     kept = turn.deleted_at is None
     return {"id": turn.id, "object": "session.turn", "number": turn.number, "parent_id": turn.parent_id,
             "status": turn.status, "model": str(turn.line), "deleted": not kept, "request": turn.request,
-            "response": turn.response() if kept else None, "log": turn.log, "created_at": _time(turn.created_at),
+            "response": turn.response() if kept else None, "log": turn.log, "used": turn.used,
+            "created_at": _time(turn.created_at),
             "started_at": _time(turn.started_at), "completed_at": _time(turn.completed_at)}
 
 
@@ -60,8 +62,7 @@ def routes(api: Api) -> list[Route]:
         return listing([_turn(turn) for turn in await sessions.turns(who.org_id, session_id(request))])
 
     async def delete(request: Request, who: Principal) -> Any:
-        await platform.remove_session(who.org_id, session_id(request))
-        await platform.announce("sessions.deleted", who.org_id, by=who, target=request.path_params["id"])
+        await platform.remove_session(who.org_id, session_id(request), by=who.subject)
         return {"id": request.path_params["id"], "object": "session", "deleted": True}
 
     return [
