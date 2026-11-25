@@ -44,6 +44,7 @@ class FakeDriver(LocalFolders):
         self.found: list[dict[str, str]] = []      # for each turn's sandbox: the files under /turn, by path
         self.prints = lines(*TEXT, DONE)
         self.writes: dict[str, bytes | int] = {}   # path under /work -> content, or the size of a file of zeros
+        self.remembers: dict[str, bytes] = {}      # path under /mind -> content
         self.exit, self.install_exit = SandboxExit(True, 0), SandboxExit(True, 0)
         self.hold = False
         self.stopped = asyncio.Event()
@@ -74,6 +75,9 @@ class FakeDriver(LocalFolders):
                     file.truncate(content)
             else:
                 (work / path).write_bytes(content)
+        for path, content in self.remembers.items():
+            (self.folder(plan, contract.MIND) / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.folder(plan, contract.MIND) / path).write_bytes(content)
         for text in self.prints:
             await on_stdout(text)
         if self.hold:

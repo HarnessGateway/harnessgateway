@@ -1,7 +1,17 @@
 """A Responses request: what is accepted, and what the platform reads out of it. Nothing is added to the API: a
 body is checked against the OpenAI SDK's own description of the request, and reaches the harness as it was sent,
-which makes of each field what its agent can."""
+which makes of each field what its agent can.
 
+What is wrong is refused: a field the API does not have, a value of the wrong kind. What is left out is not. The
+SDK's types call fields required that OpenAI's server fills in when they are missing (an image's `detail`), so a
+request OpenAI answers would be refused here for lacking one. Only `type`, which says what a thing is, is asked
+of everything that has one.
+
+An item a response held is taken back as it was. The SDK gives some output items a field their input form does not
+have (a tool's output says its `status`), so a caller that keeps the conversation, and sends back what it was sent,
+would be refused for the platform's own words."""
+
+import copy
 import json
 from collections.abc import Callable
 from typing import Any
@@ -9,8 +19,10 @@ from urllib.parse import urlsplit
 
 from openai.types.responses.response_create_params import ResponseCreateParamsBase
 from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic_core import ErrorDetails, SchemaValidator
 
 from harnessgateway.domain.egress import BoundSecret, HostEntry
+from harnessgateway.domain.events import ITEMS
 from harnessgateway.errors import Invalid
 
 METADATA_MAX = 16                              # pairs, as the Responses API allows
@@ -25,7 +37,68 @@ class _Body(ResponseCreateParamsBase, total=False):
     stream: bool                               # the SDK describes it apart, once for each of its two answers
 
 
-_BODY = TypeAdapter(_Body)
+def _leaving_out_allowed(schema: Any) -> Any:
+    """The same schema, with no field but `type` required of anything. A list the SDK would read lazily (it
+    takes any iterable from a program) is read here in full: a body is JSON, and what is wrong inside it is found
+    now, not by whoever reads it later."""
+    if isinstance(schema, list):
+        return [_leaving_out_allowed(each) for each in schema]
+    if not isinstance(schema, dict):
+        return schema
+    if schema.get("type") == "generator":
+        schema = {**schema, "type": "list"}
+    if schema.get("type") == "typed-dict":
+        for name, field in schema["fields"].items():
+            field["required"] = name == "type" and field.get("required", schema.get("total", True))
+    return {key: _leaving_out_allowed(value) for key, value in schema.items()}
+
+
+_BODY = SchemaValidator(_leaving_out_allowed(copy.deepcopy(TypeAdapter(_Body).core_schema)))
+_KINDS = frozenset({"str", "int", "float", "bool", "dict", "list", "none"})     # what a union calls its plain members
+
+
+def _meant(errors: list[ErrorDetails]) -> list[ErrorDetails]:
+    """A value that may be one of several things is reported once for each of them: those whose `type` is another's
+    are not what the caller meant."""
+    def about_type(error: ErrorDetails) -> bool:
+        return error["loc"][-1:] == ("type",) and error["type"] in ("literal_error", "missing")
+    others = {error["loc"][:-1] for error in errors if about_type(error) and len(error["loc"]) > 1}
+    return [error for error in errors if not any(error["loc"][:len(other)] == other for other in others)]
+
+
+def _wrong(body: dict[str, Any]) -> list[ErrorDetails]:
+    """What is wrong with a body, as the SDK's description of a request has it: nothing, when it is one."""
+    try:
+        _BODY.validate_json(json.dumps(body), strict=True)     # as JSON, strictly: "yes" is not true
+    except ValidationError as error:
+        return error.errors()
+    return []
+
+
+def _as_printed(body: dict[str, Any], errors: list[ErrorDetails]) -> dict[str, Any] | None:
+    """The body without the fields of its input items that only a response's item of that type has; None when no
+    such field is what was wrong."""
+    given, only = body.get("input"), set()
+    for error in _meant(errors):
+        place = error["loc"]
+        if error["type"] == "extra_forbidden" and len(place) > 3 and place[0] == "input" and isinstance(place[-3], int):
+            item = given[place[-3]] if isinstance(given, list) and place[-3] < len(given) else None
+            if isinstance(item, dict) and item.get("type") in ITEMS and place[-1] in ITEMS[item["type"]].model_fields:
+                only.add((place[-3], place[-1]))
+    if not only or not isinstance(given, list):
+        return None
+    return {**body, "input": [{name: value for name, value in item.items() if (number, name) not in only}
+                              if isinstance(item, dict) else item for number, item in enumerate(given)]}
+
+
+def _telling(errors: list[ErrorDetails]) -> tuple[str, ErrorDetails]:
+    """Of everything wrong with a body, the one worth saying, and where it is: of what the caller meant, the
+    deepest is the most exact."""
+    meant = _meant(errors) or errors
+    found = max(meant, key=lambda error: len(error["loc"]))
+    where = [part for part in found["loc"] if isinstance(part, int) or (part.islower() and "[" not in part
+                                                                         and part not in _KINDS)]
+    return ".".join(str(part) for part in where), found
 
 
 def validate(body: object) -> dict[str, Any]:
@@ -38,14 +111,15 @@ def validate(body: object) -> dict[str, Any]:
     for name, instead in _NOT_HERE.items():
         if body.get(name) is not None:
             raise Invalid(f"{name} is not supported: {instead}", param=name)
-    try:
-        _BODY.validate_json(json.dumps(body), strict=True)     # as JSON, strictly: "yes" is not true
-    except ValidationError as error:
-        first = error.errors()[0]
-        field = str(first["loc"][0]) if first["loc"] else None
-        if first["type"] == "extra_forbidden":
-            raise Invalid(f"{field} is not a field of the Responses API", param=field) from None
-        raise Invalid(f"{'.'.join(str(part) for part in first['loc'])}: {first['msg']}", param=field) from None
+    errors, checked = _wrong(body), body
+    while errors and (printed := _as_printed(checked, errors)) is not None:        # an item a response held is
+        errors, checked = _wrong(printed), printed                                 # taken back as it was
+    if errors:
+        where, found = _telling(errors)
+        field = where.partition(".")[0] or None
+        if found["type"] == "extra_forbidden":
+            raise Invalid(f"{where} is not a field of the Responses API", param=field)
+        raise Invalid(f"{where}: {found['msg']}", param=field)
     metadata = body.get("metadata") or {}
     if len(metadata) > METADATA_MAX or any(key.startswith(OURS) for key in metadata):
         raise Invalid(f"metadata is at most {METADATA_MAX} pairs, none with a key beginning {OURS}: those are "

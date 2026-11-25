@@ -33,9 +33,10 @@ installed, sandboxes run under it; without it, isolation is `none`, and the log 
 |---|---|
 | `default` | An environment on a common image (`node:22`), with the default limits and an open network: a sandbox reaches any public host, through the proxy |
 | `shell` | The smallest harness: it runs a request's input as a command. `default/shell/none/none` tries an environment before any agent is set up |
-| `hg-fde` | HG FDE, the forward deployed engineer for the platform: it builds every other harness package. Name an agent CLI; it researches the CLI, writes `install` and `run`, and ends with a link that adds it. It needs a provider that speaks the Anthropic API |
+| `harness-package-builder` | Builds every other harness package. Name an agent CLI, or describe the agent you want on one; it researches the CLI, writes `install` and `run`, and ends with a link that adds it. It carries the package contract and the Responses API as schemas. It needs a provider that speaks the Anthropic API |
 
-They are given once, at setup, and are yours from then on: change them, delete them, add your own. Nothing else
+The two packages are the platform's: an update of the platform updates them, and they are not changed in place (a
+copy under another name is yours). The environment is given once, at setup, and is yours from then on. Nothing else
 ships: no provider, and no other agent.
 
 ## The three things you define
@@ -43,7 +44,7 @@ ships: no provider, and no other agent.
 | | | |
 |---|---|---|
 | **Provider** | `PUT /v1/providers/{name}` | A model endpoint: each API shape it speaks at a base URL, and a key |
-| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own, and nothing else: two programs, `install` and a `run` that reads the Responses request and prints Responses output ([the package contract](contract/PACKAGES.md)) |
+| **Harness** | `PUT /v1/harnesses/{name}` | An agent CLI as a package you own, and nothing else: two programs, `install` and a `run` that reads the Responses request and prints Responses output ([the example package](packages/harness-package-builder/example/README.md)) |
 | **Environment** | `PUT /v1/environments/{name}` | Where turns run, and the only door: image, limits, network, variables, secrets, a startup script, and the harnesses it carries. Everything a package may reach or hold is said here |
 
 ```sh
@@ -79,7 +80,23 @@ again = client.responses.create(model="dev/my-agent/deepseek/deepseek-flash", in
 ```
 
 Blocking, `stream`, `background`, `store`, cancel, delete and input items work as the API describes them.
-`previous_response_id` of a session's latest response continues it; of an earlier one, forks it.
+`previous_response_id` of a session's latest response continues it; of an earlier one, forks it: that is rewind.
+
+Nothing is ignored unsaid. A request the API would not take is refused, naming the field; a field a harness cannot
+honour fails the response, naming the field.
+
+## A session, and changing what runs it
+
+A session's whole state is two folders: the mind (`/mind`, the agent's home, where a harness keeps its own memory)
+and the work (`/work`). Both are saved after every turn, as a snapshot that costs only what changed, so any
+response can be returned to.
+
+Any part of the model line may change from one turn to the next. When the harness changes, the new one is handed
+nothing that was said: it is told who worked on the session and where each keeps its memory, and reads up by
+itself, in the mind they share.
+
+A caller may keep the conversation instead, as the API allows: send the whole of it in `input`, with
+`store: false`, and nothing is held here.
 
 ## The whole API
 
@@ -128,10 +145,12 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `src/harnessgateway/proxy/` | The egress proxy: a process of its own with no database and no sealing key |
 | `src/harnessgateway/api/` | The routes |
 | `src/harnessgateway/extensions.py` | The seams an edition builds on |
-| `contract/` | What every package is written to: `PACKAGES.md`, and the Responses API as schemas generated from the pinned SDK |
-| `packages/`, `environments/` | What an organization starts with: the `shell` and `hg-fde` packages, and the `default` environment that carries them |
+| `packages/` | The packages that ship: `shell`, and `harness-package-builder`, which holds what every package is written to: the Responses API as three schemas generated from the pinned SDK (`contract/`), a whole example package (`example/`), and a session of a developer's requests (`requests/`) |
+| `environments/` | What an organization starts with: the `default` environment, which carries both |
 | `console/` | The console: plain JavaScript modules, served as they are. `lib/` (the API, the DOM, files), `components/` (what pages are made of), `pages/` (one for each), `styles/` |
 
+[SPEC.md](SPEC.md) is the specification: everything needed to build the platform, and what the code is held to.
+[docs/IN-BRIEF.md](docs/IN-BRIEF.md) is the platform in five short answers, and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) says how the parts work together.
 
 ## Checks

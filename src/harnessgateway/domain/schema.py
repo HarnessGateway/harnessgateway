@@ -1,12 +1,15 @@
-"""The Responses API as JSON Schemas, generated from the OpenAI SDK this platform pins.
+"""The Responses API as JSON Schemas, generated from the OpenAI SDK this platform pins: a request, a response, and
+the events of its stream, kept for the package that builds packages. (`lines` is the platform's own rule for one
+printed line, which it checks against the SDK's types themselves: it is described here, and kept nowhere.)
 
 Three are OpenAI's own, with nothing added and nothing removed: a request, the response a caller receives, and the
 events of its stream. The fourth is the platform's: one line a harness package's `run` may print, which is an
 output item or a stream event of those schemas with what the platform fills in left optional, or the stream's last
 event with only what a harness knows of the response.
 
-The files are kept in the repository's `contract/`, beside the contract in words, so that a change of the pin
-shows as a change of them. `harnessgateway schema` writes them; a test fails when they are not what the pin gives.
+The files are kept beside the contract in words, in the package that builds packages (`shipped.py` says where), so
+that a change of the pin shows as a change of them, and the builder that ships with a version has that version's
+schemas. `harnessgateway schema` writes them; a test fails when they are not what the pin gives.
 """
 
 import json
@@ -80,9 +83,6 @@ FILES: dict[str, tuple[str, Callable[[], dict[str, Any]]]] = {
     "request.schema.json": ("A request to POST /v1/responses, as OpenAI's SDK describes it: unchanged.", request),
     "response.schema.json": ("The response a caller receives, as OpenAI's SDK describes it: unchanged.", response),
     "stream.schema.json": ("An event of a response's stream, as OpenAI's SDK describes them: unchanged.", stream),
-    "lines.schema.json": ("One line a harness package's run may print. The platform's own rule: OpenAI's output "
-                          "items and stream events with what the platform fills in left optional, or the stream's "
-                          "last event with only what a harness knows of the response.", lines),
 }
 
 

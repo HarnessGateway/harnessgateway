@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""run: one turn of this agent. It reads the developer's Responses request, drives the harness CLI with it, and
+prints Responses output: one JSON object a line, an output item or a stream event, and last how the turn ended.
+
+Five functions, one for each primitive of a harness, turn the request into the CLI's command. `handle` turns each
+line the CLI prints into output items. The CLI here is Claude Code: another CLI answers the same five questions
+with its own flags, settings, and files.
+
+What customizes the agent is optional files beside this one, each used only when it is there: AGENTS.md (who the
+agent is), skills/ (with .claude-plugin/), mcp.json (tool servers of its own), and settings.json (hooks and
+permissions).
+"""
+import base64
+import glob
+import json
+import mimetypes
+import os
+import signal
+import subprocess
+import sys
+
+HARNESS, TURN, STATE = os.environ.get("HG_HARNESS", ""), os.environ.get("HG_TURN", ""), os.environ.get("HG_STATE", "")
+ELSEWHERE = {"model", "stream", "stream_options", "background", "store", "previous_response_id", "metadata",     # the
+             "user", "safety_identifier", "prompt_cache_key"}       # platform's own fields, and the developer's labels
+HONOURED = {"input", "instructions", "reasoning", "text", "tools"}  # what this package gives the CLI; the rest fails
+PRINTED = {"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output", "custom_tool_call",
+           "custom_tool_call_output", "mcp_call"}                               # its own work, which a developer may send back
+stopped = []
+
+
+class Unsupported(Exception):
+    """The request asks for what this CLI cannot be given. The message names it."""
+
+
+def say(line):
+    print(json.dumps(line), flush=True)
+
+
+def read(path):
+    with open(path, encoding="utf-8") as file:
+        return file.read()
+
+
+def brought(name):
+    """An optional file of this package, when it is there."""
+    return os.path.join(HARNESS, name) if os.path.exists(os.path.join(HARNESS, name)) else None
+
+
+def words(text):
+    return {"type": "text", "text": text}
+
+
+def part_of(part):
+    """One part of a message, as the CLI takes it: words, an image, or where a file is."""
+    kind, data = part["type"], part.get("image_url") or part.get("file_data") or ""
+    sent = next(iter(glob.glob(os.path.join(TURN, "files", str(part.get("file_id")), "*"))), None)    # an upload
+    if kind == "input_text":
+        return words(part["text"])
+    if kind == "input_image" and (data.startswith("data:") or sent):
+        media = data[5:].partition(";")[0] if data else mimetypes.guess_type(sent)[0]
+        return {"type": "image", "source": {"type": "base64", "media_type": media, "data": data.partition(",")[2] if data
+                                            else base64.b64encode(open(sent, "rb").read()).decode()}}
+    if kind == "input_file" and data:                    # a file sent inside the request goes in the working folder
+        sent = os.path.basename(part.get("filename") or "file")
+        with open(sent, "wb") as file:
+            file.write(base64.b64decode(data.rpartition(",")[2]))
+    if kind == "input_file" and sent:
+        return words(f"A file given with this message: {sent}")
+    raise Unsupported(f"an input part of type {kind}, given that way")
+
+
+def as_input(request, previous):
+    """Input: the request's input as one message on standard input. A conversation the developer keeps comes back
+    whole: what the agent said, thought, did, and called is given as that."""
+    blocks, told = [], []
+    names = {item["call_id"]: item["name"] for item in previous.get("output") or [] if item["type"] == "function_call"}
+    given = request["input"]
+    for item in [{"role": "user", "content": given}] if isinstance(given, str) else given:
+        kind, role, content = item.get("type", "message"), item.get("role"), item.get("content")
+        parts = [{"type": "input_text", "text": content}] if isinstance(content, str) else content or []
+        if kind == "message" and role == "user":
+            blocks += [part_of(part) for part in parts]
+        elif kind == "message" and role in ("developer", "system"):
+            told += [part["text"] for part in parts]
+        elif kind == "message":
+            blocks += [words(f"Earlier, you said: {part['text']}") for part in parts]
+        elif kind == "reasoning":
+            blocks += [words(f"Earlier, you thought: {part['text']}") for part in item.get("summary") or []]
+        elif kind == "function_call":
+            names[item["call_id"]] = item["name"]
+            blocks.append(words(f"Earlier, you called the developer's tool {item['name']} with: {item['arguments']}"))
+        elif kind == "function_call_output":             # the answer to the call the turn before ended on
+            blocks.append(words(f"The developer ran {names.get(item['call_id'], 'their tool')} for your call, and it "
+                                f"returned:\n{item['output']}"))
+        elif kind in PRINTED:
+            blocks.append(words("Earlier, you did this: " + json.dumps({k: v for k, v in item.items() if k != "id"})))
+        else:
+            raise Unsupported(f"an input item of type {kind}")
+    return blocks, told
+
+
+def context(request, told, session, previous):
+    """Context: who the agent is (the package's AGENTS.md) and this response's instructions, as a file written
+    anew every turn so that none carry to the next; its skills; its own session, resumed; and, said first in the
+    message, the handover and how the turn before ended."""
+    known = [read(brought("AGENTS.md")) if brought("AGENTS.md") else "", request.get("instructions") or "", *told]
+    with open("/tmp/instructions.md", "w", encoding="utf-8") as file:
+        file.write("\n\n".join(part for part in known if part))
+    cut = f"Your last turn did not finish: it ended as {previous['status']}." \
+        if previous.get("status") not in (None, "completed") else ""
+    first = [words(text) for text in (cut, read(os.path.join(TURN, "handover.txt")).strip()) if text]
+    return ["--append-system-prompt-file", "/tmp/instructions.md", "--system-prompt-snapshot", "off",
+            *(["--plugin-dir", HARNESS] if brought(".claude-plugin") else []),
+            *(["--resume", session] if session else [])], first
+
+
+def model_interface(request):
+    """Model interface: the provider's endpoint, its key, and the model, as variables, and how hard it thinks."""
+    if "HG_PROVIDER_ANTHROPIC" not in os.environ:
+        raise Unsupported("a provider that does not speak the Anthropic API, the one API this CLI speaks")
+    effort, model = (request.get("reasoning") or {}).get("effort"), os.environ["HG_MODEL"]
+    return (["--effort", effort] if effort else []), {
+        **os.environ, "ANTHROPIC_BASE_URL": os.environ["HG_PROVIDER_ANTHROPIC"],
+        "ANTHROPIC_AUTH_TOKEN": os.environ["HG_PROVIDER_KEY"], "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_SMALL_FAST_MODEL": model, "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1",
+        "npm_config_cache": os.path.join(os.environ["HOME"], ".cache", "npm")}
+
+
+def developers(request):
+    """The request's tools that only the developer can run, as a tool server lists them."""
+    return [{"name": tool["name"], "description": tool.get("description") or "",
+             "inputSchema": tool.get("parameters") or {"type": "object"}}
+            for tool in request.get("tools") or [] if tool["type"] == "function"]
+
+
+def output(request):
+    """Output: every step as a line of JSON; an answer that fits the schema the request asks for; the package's
+    own tool servers; and the developer's tools, offered by a tool server that is this program itself."""
+    args = ["--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+    shape = (request.get("text") or {}).get("format") or {}
+    if shape.get("type") == "json_schema":
+        args += ["--json-schema", json.dumps(shape["schema"])]
+    elif shape.get("type") not in (None, "text"):
+        raise Unsupported(f"text.format of type {shape['type']}")
+    if any(tool["type"] != "function" for tool in request.get("tools") or []):
+        raise Unsupported("a tool that is not a function")
+    servers = json.loads(read(brought("mcp.json")))["mcpServers"] if brought("mcp.json") else {}
+    if developers(request):
+        servers["developer"] = {"type": "stdio", "command": sys.executable,
+                                "args": [os.path.abspath(__file__), "--serve", json.dumps(developers(request))]}
+    return [*args, *(["--mcp-config", json.dumps({"mcpServers": servers})] if servers else [])]
+
+
+def control_flow():
+    """Control flow: one turn, with nobody there, acting without asking: the sandbox is what holds it. The
+    package's settings, when it has them, say what it may not do, and what runs around each step."""
+    return [os.path.join(HARNESS, "tools/node_modules/.bin/claude"), "-p", "--input-format", "stream-json",
+            "--dangerously-skip-permissions", *(["--settings", brought("settings.json")] if brought("settings.json") else [])]
+
+
+def handle(line, state):
+    """One line the CLI printed, as Responses output items."""
+    kind = line.get("type")
+    if kind == "system" and line.get("subtype") == "init":
+        state["session"] = line["session_id"]
+    elif kind == "stream_event" and line["event"].get("type") == "message_delta":      # a model call's tokens
+        count = line["event"].get("usage") or {}
+        cached = count.get("cache_read_input_tokens", 0)
+        state["usage"][0] += count.get("input_tokens", 0) + cached + count.get("cache_creation_input_tokens", 0)
+        state["usage"][1] += cached
+        state["usage"][2] += count.get("output_tokens", 0)
+        state["done"] = state["asked"]                   # counted: a turn that ended on the developer's tool ends here
+    elif kind == "assistant" and not line.get("parent_tool_use_id"):
+        for block in line["message"]["content"]:
+            if block["type"] == "text" and block["text"].strip() and not state["schema"]:
+                yield {"type": "message", "role": "assistant", "status": "completed",
+                       "content": [{"type": "output_text", "text": block["text"], "annotations": []}]}
+            elif block["type"] == "thinking" and block.get("thinking"):
+                yield {"type": "reasoning", "summary": [{"type": "summary_text", "text": block["thinking"]}]}
+            elif block["type"] == "tool_use" and block["name"].startswith("mcp__developer__"):
+                state["asked"] = True                    # a tool only the developer can run: the turn ends on the call
+                yield {"type": "function_call", "call_id": block["id"], "name": block["name"][len("mcp__developer__"):],
+                       "arguments": json.dumps(block.get("input") or {})}
+            elif block["type"] == "tool_use" and block["name"] != "StructuredOutput":
+                state["pending"][block["id"]] = (block["name"], block.get("input") or {})
+    elif kind == "user":
+        for block in line["message"]["content"]:
+            if isinstance(block, dict) and block.get("type") == "tool_result" and block["tool_use_id"] in state["pending"]:
+                call, (name, sent) = block["tool_use_id"], state["pending"].pop(block["tool_use_id"])
+                text = block["content"] if isinstance(block["content"], str) else "\n".join(
+                    each.get("text", "") for each in block["content"] or [])
+                if name == "Bash":                       # each thing it did, as the item that says what it was
+                    yield {"type": "shell_call", "call_id": call, "status": "completed",
+                           "action": {"commands": [sent.get("command", "")]}}
+                    yield {"type": "shell_call_output", "call_id": call, "status": "completed", "output": [{
+                        "stdout": text, "stderr": "", "outcome": {"type": "exit", "exit_code": int(bool(block.get("is_error")))}}]}
+                elif name in ("Write", "Edit"):
+                    diff = "".join(f"+{each}\n" for each in sent.get("content", "").splitlines()) if name == "Write" \
+                        else f"-{sent.get('old_string', '')}\n+{sent.get('new_string', '')}\n"
+                    yield {"type": "apply_patch_call", "call_id": call, "status": "completed", "operation": {
+                        "type": "create_file" if name == "Write" else "update_file", "path": sent.get("file_path", ""), "diff": diff}}
+                    yield {"type": "apply_patch_call_output", "call_id": call, "status": "completed"}
+                elif name.startswith("mcp__") and name.count("__") >= 2:      # a call to one of its tool servers
+                    yield {"type": "mcp_call", "server_label": name.split("__", 2)[1], "name": name.split("__", 2)[2],
+                           "arguments": json.dumps(sent), "output": text, "status": "completed"}
+                else:
+                    yield {"type": "custom_tool_call", "call_id": call, "name": name, "input": json.dumps(sent)}
+                    yield {"type": "custom_tool_call_output", "call_id": call, "status": "completed", "output": text}
+    elif kind == "result":
+        state["done"] = True
+        if line.get("is_error"):
+            state["error"] = str(line.get("result") or line.get("subtype"))
+        elif line.get("structured_output") is not None:  # with a schema, the answer is what fits it
+            yield {"type": "message", "role": "assistant", "status": "completed", "content": [{
+                "type": "output_text", "text": json.dumps(line["structured_output"]), "annotations": []}]}
+
+
+def serve(tools):
+    """This program as a tool server for the developer's tools. It runs none of them: a call is answered at once,
+    saying it is with the developer, and `main` ends the turn on it."""
+    for line in sys.stdin:
+        asked = json.loads(line)
+        answer = {"initialize": {"protocolVersion": (asked.get("params") or {}).get("protocolVersion", "2025-06-18"),
+                                 "capabilities": {"tools": {}}, "serverInfo": {"name": "developer", "version": "1"}},
+                  "tools/list": {"tools": tools},
+                  "tools/call": {"content": [{"type": "text", "text": "This call is with the developer, who runs this "
+                                              "tool. Its result comes with their next message."}]}}.get(asked.get("method"), {})
+        if "id" in asked:
+            print(json.dumps({"jsonrpc": "2.0", "id": asked["id"], "result": answer}), flush=True)
+
+
+def main():
+    signal.signal(signal.SIGTERM, lambda *_: stopped.append(True))     # a stop: outlive the CLI, then exit
+    request = json.loads(read(os.path.join(TURN, "request.json")))
+    previous = json.loads(read(os.path.join(TURN, "previous.json"))) or {}
+    session = read(os.path.join(STATE, "session")) if os.path.exists(os.path.join(STATE, "session")) else None
+    state = {"session": session, "usage": [0, 0, 0], "pending": {}, "asked": False, "done": False, "error": None,
+             "schema": ((request.get("text") or {}).get("format") or {}).get("type") == "json_schema"}
+    try:                                                 # honour or fail: nothing is ignored unsaid
+        for name in sorted(set(request) - HONOURED - ELSEWHERE):
+            if request[name] is not None:
+                raise Unsupported(f"the request's {name}")
+        blocks, told = as_input(request, previous)
+        known, first = context(request, told, session, previous)
+        thinking, variables = model_interface(request)
+        command = [*control_flow(), *known, *thinking, *output(request)]
+    except Unsupported as what:
+        return say({"type": "response.failed", "response": {"error": {"code": "unsupported_parameter", "message": (
+            f"This agent cannot be given {what}. Leave it out, or name another harness.")}}})
+    cli = subprocess.Popen(command, env=variables, text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    cli.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": first + blocks}}) + "\n")
+    cli.stdin.close()
+    for printed in cli.stdout:
+        if not printed.startswith("{") or state["done"]:
+            continue
+        for item in handle(json.loads(printed), state):
+            say(item)
+        if state["session"] and state["session"] != session:        # its own session id, kept the moment it is known,
+            os.makedirs(STATE, exist_ok=True)                       # and where its record is, for whoever takes over
+            session = state["session"]
+            with open(os.path.join(STATE, "session"), "w", encoding="utf-8") as file:
+                file.write(session)
+            with open(os.path.join(STATE, "memory"), "w", encoding="utf-8") as file:
+                file.write(f"{os.environ['HOME']}/.claude/projects/*/{session}.jsonl: this session's transcript, one "
+                           "JSON object a line, oldest first: each message, and each tool call with its result.\n")
+        if state["done"] and state["asked"]:
+            cli.terminate()                              # the turn ended on a call to the developer: stop the CLI
+    code = cli.wait()
+    took, cached, gave = state["usage"]
+    usage = {"usage": {"input_tokens": took, "output_tokens": gave, "input_tokens_details": {"cached_tokens": cached}}}
+    if stopped:
+        return None                                      # the platform says how a stopped turn ended
+    if state["error"] or not state["done"]:
+        return say({"type": "response.failed", "response": {**usage, "error": {"code": "cli_error", "message": str(
+            state["error"] or f"The CLI exited with code {code} without a result.")[:2000]}}})
+    return say({"type": "response.completed", "response": usage})
+
+
+if __name__ == "__main__":
+    sys.exit(serve(json.loads(sys.argv[2])) if sys.argv[1:2] == ["--serve"] else main())

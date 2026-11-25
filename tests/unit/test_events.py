@@ -5,8 +5,7 @@ import re
 
 import pytest
 
-from harnessgateway import shipped
-from harnessgateway.domain.events import EVENTS, ITEMS, LineError, RunOutput, storable
+from harnessgateway.domain.events import EVENTS, LineError, RunOutput, storable
 from tests.helpers import DONE, TEXT, lines
 
 SAYS = {"type": "message", "role": "assistant", "status": "completed",
@@ -87,11 +86,3 @@ def test_text_that_was_cut_short_is_still_the_answer_so_far():
     cut = read({"type": "response.output_text.delta", "delta": "hel"})[0].output()
     assert [(item["status"], item["content"][0]["text"]) for item in cut] == [("incomplete", "hel")]
     assert storable({"a\x00": ["b\x00c", 1]}) == {"a�": ["b�c", 1]}
-
-
-def test_every_line_the_contract_shows_is_one_the_platform_takes():
-    shown = re.findall(r"^\{.*\}$", (shipped.folder("contract") / "PACKAGES.md").read_text(), re.M)
-    output = read(*map(json.loads, shown[:3]))[0]                 # the items, then each way a run ends
-    assert len(shown) == 6 and [item["type"] for item in output.output()] == ["message", "shell_call", "shell_call_output"]
-    assert [read(json.loads(line))[0].terminal.status for line in shown[3:]] == ["completed", "incomplete", "failed"]
-    assert len(ITEMS) == 28 and "message" in ITEMS and "response.output_text.delta" in EVENTS

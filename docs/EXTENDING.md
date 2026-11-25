@@ -70,8 +70,9 @@ async function audit(main) {                     // draws the page at #/audit
 export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", page: audit }];
 ```
 
-A new organization is given the core's defaults by `harnessgateway.defaults.give(platform, org_id)`: an edition
-that makes organizations calls it, or gives its own.
+A new organization is given what it starts with by `harnessgateway.defaults.give(platform, org_id)`: an edition
+that makes organizations calls it, or gives its own. The packages that ship are kept at the running version's for
+every organization there is, each time the platform starts.
 
 ## What stays the core's
 

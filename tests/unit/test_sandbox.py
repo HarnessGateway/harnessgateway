@@ -40,8 +40,7 @@ def test_a_turns_plan_gives_the_sandbox_its_folders_its_variables_and_placeholde
     assert "HG_PROVIDER_GEMINI" not in env and "HG_PROVIDER_URL" not in env and env["HG_STATE"] == "/mind/.harnessgateway/agent"
     assert (env["HG_PROVIDER_KEY"], env["DB"], env["TEAM"], env["MODE"]) == ("hgs_0", "hgs_1", "demo", "fast")
     assert env["HTTPS_PROXY"] == "http://resp_1:tok@egress:8080" and env["SSL_CERT_FILE"] == "/etc/hg/ca.pem"
-    assert env["HG_CONTRACT"] == "/etc/hg/contract" == install_plan(
-        install_id="i", image_id="x", environment=found.environment, proxy_token="t").env["HG_CONTRACT"]
+    assert "HG_CONTRACT" not in env                # the contract is the builder's own: no sandbox is given it
     assert not {"sk-real", "db-secret"} & set(env.values()) and plan.stop_grace_s == 15
     scripted = turn_plan(session_id="s", turn_id="t", install_id="i", image_id="x", resolved=resolved(scripts={"startup": "true"}),
                          proxy_token="tok", provider_key="", placeholders={})

@@ -1,0 +1,4 @@
+{
+  "permissions": {"deny": ["Bash", "WebFetch", "WebSearch"]},
+  "hooks": {"PreToolUse": [{"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "python3 -c \"import json, os, sys; path = os.path.realpath(json.load(sys.stdin).get('tool_input', {}).get('file_path', '')); sys.exit(0 if path.startswith(os.path.realpath(os.getcwd()) + os.sep) else 2)\""}]}]}
+}

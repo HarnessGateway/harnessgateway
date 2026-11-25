@@ -1,21 +1,26 @@
-"""What an organization starts with: every package in the repository's `packages/` as a harness, and every
-definition in `environments/` as an environment of that file's name.
+"""What ships with the platform: every package in the repository's `packages/`, as a harness, and every definition
+in `environments/`, as an environment of that file's name.
 
     packages/shell                       the smallest harness package: it runs the request's input as a command
-    packages/hg-fde                      HG FDE: the engineer that builds every other harness package
+    packages/harness-package-builder     builds every other harness package, and carries the contract they are built to
     environments/default.json            an environment on a common image, with an open network, that carries both
 
-They are enough to try an environment before any agent is set up, and to make every other harness. Once given
-they are the organization's own, to change or delete: nothing brings one back, and an update of the platform
-leaves them as they are.
+The packages are the platform's. Every start puts each at this version's, for every organization, and none is
+changed in place: a copy under another name is the organization's own. The environments are what an organization
+starts with: given once, at setup, and its own from then on, so an update of the platform leaves them as they are.
 """
 
 import json
 import os
 
 from harnessgateway import shipped
-from harnessgateway.domain.package import PackageFile, write_archive
+from harnessgateway.domain.package import PackageFile, read_archive, write_archive
 from harnessgateway.platform import Platform
+
+
+def names() -> list[str]:
+    """The harnesses that ship: each folder of `packages/` that holds a `run`."""
+    return sorted(package.name for package in shipped.folder("packages").iterdir() if (package / "run").is_file())
 
 
 def archive(name: str) -> bytes:
@@ -25,10 +30,18 @@ def archive(name: str) -> bytes:
                          for file in package.rglob("*") if file.is_file())
 
 
+async def packages(platform: Platform, org_id: str) -> None:
+    """Put each package that ships at this version's. One that is there already, unchanged, is left as it is."""
+    for name in names():
+        packed = archive(name)
+        had = await platform.resources.find(org_id, "harnesses", name)
+        if had is None or had.spec["digest"] != read_archive(packed).digest:
+            await platform.resources.add_package(org_id, name, packed)
+
+
 async def give(platform: Platform, org_id: str) -> None:
-    """Give an organization the defaults. Giving them again puts each back as it ships."""
-    for package in sorted(shipped.folder("packages").iterdir()):       # the harnesses first: an environment names them
-        if (package / "run").is_file():
-            await platform.resources.add_package(org_id, package.name, archive(package.name))
+    """Give an organization what it starts with: the packages that ship, then the environments, which name them.
+    Giving them again puts each environment back as it ships."""
+    await packages(platform, org_id)
     for definition in sorted(shipped.folder("environments").glob("*.json")):
         await platform.resources.apply(org_id, "environments", definition.stem, json.loads(definition.read_text()))

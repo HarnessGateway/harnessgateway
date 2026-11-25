@@ -36,10 +36,12 @@ export function hear(turn, event) {
   return false;
 }
 
-/** Start a turn and read its events. `attachments` are the ids of uploaded files; `previous` is the response it
+/** Start a turn and read its events. `attachments` are uploaded files ({id, image}): a picture is sent as an image,
+ *  which the model is shown, and anything else as a file, which the agent opens. `previous` is the response it
  *  continues from. When that one is still ending (it was just interrupted), the platform says so, and this waits. */
 export async function start({ model, text, attachments = [], previous }, onEvent, signal) {
-  const input = attachments.length ? [{ role: "user", content: [{ type: "input_text", text }, ...attachments.map(id => ({ type: "input_file", file_id: id }))] }] : text;
+  const given = file => ({ type: file.image ? "input_image" : "input_file", file_id: file.id });
+  const input = attachments.length ? [{ role: "user", content: [{ type: "input_text", text }, ...attachments.map(given)] }] : text;
   const body = { model, input, stream: true, background: true, ...(previous && { previous_response_id: previous }) };
   for (let attempt = 0; ; attempt++) {
     try {

@@ -1,7 +1,8 @@
 #!/bin/sh
-# install: Claude Code at a pinned version, by its makers' own method (npm), under $HG_HARNESS/tools.
+# install: Claude Code at a pinned version, by its makers' own method (npm), under $HG_HARNESS/tools. The version
+# is the one its makers mark `stable` in their registry, which is older than `latest`.
 set -eu
-VERSION=2.1.330
+VERSION=2.1.325
 
 for need in node npm python3; do
   command -v "$need" >/dev/null 2>&1 || {

@@ -3,8 +3,8 @@ limits, secrets on the wire). Standard library only.
 
     HG_URL=http://127.0.0.1:8000 HG_KEY=hg_... python3 tests/live/turns.py
 
-It adds a provider and a few environments named live-… to the installation, runs about twenty-five short turns on
-the `shell` harness, and removes what it added and the sessions it made.
+It adds a provider, a few environments named live-… and a second copy of the `shell` package named `live-other` to
+the installation, runs about thirty short turns, and removes what it added and the sessions it made.
 """
 import io
 import json
@@ -80,10 +80,12 @@ check("a provider is added and its key is never shown", status == 200 and made["
 archive = io.BytesIO()
 with tarfile.open(fileobj=archive, mode="w:gz") as tar:
     tar.add(SHELL, arcname=".")
-status, made = call("PUT", "/v1/harnesses/shell", archive.getvalue())
-check("a package a user brings becomes a harness", status == 200 and made["name"] == "shell" and len(made["digest"]) == 64, made.get("digest", made)[:12] if status == 200 else made)
+status, made = call("PUT", "/v1/harnesses/live-other", archive.getvalue())        # the shell package, as a harness of the user's own
+check("a package a user brings becomes a harness", status == 200 and made["name"] == "live-other" and len(made["digest"]) == 64, made.get("digest", made)[:12] if status == 200 else made)
+status, kept = call("PUT", "/v1/harnesses/shell", archive.getvalue())
+check("a package that ships is the platform's, and is not changed in place", status == 400 and "ships with the platform" in kept["error"]["message"], kept["error"]["message"])
 base = {"image": "node:22", "harnesses": ["shell"]}
-for name, more in (("live", {}), ("live-py", {"image": "python:3.13-slim"}), ("live-tiny", {"disk_mb": 64}), ("live-quick", {"timeout_s": 5}),
+for name, more in (("live", {"harnesses": ["shell", "live-other"]}), ("live-py", {"image": "python:3.13-slim"}), ("live-tiny", {"disk_mb": 64}), ("live-quick", {"timeout_s": 5}),
                    ("live-small", {"image": "python:3.13-slim", "memory_mb": 256, "tmp_mb": 64}), ("live-closed", {"network": {"mode": "closed"}}),
                    ("live-scripted", {"variables": {"TEAM": "demo"}, "scripts": {"startup": "echo \"ready for $TEAM\" > READY.txt"}}),
                    ("live-broken", {"scripts": {"startup": "echo it broke; exit 3"}})):
@@ -92,11 +94,11 @@ for name, more in (("live", {}), ("live-py", {"image": "python:3.13-slim"}), ("l
 status, refused = call("PUT", "/v1/environments/none", {"harnesses": ["shell"]})
 check("an environment without an image is refused", status == 400 and refused["error"]["param"] == "image", refused["error"]["message"])
 
-a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls $HG_CONTRACT; ls /harness; ls /")
+a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls /etc/hg; ls /harness; ls /")
 out = said(a)
 check("a turn runs as user 10000 on a read-only root, with home /mind, in /work, and sees only its own folders",
       a["status"] == "completed" and out.startswith("10000") and "Read-only file system" in out and "/mind /work" in out
-      and "request.schema.json" in out and "lines.schema.json" in out and "data" not in out.split(), repr(out[:80]) + str(a.get("error") or ""))
+      and "ca.pem" in out.split() and "contract" not in out.split() and "data" not in out.split(), repr(out[:80]) + str(a.get("error") or ""))
 if a["status"] != "completed":
     sys.exit(1)
 session = a["metadata"]["hg_session"]
@@ -169,6 +171,25 @@ check("a harness is told its provider's base URL for each API the provider speak
       said(o) == "live-check a-model https://api.example.com\nunset\n", repr(said(o)))
 p = turn("live/shell/none/none", "echo gone", store=False)
 check("a response that is not to be stored is gone once it has answered", p["status"] == "completed" and call("GET", f"/v1/responses/{p['id']}")[0] == 404)
+head = call("GET", f"/v1/sessions/{session}")[1]["head_response_id"]
+p = turn("live/shell/none/none", "ls; echo more > more.txt", store=False, previous_response_id=a["id"])
+check("a response that is not stored starts from the response it names, and leaves that session as it was",
+      "hello.txt" in said(p) and call("GET", f"/v1/responses/{p['id']}")[0] == 404
+      and call("GET", f"/v1/sessions/{session}")[1]["head_response_id"] == head and "/work/more.txt" not in files_of(a)[1], repr(said(p)))
+q = turn("live/shell/none/none", "echo x", temperature=0.2)
+check("a request a harness cannot honour fails, naming the field: nothing is ignored unsaid",
+      (q["status"], q["metadata"].get("hg_code")) == ("failed", "unsupported_parameter") and "temperature" in q["error"]["message"], q.get("error"))
+r = turn("live/shell/none/none", "echo the code is HERON > /dev/null; echo noted")
+taken = turn("live/live-other/none/none", "cat $HG_TURN/handover.txt; echo ----; cat /mind/.harnessgateway/shell/commands.jsonl", previous_response_id=r["id"])
+told, _, read = said(taken).partition("----")
+check("a harness that takes a session over is told who worked on it and where their memory is, and nothing that was said",
+      told.startswith("Handover. ") and f"1. shell, as live/shell/none/none: {r['id']}\n" in told
+      and "Its memory: /mind/.harnessgateway/shell/commands.jsonl: one JSON line" in told and "HERON" not in told, repr(told[-200:]))
+check("and what was said is there for it to read, in the mind the two share", "the code is HERON" in read, repr(read[:120]))
+same = turn("live/live-other/none/none", "wc -c < $HG_TURN/handover.txt", previous_response_id=taken["id"])
+back = turn("live/shell/none/none", "tail -2 $HG_TURN/handover.txt", previous_response_id=same["id"])
+check("there is no handover when the turn before was the harness's own, and one when a harness returns to a session",
+      said(same).strip() == "0" and f"2. live-other, as live/live-other/none/none: {taken['id']}, {same['id']}" in said(back), repr(said(back)))
 status, items = call("GET", f"/v1/responses/{a['id']}/input_items")
 check("a response's input is listed, and a response can be deleted", status == 200 and items["data"][0]["content"][0]["type"] == "input_text"
       and call("DELETE", f"/v1/responses/{n['id']}")[1].get("deleted") and call("GET", f"/v1/responses/{n['id']}")[0] == 404)
@@ -183,6 +204,7 @@ for session in sessions_made - {None}:
 for environment in call("GET", "/v1/environments?limit=100")[1]["data"]:
     if environment["name"].startswith("live"):
         call("DELETE", f"/v1/environments/{environment['name']}")
+call("DELETE", "/v1/harnesses/live-other")
 call("DELETE", "/v1/providers/live-check")
 print(f"{sum(results)} of {len(results)} passed")
 sys.exit(0 if all(results) else 1)
