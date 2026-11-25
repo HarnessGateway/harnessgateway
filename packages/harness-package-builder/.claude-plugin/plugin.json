@@ -1,0 +1,5 @@
+{
+  "name": "harness-package-builder",
+  "description": "How the harness package builder builds harness packages.",
+  "version": "1.0.0"
+}

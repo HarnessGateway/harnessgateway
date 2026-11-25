@@ -63,6 +63,8 @@ async def test_definitions_are_made_read_replaced_and_deleted(http: httpx.AsyncC
     assert (await http.delete("/v1/harnesses/echo")).json() == {"name": "echo", "deleted": True}
     assert (await http.get("/v1/environments/default")).json()["harnesses"] == []
     assert (await http.delete("/v1/harnesses/echo")).status_code == 404
+    for kept in (await http.put("/v1/harnesses/shell", content=package()), await http.delete("/v1/harnesses/harness-package-builder")):
+        assert kept.status_code == 400 and "ships with the platform" in kept.json()["error"]["message"]      # the platform's, not changed in place
 
 
 async def test_responses_files_and_containers_as_the_openai_api_has_them(http: httpx.AsyncClient, platform: Platform):

@@ -80,9 +80,10 @@ check("a provider is added and its key is never shown", status == 200 and made["
 archive = io.BytesIO()
 with tarfile.open(fileobj=archive, mode="w:gz") as tar:
     tar.add(SHELL, arcname=".")
-status, made = call("PUT", "/v1/harnesses/shell", archive.getvalue())
-check("a package a user brings becomes a harness", status == 200 and made["name"] == "shell" and len(made["digest"]) == 64, made.get("digest", made)[:12] if status == 200 else made)
-assert call("PUT", "/v1/harnesses/live-other", archive.getvalue())[0] == 200      # the same package, as another harness
+status, made = call("PUT", "/v1/harnesses/live-other", archive.getvalue())        # the shell package, as a harness of the user's own
+check("a package a user brings becomes a harness", status == 200 and made["name"] == "live-other" and len(made["digest"]) == 64, made.get("digest", made)[:12] if status == 200 else made)
+status, kept = call("PUT", "/v1/harnesses/shell", archive.getvalue())
+check("a package that ships is the platform's, and is not changed in place", status == 400 and "ships with the platform" in kept["error"]["message"], kept["error"]["message"])
 base = {"image": "node:22", "harnesses": ["shell"]}
 for name, more in (("live", {"harnesses": ["shell", "live-other"]}), ("live-py", {"image": "python:3.13-slim"}), ("live-tiny", {"disk_mb": 64}), ("live-quick", {"timeout_s": 5}),
                    ("live-small", {"image": "python:3.13-slim", "memory_mb": 256, "tmp_mb": 64}), ("live-closed", {"network": {"mode": "closed"}}),
@@ -93,11 +94,11 @@ for name, more in (("live", {"harnesses": ["shell", "live-other"]}), ("live-py",
 status, refused = call("PUT", "/v1/environments/none", {"harnesses": ["shell"]})
 check("an environment without an image is refused", status == 400 and refused["error"]["param"] == "image", refused["error"]["message"])
 
-a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls $HG_CONTRACT; ls /harness; ls /")
+a = turn("live/shell/none/none", "id -u; echo hello > hello.txt; touch /x; echo $HOME $PWD; ls /etc/hg; ls /harness; ls /")
 out = said(a)
 check("a turn runs as user 10000 on a read-only root, with home /mind, in /work, and sees only its own folders",
       a["status"] == "completed" and out.startswith("10000") and "Read-only file system" in out and "/mind /work" in out
-      and "request.schema.json" in out and "lines.schema.json" in out and "data" not in out.split(), repr(out[:80]) + str(a.get("error") or ""))
+      and "ca.pem" in out.split() and "contract" not in out.split() and "data" not in out.split(), repr(out[:80]) + str(a.get("error") or ""))
 if a["status"] != "completed":
     sys.exit(1)
 session = a["metadata"]["hg_session"]

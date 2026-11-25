@@ -76,7 +76,9 @@ In this order; the first failure is the answer, as the OpenAI error envelope
 4. The body validates, strictly, against the SDK's `ResponseCreateParamsBase` plus `stream`: an unknown field, or
    a value of the wrong kind, is refused at any depth, and the refusal says where (`input.0.content.1.detail`).
    What is left out is not refused. The SDK's types call fields required that OpenAI's server fills in (an image's
-   `detail`), so only `type` is asked of everything that has one; the rest is the package's to default.
+   `detail`), so only `type` is asked of everything that has one; the rest is the package's to default. An item a
+   response held is taken back as it was, though its input form lacks a field (a tool output's `status`): a caller
+   that keeps the conversation sends back what it was sent.
 5. `metadata` has at most 16 pairs, none with a key beginning `hg_` (the platform writes those).
 6. `store: false` with `background: true` is refused: a background response is fetched later.
 7. The model line parses (four parts; the last may hold slashes and is at most 200 characters; the first three
@@ -243,9 +245,12 @@ The words are in one function (`domain/handover.py`), so they are the same for e
 
 ## 7. Harness packages
 
-`contract/PACKAGES.md` is the contract, in full, and is what a package author reads. Every sandbox is given it,
-with the four schema files, read-only at `$HG_CONTRACT`. This section is what the platform must do to keep it. The
-contract's version is **3**, reported by `GET /v1/platform`.
+The contract is what a package author reads, and it is kept in the package that builds packages
+(`packages/harness-package-builder/`): its `AGENTS.md` says how the platform runs a package, `contract/` holds the
+Responses API as three schemas (a request, a response, and the stream's events), `example/` is a whole package, and
+`requests/` is a session of the requests a developer sends. Building a package is the one thing done from it, so no
+other sandbox is given it. This section is what the platform must do to keep it. The contract's version is **3**,
+reported by `GET /v1/platform`.
 
 ### 7.1 A package
 
@@ -265,7 +270,7 @@ again when next asked for. After a good install `/harness` is read-only.
 ### 7.3 What a turn's sandbox is given
 
 Mounts: `/mind` and `/work` (the session's, writable), `/turn` (this turn's inputs, read-only), `/harness` (the
-install, read-only), and `/etc/hg` (the trust bundle `ca.pem` and `contract/`, read-only).
+install, read-only), and `/etc/hg` (the trust bundle `ca.pem`, read-only).
 
 Files in `/turn`:
 
@@ -277,7 +282,7 @@ Files in `/turn`:
 | `files/<file id>/<filename>` | Each uploaded file the input names |
 | `startup.sh` | The environment's startup script, when it has one |
 
-Variables: `HOME` (`/mind`), `HG_TURN`, `HG_MIND`, `HG_WORK`, `HG_HARNESS`, `HG_CONTRACT`, `HG_STATE`
+Variables: `HOME` (`/mind`), `HG_TURN`, `HG_MIND`, `HG_WORK`, `HG_HARNESS`, `HG_STATE`
 (`/mind/.harnessgateway/<harness>`), `HG_SESSION`, `HG_RESPONSE`, `HG_ENVIRONMENT`, `HG_HARNESS_NAME`,
 `HG_PROVIDER`, `HG_MODEL`, `HG_PROVIDER_KEY` (a placeholder), one `HG_PROVIDER_<API>` for each API the provider
 speaks (`ANTHROPIC`, `OPENAI_RESPONSES`, `OPENAI_CHAT`, `GEMINI`) holding its base URL, the proxy and certificate
@@ -312,7 +317,7 @@ If the sandbox is stopped, the text of an unfinished message or reasoning is kep
 
 ### 7.5 What a package must do with the request
 
-Stated in the contract; held by `tests/shipped` for the packages that ship, and taught to HG FDE:
+Stated in the contract; held by `tests/shipped` for the packages that ship, and told to the harness package builder:
 
 - Give the harness all of `input`: a string, or a list that may hold a whole conversation.
 - Apply `instructions` to this turn only.
@@ -424,9 +429,13 @@ removes it, and the API shows only which secrets have a value.
 
 Deleting a harness takes it off every environment that carries it.
 
-A new organization is given, once: every folder of `packages/` as a harness and every file of `environments/` as an
-environment. They are then its own. What ships: `shell` (runs the input as a command), `hg-fde` (the engineer that
-builds every other package), and `default` (image `node:22`, open network, carrying both).
+What ships: `shell` (runs the input as a command), `harness-package-builder` (builds every other package, and
+carries the contract it builds them to), and `default` (image `node:22`, open network, carrying both).
+
+The packages are the platform's. Every start puts each at the running version's, for every organization, and leaves
+one that is unchanged as it is. `PUT` and `DELETE` on their names are refused: a changed copy is added under another
+name, and is then the organization's own. So an update of the platform updates the builder, and with it the schemas
+it builds to. The environment is what an organization starts with: given once, at setup, and its own from then on.
 
 ## 11. The rest of the API
 
@@ -476,7 +485,7 @@ numbered files, all or nothing; a released file is never edited.
 | `chunks`, `snapshots` | Chunks by hash with their reference counts; snapshots with their bytes and file counts |
 | `usage` | One row per organization per day |
 | `grants` | What each running sandbox may reach, sealed, deleted when it ends |
-| `platform`, `rounds` | The certificate authority; when each timed job last ran |
+| `platform`, `rounds`, `migrations` | The certificate authority; when each timed job last ran; which schema files have been applied |
 
 ## 14. Processes
 
@@ -545,14 +554,14 @@ src/harnessgateway/
   proxy/        server.py, tunnel.py, http.py, authority.py, control.py
   api/          app.py, http.py, responses.py, files.py, containers.py, views.py, resources.py, sessions.py,
                 organization.py, console.py
-contract/       PACKAGES.md, and four schemas generated from the pinned SDK
-packages/       shell, hg-fde
+packages/       shell, and harness-package-builder, which holds contract/ (three schemas generated from the pinned
+                SDK), example/ (a whole package), and requests/ (a session of a developer's requests)
 environments/   default.json
 console/        the pages
 tests/          unit, shipped, integration, live
 ```
 
-`shipped.py` is the only place the server finds `console/`, `contract/`, `packages/`, and `environments/`.
+`shipped.py` is the only place the server finds `console/`, `packages/`, `environments/`, and the contract.
 
 ## 17. The order to build it
 
@@ -560,14 +569,16 @@ Each step is complete, with its tests, before the next.
 
 1. `errors`, `ids`, `settings`; then `domain/`, with `tests/unit`. Start with `line`, `request`, `events`, and
    `outcome`: they are the Responses API.
-2. `contract/`: `harnessgateway schema` writes the four schemas from the pin; then `PACKAGES.md`.
+2. The contract, in `packages/harness-package-builder/contract/`: `harnessgateway schema` writes the three schemas
+   from the pin; then the builder's `AGENTS.md`, its example package, and its requests.
 3. `store/`: the schema file, `db`, then one module per group of tables.
 4. `driver/`: `folders` (with its tests), then `docker`.
 5. `runner/turn.py`, with a stand-in driver whose folders are real and whose sandbox prints what a test tells it
    to; then `installer`, `runner`, `housekeeping`.
 6. `api/`, `platform`, `serve`, `cli`.
 7. `proxy/`.
-8. `packages/shell`, then `packages/hg-fde`; `environments/default.json`; `tests/shipped`.
+8. `packages/shell`, then the rest of `packages/harness-package-builder`; `environments/default.json`;
+   `tests/shipped`.
 9. `console/`.
 10. `Dockerfile`, `compose.yaml`, `install.sh`; `tests/live` against a running installation.
 
@@ -592,7 +603,7 @@ What must hold, and which test holds it:
 | `store: false` leaves no response, no snapshot, and no session | `integration/test_turns.py` |
 | A harness is told where the one before it keeps its memory | `integration/test_turns.py`, `live/turns.py` |
 | The platform names no agent CLI | `unit/test_agnostic.py` |
-| What ships keeps the contract, and what HG FDE is taught is what the platform has | `shipped/test_packages.py` |
+| What ships keeps the contract, and what the harness package builder is told is what the platform has | `shipped/test_packages.py` |
 
 ## 19. What 6.0.0 changes from 5.2.1
 
@@ -607,6 +618,8 @@ usage, keys, the console, the seams, and the deployment.
 | A harness's memory | Not mentioned | A package keeps it inside the mind, and says where in `$HG_STATE/memory` |
 | A field a harness cannot honour | Left alone, and noted in the turn's log | The turn fails, naming the field |
 | `store: false` | The turn ran in its parent's session, was saved, then deleted | It runs in a session of its own, is never saved, and leaves its parent's session untouched |
+| The contract and its schemas | Given to every sandbox, at `$HG_CONTRACT` | Carried by the builder's package, and by nothing else |
+| The packages that ship | `shell` and `hg-fde`: given once, then the organization's | `shell` and `harness-package-builder`: the platform's, put at the running version's on every start, and not changed in place |
 
 ## 20. Decided, and still open
 

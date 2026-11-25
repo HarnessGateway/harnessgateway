@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""run: one turn of HG FDE, which is Claude Code told who it is, given the platform's contract and schemas in full,
-and given this package's skill.
+"""run: one turn of the harness package builder, which is Claude Code told who it is, given the platform's contract
+and schemas in full, and given this package's skill. The contract is this package's own (`contract/`): it is what
+building a package is done from, so it ships with the builder and nowhere else.
 
-It is also the example every package HG FDE builds is written from, so it uses the Responses API as far as Claude
+It is also the example every package the builder writes is written from, so it uses the Responses API as far as Claude
 Code goes: every field of the request that Claude Code has a flag or a setting for is given to it, and each thing
 it does is printed as the output item or the stream event that says what it was. What Claude Code cannot be given
-fails the turn, naming it: nothing is ignored unsaid.
+fails the turn, naming it: nothing is ignored unsaid. Nobody calls the builder with tools of their own, so it offers
+none: `example/run` shows how a package hands one back.
 
 It has the shape the skill teaches: one function for each primitive of a harness (`as_input`, `context`,
 `model_interface`, `output`, `control_flow`), which together are Claude Code's command, and then the reading of what
@@ -25,12 +27,16 @@ import subprocess
 import sys
 import uuid
 
-HARNESS, TURN, CONTRACT = os.environ["HG_HARNESS"], os.environ["HG_TURN"], os.environ["HG_CONTRACT"]
+HARNESS, TURN = os.environ["HG_HARNESS"], os.environ["HG_TURN"]
+CONTRACT = os.path.join(HARNESS, "contract")       # PACKAGES.md, and the Responses API as the platform's schemas
 CLAUDE = os.path.join(HARNESS, "tools", "node_modules", ".bin", "claude")
 STATE = os.environ["HG_STATE"]
 SESSION = os.path.join(STATE, "session")           # Claude Code's own id for this session, kept with it
 MEMORY = os.path.join(STATE, "memory")             # where Claude Code keeps its record, for the harness after this one
 GIVEN = "/tmp/given"                               # where a file sent inside the request is put, for this turn
+CALLS, ANSWERS = ("function_call", "custom_tool_call"), ("function_call_output", "custom_tool_call_output")
+PRINTED = {"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output", "mcp_list_tools", "mcp_call",
+           "web_search_call"}                      # what else it prints of its own work, which a caller may send back
 # What of a request this package honours, and what the platform acts on or is the caller's own label: anything
 # else in a request fails the turn, so that nothing is ignored unsaid.
 HONOURED = {"input", "instructions", "reasoning", "text", "tools", "tool_choice"}
@@ -98,11 +104,12 @@ def part_of(part):
 
 def as_input(request):
     """Input: the request's input as the one message Claude Code takes. The person's words, images and files are
-    the message; what a developer or the system said in the input is instructions; and what the agent itself said
-    earlier, when the caller keeps the conversation and sends all of it, is given as that."""
+    the message; what a developer or the system said in the input is instructions; what the agent itself said
+    and called earlier, when the caller keeps the conversation and sends all of it, is given as that; and what the
+    caller's own tool returned is given as the answer to the call the turn before ended on."""
     given, blocks, told = request["input"], [], []
     for item in [{"role": "user", "content": given}] if isinstance(given, str) else given:
-        content, role = item.get("content"), item.get("role")
+        content, role, kind = item.get("content"), item.get("role"), item.get("type")
         parts = [part_of(part) for part in ([{"type": "input_text", "text": content}] if isinstance(content, str)
                                             else content or [])]
         if role == "user":
@@ -111,8 +118,23 @@ def as_input(request):
             told += [part["text"] for part in parts if part["type"] == "text"]
         elif role == "assistant":
             blocks += [{"type": "text", "text": f"Earlier, you said: {part['text']}"} for part in parts]
+        elif kind in CALLS:
+            blocks.append({"type": "text", "text": (
+                f"Earlier, you called the caller's tool {item['name']} (call {item['call_id']}) with: "
+                f"{item.get('arguments', item.get('input', ''))}")})
+        elif kind in ANSWERS:                      # a string, or parts: words, images, and files
+            result = item.get("output")
+            blocks += [{"type": "text", "text": f"The caller ran its tool for your call {item['call_id']}. It returned:"},
+                       *([{"type": "text", "text": result}] if isinstance(result, str)
+                         else [part_of(part) for part in result or []])]
+        elif kind == "reasoning":                  # what it printed in an earlier response, sent back by a caller that
+            blocks += [{"type": "text", "text": f"Earlier, you thought: {part['text']}"}       # keeps the conversation
+                       for part in item.get("summary") or [] if part.get("text")]
+        elif kind in PRINTED:
+            did = {name: value for name, value in item.items() if name not in ("id", "status")}
+            blocks.append({"type": "text", "text": f"Earlier, you did this: {json.dumps(did)}"})
         else:
-            raise Unsupported(f"an input item of type {item.get('type')}")
+            raise Unsupported(f"an input item of type {kind}")
     return blocks, told
 
 
@@ -121,12 +143,16 @@ def knows(request, told=()):
     Responses API as the platform's schemas, each in full, this request's own instructions, and what a developer
     or the system said in its input. It is written every turn, so it is always the platform's own, whatever the
     session was told before."""
-    said = [read(os.path.join(HARNESS, "AGENTS.md")), read(os.path.join(CONTRACT, "PACKAGES.md"))]
-    for name in sorted(os.listdir(CONTRACT)):
-        if name.endswith(".schema.json"):          # whole, and without the spaces that only a person reads by
-            said.append(f"# {name}\n\n" + json.dumps(json.loads(read(os.path.join(CONTRACT, name))), separators=(",", ":")))
+    said = [read(os.path.join(HARNESS, "AGENTS.md"))]
+    for name in ("request", "response", "stream"):     # the schema, whole, without the spaces only a person reads by
+        said.append(f"# {name}.schema.json\n\n" + json.dumps(
+            json.loads(read(os.path.join(CONTRACT, f"{name}.schema.json"))), separators=(",", ":")))
+    for folder in ("example", "requests"):             # a whole package to read, and the requests a developer sends
+        for found, _, names in sorted(os.walk(os.path.join(HARNESS, folder))):
+            said += [f"# /harness/{os.path.relpath(os.path.join(found, name), HARNESS)}\n\n" + read(os.path.join(found, name))
+                     for name in sorted(names)]
     said += [request.get("instructions") or "", *told]
-    path = os.path.join("/tmp", f"hg-fde-{uuid.uuid4().hex}.md")
+    path = os.path.join("/tmp", f"builder-{uuid.uuid4().hex}.md")
     with open(path, "w", encoding="utf-8") as file:
         file.write("\n\n".join(part for part in said if part))
     return path
@@ -175,12 +201,13 @@ def output(request):
         raise Unsupported("text.verbosity")
     servers = {}
     for tool in request.get("tools") or []:
-        if tool.get("type") == "mcp" and tool.get("server_url"):
+        kind = tool.get("type")
+        if kind == "mcp" and tool.get("server_url"):
             token = {"Authorization": f"Bearer {tool['authorization']}"} if tool.get("authorization") else {}
             servers[tool["server_label"]] = {"type": "http", "url": tool["server_url"],
                                              "headers": {**token, **(tool.get("headers") or {})}}
         else:
-            raise Unsupported(f"a tool of type {tool.get('type')}" + (" with no server_url" if tool.get("type") == "mcp" else ""))
+            raise Unsupported(f"a tool of type {kind}" + (" with no server_url" if kind == "mcp" else ""))
     choice = request.get("tool_choice")
     if choice not in (None, "auto", "none"):
         raise Unsupported(f"tool_choice {json.dumps(choice)}")
@@ -270,7 +297,8 @@ def returned(call_id, name, given, begun, result, detail):
 
 def servers(init):
     """Each tool server Claude Code started with, as the item that lists its tools, or says it did not connect.
-    Claude Code names a server's tools; it does not print their schemas."""
+    Claude Code names a server's tools; it does not print their schemas. This package's own server is no server
+    of the request's: it is not listed."""
     for server in init.get("mcp_servers") or []:
         prefix = f"mcp__{server['name']}__"
         say({"type": "mcp_list_tools", "server_label": server["name"],
@@ -358,8 +386,8 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: stopped.append(True))
     if "HG_PROVIDER_ANTHROPIC" not in os.environ:      # Claude Code speaks one API: the provider must speak it too
         return say({"type": "response.failed", "response": {"error": {"code": "no_provider", "message": (
-            "HG FDE needs a provider that speaks the Anthropic API: name one in the model line, as "
-            "environment/hg-fde/provider/model.")}}})
+            "The harness package builder needs a provider that speaks the Anthropic API: name one in the model line, as "
+            "environment/harness-package-builder/provider/model.")}}})
     request = json.loads(read(os.path.join(TURN, "request.json")))
     session = read(SESSION) if os.path.exists(SESSION) else None
     try:
@@ -368,7 +396,7 @@ def main():
         ended, code = turn(request, session)
     except Unsupported as what:                    # found before Claude Code is started: nothing has been done
         return say({"type": "response.failed", "response": {"error": {"code": "unsupported_parameter", "message": (
-            f"HG FDE cannot give Claude Code {what}. Leave it out, or name another harness.")}}})
+            f"The harness package builder cannot give Claude Code {what}. Leave it out, or name another harness.")}}})
     if session and not ended and code != 0 and not stopped:
         # Its own record of the session is gone or unusable (a stopped turn can leave it so): start a new one.
         note(f"Claude Code could not resume session {session} (exit code {code}): starting a new one")

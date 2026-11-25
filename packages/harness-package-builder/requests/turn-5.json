@@ -1,0 +1,46 @@
+{
+  "model": "sandbox/harness/deepseek/deepseek-flash",
+  "instructions": "Reply with the JSON asked for, and nothing else. Sign off as HERON.",
+  "previous_response_id": "resp_turn_4",
+  "input": "Give me this engagement as fields.",
+  "stream": false,
+  "store": true,
+  "metadata": {
+    "engagement": "e_4417"
+  },
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "this_engagement",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "client",
+          "brand_colours",
+          "compute_hours",
+          "budget",
+          "sign_off"
+        ],
+        "properties": {
+          "client": {
+            "type": "string"
+          },
+          "brand_colours": {
+            "type": "string"
+          },
+          "compute_hours": {
+            "type": "number"
+          },
+          "budget": {
+            "type": "string"
+          },
+          "sign_off": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

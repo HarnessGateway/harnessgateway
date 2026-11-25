@@ -36,7 +36,6 @@ packages = ["src/harnessgateway"]
 "console" = "harnessgateway/console"
 "packages" = "harnessgateway/packages"
 "environments" = "harnessgateway/environments"
-"contract" = "harnessgateway/contract"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/shipped", "tests/integration"]

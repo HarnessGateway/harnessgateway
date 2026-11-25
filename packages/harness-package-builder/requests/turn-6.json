@@ -1,0 +1,56 @@
+{
+  "model": "sandbox/harness/deepseek/deepseek-flash",
+  "instructions": "You are advising PELICAN Logistics. Answer plainly and briefly.",
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_client_budget",
+      "description": "The budget a client has approved for an engagement. It runs in the caller's own system.",
+      "strict": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "stream": true,
+  "store": false,
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": "What budget has the client approved for this work?"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_turn_3_1",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "The approved budget is in the developer's own system: their tool get_client_budget returns it."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_turn_3_2",
+      "call_id": "call_turn_3_1",
+      "name": "get_client_budget",
+      "arguments": "{\"client\": \"PELICAN Logistics\"}",
+      "status": "completed"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_turn_3_1",
+      "output": "18,000 USD, approved for the migration."
+    }
+  ]
+}

@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Iterator
 import uvicorn
 from starlette.applications import Starlette
 
-from harnessgateway import __version__, defaults, shipped
+from harnessgateway import __version__, defaults
 from harnessgateway.api.app import internal_app, public_app
 from harnessgateway.domain import contract
 from harnessgateway.domain.sandbox import GIVEN_FOLDER
@@ -26,12 +26,8 @@ log = logging.getLogger(__name__)
 
 
 def given(certificate: str) -> dict[str, bytes]:
-    """What every sandbox is given, read-only, by its path under the folder: the certificates it trusts, and the
-    contract its package is written to. Written when the platform starts, so it is always this version's."""
-    inside = len(contract.GIVEN) + 1
-    return {contract.CA_BUNDLE[inside:]: trust_bundle(certificate).encode(),
-            **{f"{contract.CONTRACT[inside:]}/{file.name}": file.read_bytes()
-               for file in sorted(shipped.folder("contract").iterdir()) if file.is_file()}}
+    """What every sandbox is given, read-only, by its path under the folder: the certificates it trusts."""
+    return {contract.CA_BUNDLE[len(contract.GIVEN) + 1:]: trust_bundle(certificate).encode()}
 
 
 class Broken(Exception):
@@ -87,6 +83,8 @@ async def serve(settings: Settings) -> None:
                         "trusted code only. Install gVisor (runsc) to isolate them.")
         certificate, _ = await platform.authority.get(new_authority)
         await platform.driver.fill(GIVEN_FOLDER, given(certificate))
+        for org_id in await platform.orgs.all():   # the packages that ship follow the platform: each is this version's
+            await defaults.packages(platform, org_id)
 
         def server(app: Starlette, port: int) -> _Server:
             return _Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_config=None,  # noqa: S104

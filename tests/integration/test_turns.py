@@ -42,7 +42,6 @@ async def test_a_turn_runs_to_a_response(platform: Platform):
         ("/mind", False), ("/work", False), ("/turn", True), ("/harness", True), ("/etc/hg", True)]
     laid = driver.folder(sandbox, "/harness")                  # the package, and nothing of the platform's beside it
     assert (laid / "run").stat().st_mode & 0o100 and sorted(path.name for path in laid.iterdir()) == ["install", "run"]
-    assert sandbox.env["HG_CONTRACT"] == "/etc/hg/contract"    # the contract is in what every sandbox is given
     given = driver.found[0]                                   # what the sandbox found under /turn
     assert json.loads(given["request.json"])["input"] == "hi" and given["startup.sh"] == "echo ready\n" and given["handover.txt"] == ""
     assert given["previous.json"] == "null" and response["completed_at"] >= response["created_at"]

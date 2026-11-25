@@ -1,0 +1,14 @@
+#!/bin/sh
+# install: runs once for each environment image. It puts the harness CLI, at one pinned version, under
+# $HG_HARNESS/tools, by its makers' own method, and checks the version it got.
+set -eu
+VERSION=2.1.325                                  # the version its makers mark stable
+
+for need in node npm python3; do
+  command -v "$need" >/dev/null 2>&1 || { echo "this image has no $need, which this package needs" >&2; exit 1; }
+done
+npm install --prefix "$HG_HARNESS/tools" --no-audit --no-fund --loglevel=error --ignore-scripts \
+  "@anthropic-ai/claude-code@$VERSION"
+node "$HG_HARNESS/tools/node_modules/@anthropic-ai/claude-code/install.cjs"
+got=$("$HG_HARNESS/tools/node_modules/.bin/claude" --version | cut -d' ' -f1)
+[ "$got" = "$VERSION" ] || { echo "installed $got, and $VERSION was wanted" >&2; exit 1; }
