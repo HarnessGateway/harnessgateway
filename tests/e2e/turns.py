@@ -1,7 +1,7 @@
 """Live checks of a running installation, in real containers: what only they show (isolation, the network, the
 limits, secrets on the wire). Standard library only.
 
-    HG_URL=http://127.0.0.1:8000 HG_KEY=hg_... python3 tests/live/turns.py
+    HG_URL=http://127.0.0.1:8000 HG_KEY=hg_... python3 tests/e2e/turns.py
 
 It adds a provider, a few environments named live-… and a second copy of the `shell` package named `live-other` to
 the installation, runs about thirty short turns, and removes what it added and the sessions it made.

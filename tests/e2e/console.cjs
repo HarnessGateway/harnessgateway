@@ -1,6 +1,6 @@
 // Every page of the console, in a real browser, against a running installation.
 //
-//   HG_URL=http://127.0.0.1:8000 HG_KEY=hg_… node tests/live/console.cjs
+//   HG_URL=http://127.0.0.1:8000 HG_KEY=hg_… node tests/e2e/console.cjs
 //
 // It needs Playwright (`npm install playwright`, or NODE_PATH to one) and an image the host can pull with python3
 // in it (HG_IMAGE, default python:3.13-slim). Everything it makes is named console-check-… and removed at the end.
