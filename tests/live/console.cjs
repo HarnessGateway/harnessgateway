@@ -300,11 +300,17 @@ const api = async (method, path, body) => {
     expect((await page.evaluate(() => navigator.clipboard.readText())).includes("hello from the console"), "the reply was not copied");
   });
   await check("a file is given with a message, and the harness finds it", async () => {
-    await page.setInputFiles(".composer input[type=file]", { name: "given.txt", mimeType: "text/plain", buffer: Buffer.from("from the person") });
+    const dot = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+    await page.setInputFiles(".composer input[type=file]", [{ name: "given.txt", mimeType: "text/plain", buffer: Buffer.from("from the person") },
+                                                            { name: "dot.png", mimeType: "image/png", buffer: dot }]);
     await page.waitForSelector(".composer .pending .tile:has-text('given.txt') small:has-text('B')");
-    const reply = await say("cat /turn/files/*/given.txt");
-    expect((await reply.locator(".text").textContent()).includes("from the person"), "the harness did not find the file");
+    await page.waitForSelector(".composer .pending .tile:has-text('dot.png') small:has-text('B')");
+    const reply = await say("cat /turn/files/*/given.txt; ls /turn/files/*/");
+    const text = await reply.locator(".text").textContent();
+    expect(text.includes("from the person") && text.includes("dot.png"), "the harness did not find the files");
     expect(await page.locator(".said").last().locator(".attached:has-text('given.txt')").count() === 1 && await page.locator(".composer .pending .tile").count() === 0, "the file is not shown with the message");
+    const sent = (await api("GET", `/v1/sessions/${(await stored())[0].session}/turns`)).data.at(-1).request.input[0].content;
+    expect(sent.map(part => part.type).join() === "input_text,input_file,input_image", `a picture was not sent as an image: ${sent.map(part => part.type)}`);
   });
   await check("what a turn builds opens beside the chat, and runs apart from the console", async () => {
     await say("mkdir -p site && printf '<h1 id=t>built</h1><script>document.getElementById(\"t\").textContent += \" and ran: \" + (function () { try { return sessionStorage.length; } catch (e) { return \"no storage\"; } })()</script>' > site/index.html; printf '# Notes\\n\\nSee [the page](site/index.html).\\n' > notes.md; printf 'x,y\\n1,2\\n3,\"4,5\"\\n' > data.csv");
