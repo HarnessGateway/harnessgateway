@@ -4,8 +4,17 @@ This page is everything needed to build the platform with no other context. It s
 promises, how each part works, which file holds which part, and in what order to build them. Where this page and
 the code disagree, this page is right and the code is a bug.
 
-It is version **6.0.1**: the open-source, self-hosted community edition. An enterprise edition is built on it
-through the seams of section 15, and never by changing it.
+It is version **1.0.0**: the open-source, self-hosted community edition, and the first version whose installations
+are upgraded in place (section 14.3). It is also the bottom of three layers, each a container image built on the one
+below it and each a package the core loads (section 15):
+
+| Layer | Repository | What it is |
+|---|---|---|
+| The core | `harnessgateway` (public, Apache-2.0) | This page. Complete by itself: one organization, one host, API keys |
+| The enterprise edition | `harnessgateway-enterprise` (private) | The core, and one extension: identity, audit, security, deployment at scale. Self-hosted, licensed |
+| The hosted service | `harnessgateway-cloud` (private) | The enterprise edition, and one more extension: many organizations, plans, billing. Run by HarnessGateway |
+
+The core knows none of them. Everything they do is through the seams of section 15, and never by changing the core.
 
 ## 1. What it is
 
@@ -39,6 +48,16 @@ package prints becomes the response.**
    is, and reads up by itself.
 7. **KISS, DRY, SRP.** Every module has one job, said in its first line. Every line is justified. A rule lives in
    one place.
+8. **What must not happen is written down, and checked.** A program is also the things it refuses. Every boundary
+   refuses what it does not accept, with words that name it. Every invariant is an assertion, a type, or a
+   constraint of the database, so a state that must not exist cannot be stored. Every promise of section 18 has a
+   test that tries to break it. Nothing fails silently: what is caught is handled or logged, and never dropped.
+9. **A test first.** A change starts with a test that fails without it, at the lowest level that can show it:
+   **unit** for a rule (no I/O), **integration** for a store, the runner, the API, or a seam (a real database, a
+   stand-in sandbox), **end to end** for what only a real installation shows (the released image, real containers,
+   a real browser). A change is done when all three levels pass.
+10. **The core knows no edition.** An edition adds to the core at a seam. A change that makes the core name an
+    edition, or behave differently because one is loaded, is the wrong change: the seam is what is missing.
 
 ## 3. Words
 
@@ -407,8 +426,12 @@ For each connection (`CONNECT`, or an absolute `http://` request):
    over a connection the proxy verified itself. One request is read per connection.
 5. A refusal is a `403` with a line a person reading an agent's log can act on.
 
-Bytes each organization's sandboxes sent and received are reported to the platform (`POST /internal/passed`) and
-added to its usage. `GET /internal/authority` gives the proxy the authority's certificate and key.
+Every connection a sandbox made, or was refused, is reported to the platform (`POST /internal/passed`, in batches
+every 2 seconds): its organization, its sandbox, the host and port, why it was refused if it was, and the bytes
+sent and received. The platform adds the bytes to the organization's usage and tells the extensions of each
+connection (`egress.connection`, section 15.4). What cannot be reported is kept for the next batch, up to 10,000
+connections; past that the oldest are dropped, their bytes still counted, and the proxy's log says so.
+`GET /internal/authority` gives the proxy the authority's certificate and key.
 
 **No secret enters a sandbox.** A provider's key, an environment's secrets, and a request's MCP credentials are
 placeholders (`hgs_…`) there. Secrets are sealed at rest with AES-256-GCM under `HG_SECRET_KEY`, each bound to the
@@ -443,11 +466,11 @@ it builds to. The environment is what an organization starts with: given once, a
 |---|---|
 | `POST` `GET /v1/files`, `GET` `DELETE /v1/files/{id}`, `GET /v1/files/{id}/content` | OpenAI's Files API: what `input_file` and `input_image` name |
 | `GET /v1/containers/{id}`, `…/files`, `…/files/{file}`, `…/files/{file}/content` | OpenAI's Containers API, read-only: a session's work as its latest snapshot holds it. A container's id is its session's id under the prefix `cntr_`; a file's id is made from its path |
-| `POST /v1/containers/{id}/view` | A link a browser opens by itself for an hour: a token, signed with the installation's key, naming one session. Files are served through it sandboxed (a `Content-Security-Policy` with `sandbox`), with byte ranges |
-| `GET /v1/sessions`, `GET` `DELETE /v1/sessions/{id}`, `GET /v1/sessions/{id}/turns` | Every session, as the requests and responses it is made of, with each turn's log |
+| `POST /v1/containers/{id}/view` | A link a browser opens by itself for an hour: a token naming one session, signed with a key of the installation's own (made once, kept sealed in the `platform` table). Files are served through it sandboxed (a `Content-Security-Policy` with `sandbox`), with byte ranges |
+| `GET /v1/sessions`, `GET` `DELETE /v1/sessions/{id}`, `GET /v1/sessions/{id}/turns` | Every session, as the requests and responses it is made of, with each turn's log and what its sandbox used (`used`: `seconds` it ran, `cpus` and `memory_mb` it was allowed, `cpu_seconds` and `memory_byte_seconds` it measured; `null` for a turn whose sandbox never started) |
 | `GET /v1/usage?start=&end=` | Processor time, memory, network bytes, and storage, for the lifetime or a range of days |
 | `POST` `GET /v1/keys`, `DELETE /v1/keys/{id}` | API keys: shown once, kept as a hash |
-| `GET /v1/platform` | `version`, `contract`, `sdk`, `driver`, `isolation` |
+| `GET /v1/platform` | `version`, `contract`, `sdk`, `driver`, `isolation`, and `extensions`: the name and version of each one loaded, in order (empty for the core alone) |
 | `GET /healthz`, `GET /readyz` | Whether it is up, and whether it can reach its database and its driver |
 
 Lists are in the shape OpenAI's SDK pages through (`object`, `data`, `first_id`, `last_id`, `has_more`), with
@@ -464,14 +487,29 @@ turn, rewind and branch (the API's fork), and a panel that previews what the age
 A harness begun in the console starts as a working package that keeps the contract (`pages/harnesses/template.js`),
 so it runs before anything in it is changed.
 
-An edition adds a folder of files served at the same paths; its `edition.js` names the pages it adds.
+Signing in is giving the console a credential, which it keeps in the tab (`sessionStorage`) and sends as
+`Authorization: Bearer …` with every call. The core's way is typing an API key. A credential may also arrive in the
+address, as `#credential=<token>`: the console takes it, removes it from the address, and signs in with it. That is
+how a sign-in that happens elsewhere (an edition's single sign-on) comes back.
+
+Editions add to the console and replace nothing of it (section 15.5): each loaded extension's folder is served
+under `/console/x/<name>/`, and its `edition.js` names the pages and the ways to sign in that it adds. The console
+learns which extensions there are from `GET /console/extensions.json`, which needs no key. Pages and sign-ins of
+every extension are shown, in the order the extensions were named.
 
 ## 13. Storage
 
 PostgreSQL holds every row; a blob store (a directory, or an edition's object store) holds bytes: chunks,
 manifests, package archives, and uploaded files. Every row of an organization carries `org_id`, every blob key
-begins with it, and every transaction on an organization's rows sets `hg.org_id`. The schema is applied from
-numbered files, all or nothing; a released file is never edited.
+begins with it, and every transaction on an organization's rows sets `hg.org_id`.
+
+The schema is numbered files, applied in order, all or nothing, under an advisory lock so one process changes it at
+a time. A released file is never edited: a change is a new file. Each applied file is recorded with its **owner**
+(`core`, or the name of the extension whose folder it is in), so two layers may each have a `0001_…` file. Before
+applying anything the platform checks the record against the files it has: when the record names a file of a loaded
+owner that this version does not have, the database was changed by a newer version, and the process refuses to
+start, saying so. A record of an owner that is not loaded is left alone: an installation may go back from an
+edition to the core, and the edition's tables stay as they were.
 
 | Table | Holds |
 |---|---|
@@ -480,12 +518,12 @@ numbered files, all or nothing; a released file is never edited.
 | `packages`, `installs` | Package archives by digest; each install for an image, with its status and log |
 | `files` | Uploaded files |
 | `sessions` | `head_turn_id`, `forked_from_turn_id`, `folder_snapshot_id`, `folder_used_at` |
-| `turns` | The queue and the record: session, parent, number, status, reason, code, message, the model line's four parts, `request`, sealed `credentials`, `output`, `usage`, `snapshot_id`, `store`, `cancel_requested`, the runner and its heartbeat, `log`, times, `deleted_at` |
+| `turns` | The queue and the record: session, parent, number, status, reason, code, message, the model line's four parts, `request`, sealed `credentials`, `output`, `usage` (the tokens its harness reported), `used` (what its sandbox used), `snapshot_id`, `store`, `cancel_requested`, `principal` (who sent it), the runner and its heartbeat, `log`, times, `deleted_at` |
 | `events` | Each turn's stream, numbered, so it can be read again from any point |
 | `chunks`, `snapshots` | Chunks by hash with their reference counts; snapshots with their bytes and file counts |
 | `usage` | One row per organization per day |
 | `grants` | What each running sandbox may reach, sealed, deleted when it ends |
-| `platform`, `rounds`, `migrations` | The certificate authority; when each timed job last ran; which schema files have been applied |
+| `platform`, `rounds`, `migrations` | What the installation makes once and keeps sealed (the certificate authority, the key view links are signed with); when each timed job last ran; which schema files have been applied, each with its owner |
 
 ## 14. Processes
 
@@ -503,42 +541,200 @@ PostgreSQL. Nothing a turn needs lives in one process's memory, so the same code
   grants older than 25 hours are dropped.
 - **Shutdown** stops running turns, saves them, and ends them.
 
-Settings are read from the environment once, at start, and a wrong one stops the process then:
-`HG_DATABASE_URL`, `HG_SECRET_KEY` (32 bytes, base64), `HG_PROXY_KEY`, `HG_DATA` (`/data`), `HG_BLOBS`,
-`HG_NAMESPACE` (`hg`), `HG_DRIVER` (`docker`), `HG_RUNTIME`, `HG_PORT` (8000), `HG_INTERNAL_PORT` (8001),
-`HG_MAX_TURNS` (8), `HG_IDLE_S` (3600), `HG_EXTENSIONS`, `HG_CONSOLE`; for the proxy, `HG_PROXY_KEY`,
-`HG_INTERNAL_URL`, `HG_PROXY_PORT` (8080), `HG_PRIVATE_HOSTS`.
+### 14.1 Settings
 
-`install.sh` writes `.env` with new secrets, builds the image, starts the database, runs `harnessgateway init`
-(which gives the defaults and prints the first API key, once), and starts `serve` and `proxy`.
+Settings are read from the environment once, at start, and a wrong one stops the process then, naming it:
+`HG_DATABASE_URL`, `HG_SECRET_KEY` (32 bytes, base64; required unless an extension supplies the sealer),
+`HG_PROXY_KEY`, `HG_DATA` (`/data`), `HG_BLOBS`, `HG_NAMESPACE` (`hg`), `HG_DRIVER` (`docker`), `HG_RUNTIME`,
+`HG_PORT` (8000), `HG_INTERNAL_PORT` (8001), `HG_MAX_TURNS` (8), `HG_IDLE_S` (3600), `HG_EXTENSIONS`, `HG_CONSOLE`;
+for the proxy, `HG_PROXY_KEY`, `HG_INTERNAL_URL`, `HG_PROXY_PORT` (8080), `HG_PRIVATE_HOSTS`.
+
+An image says what it is with two variables set when it is built: `HG_IMAGE`, its own name and tag (the core's
+release is `ghcr.io/harnessgateway/harnessgateway:<version>`), and `HG_EXTENSIONS`, empty in the core's image. An
+edition's image sets both to its own. Nothing outside an image has to name its extensions.
+
+### 14.2 Installing: pull and run
+
+The image is the whole distribution. A host needs Docker with Compose v2, and nothing from the repository:
+
+```sh
+image=ghcr.io/harnessgateway/harnessgateway:1.0.0
+docker run --rm "$image" harnessgateway compose > compose.yaml    # how it is started, for this version
+docker run --rm "$image" harnessgateway secrets > .env            # once: the installation's secrets. Keep it
+docker compose up --detach --wait                                  # the database, the platform, the egress proxy
+docker compose exec serve harnessgateway init                      # the defaults, and the first API key, shown once
+```
+
+- `harnessgateway compose` prints the Compose file this version is run with, naming this image (`HG_IMAGE`). It
+  builds nothing. `serve` is given everything in `.env` (`env_file`), so an edition's settings reach it with no
+  change to the file; the proxy is given only its own three settings, never the database's address or a key.
+  `serve` has a health check on `/readyz`, so `--wait` returns when the platform can work.
+- `harnessgateway secrets` prints a new `.env`: `HG_SECRET_KEY`, `HG_PROXY_KEY`, `HG_DB_PASSWORD`, and the
+  defaults a person may change (`HG_PORT=8000`, `HG_BIND=127.0.0.1`, `HG_NAMESPACE=hg`).
+- `harnessgateway init` gives the organization its defaults and prints its first API key, once. Run again it says
+  the installation is set up; `--new-key` makes another key, which is the way back in when every key is lost.
+
+There is no installer script. The repository's `compose.dev.yaml` is for whoever works on the platform: it builds
+the image from the checkout (`harnessgateway:dev`) and is used with the same `.env`.
+
+### 14.3 Updating
+
+An installation is updated in place, from any 1.x to any later 1.x, with its data:
+
+```sh
+docker run --rm "$new" harnessgateway compose > compose.yaml && docker compose up --detach --wait
+```
+
+`serve` applies the schema files it has that the database has not (section 13) before it serves anything, and puts
+the packages that ship at its version's (section 10). The version that was running is stopped before the new one
+starts, so an old version never runs on a new schema; and one started by mistake on a newer database refuses to
+start. Moving to an edition is the same two commands with the edition's image, and its settings added to `.env`.
+What an update asks of whoever runs the platform, beyond those two commands, is said in that version's entry in
+`CHANGELOG.md`; a version that asks anything is a new major version.
 
 ## 15. Editions
 
-An edition is a Python package named in `HG_EXTENSIONS` as `module:Class`. It subclasses `Extension` and overrides
-the seams it uses; each seam's default is the core's own behaviour.
+An edition is the core plus one or more **extensions**. An extension is a Python package installed into the
+core's image, with one class that subclasses `Extension` and overrides the seams it uses; each seam's default is the
+core's own behaviour. `HG_EXTENSIONS` names the classes as `module:Class`, comma-separated, **in order**: the
+enterprise edition's image sets `hgenterprise:Enterprise`, and the hosted service's sets
+`hgenterprise:Enterprise,hgcloud:Cloud`. So editions are a chain, and every seam says what several extensions
+together mean (section 15.2). A later extension may import an earlier one's public modules, as each imports the
+core's; none changes a layer below it.
 
-| Seam | The core | An edition |
+### 15.1 What an extension may rely on
+
+- **`harnessgateway.edition`** is the whole of the core that an extension imports: the `Extension` class, the
+  platform and its stores, the types the seams take and return, the refusals, the helpers every route uses, and
+  `defaults.give`. Nothing else in the core is promised to stay where it is. A test in each layer fails when an
+  extension imports any other module of the core.
+- **`harnessgateway.testing`** is what an extension's tests are written with: the stand-in driver (real folders, a
+  sandbox that prints what a test tells it to), the smallest package, a platform on a test database, and running
+  the next waiting turn as a runner does.
+- **The console's `lib/` and `components/`** are what an extension's pages import.
+- **The core's own tests pass with any extension loaded.** `HG_TEST_EXTENSIONS` names the extensions the core's
+  integration tests load. Every edition runs the core's suite this way in its own checks: an extension that
+  changes what the core does fails there.
+- An extension has a `name` (a resource name: `enterprise`, `cloud`) and a `version`. Its name owns its schema
+  files (section 13), its console folder (`/console/x/<name>/`), and its line in `GET /v1/platform`. Every table
+  it makes is named `<name>_…` and every row of an organization's carries `org_id`.
+- An extension is made with no arguments, before the database is open, when `serve` or `init` starts; the proxy
+  loads none. A wrong setting of its own raises `SettingsError` there, and the process stops, as for the core's.
+  One whose class is not an `Extension`, has no name, or has a name another has (or `core`), is refused the same
+  way.
+- **An extension that stands on another finds it by name**: `platform.extensions.named("enterprise")` is the
+  loaded extension of that name, or nothing. The one below is named first in `HG_EXTENSIONS`, so it is asked
+  first at every seam, and has been started when the one above is.
+- **Nothing an extension needs lives in one process's memory**, as nothing of the core's does: several `serve`
+  processes run the same extensions.
+
+### 15.2 The seams
+
+| Seam | The core alone | With several extensions |
 |---|---|---|
-| `authenticate(request)` | An API key | Single sign-on; matching a caller to an organization |
-| `authorize(who, action)` | Whoever is authenticated may do everything | Roles |
-| `drivers()` | Docker on one host | A cluster |
-| `blob_stores()` | A directory | Object storage |
-| `sealer(settings)` | AES-256-GCM under `HG_SECRET_KEY` | A key service |
-| `before_turn(who, request)` | Nothing | Quotas and policy |
-| `on_event(name, about)` | Nothing | An audit log; metering |
-| `routes(api)`, `migrations()`, `console()` | None | Its own API, tables, and pages |
+| `drivers()` | Docker on one host (`HG_DRIVER=docker`) | All offered, by name. A name offered twice is refused at start |
+| `blob_stores()` | A directory (`HG_BLOBS=/data/blobs`) | All offered, by URL scheme (`s3://…`). A scheme offered twice is refused at start |
+| `sealer(settings)` | AES-256-GCM under `HG_SECRET_KEY` | The first that gives one. With one, `HG_SECRET_KEY` is not needed |
+| `migrations()` | None | Each extension's one folder, applied after the core's, in order, recorded under its name |
+| `start(platform)` | Nothing | Each, in order, once the schema is up to date and before anything is served, in `serve` and in `init`. It is where an extension is handed the platform. One that raises stops the process |
+| `authenticate(request)` | An API key | The first that answers; the API key is asked last |
+| `authorize(who, action)` | Whoever is authenticated may do everything | Every one is asked; any may refuse (`Forbidden`) |
+| `before_turn(who, request)` | Nothing | Every one is asked; any may refuse (`Refused`) |
+| `egress(org_id, policy)` | The environment's policy, as it is | Each is given what the one before returned, and returns it narrowed: more denied, never more allowed |
+| `on_change(conn, change)` | Nothing | Each, in order, inside the change's own transaction (section 15.3) |
+| `on_event(name, about)` | Nothing | Each is told separately; one that fails is logged and never fails another, or what it was told about (section 15.4) |
+| `housekeep(platform, elapsed_s)` | Nothing | Each, separately, at the end of every housekeeping round (once a minute, in one process); one that fails is logged |
+| `routes(api)` | None | All added after the core's. `api.route(path, method, action, handler)` makes one that is authenticated and authorized as the core's own are. A path and method that already has a route is refused at start |
+| `console()` | None | Each extension's folder, under `/console/x/<name>/` (section 15.5) |
 
-Every route names what it does as `noun.read` or `noun.write`; that is what `authorize` is asked. `on_event` hears
-`turn.finished` and every change to a definition, a key, or a session, never with a secret.
+Every route names what it does as `noun.read` or `noun.write` (`responses.write`, `providers.read`, `keys.write`,
+…): that string is what `authorize` is asked about. `who` is a `Principal`: the organization whose data the request
+may touch, and a `subject` (an API key's id, or whatever an extension names).
+
+### 15.3 Changes: a change and its record commit together
+
+Every change someone makes through the API, and every one the platform makes for itself, is told to the extensions
+**inside the transaction that makes it**, with that transaction's connection. An extension that keeps a record (an
+audit log) writes it with that connection, so the change and its record are both kept or neither is. An extension
+that raises undoes the change, and the request is refused with its words: there is no change without its record.
+
+A `Change` is a `name`, the `org_id`, `by` (the caller's `subject`; `host` for what `harnessgateway init` does;
+`platform` for what the platform does by itself when it starts), a `target`, and `about` (more, never a secret).
+
+| `name` | `target` | `about` |
+|---|---|---|
+| `providers.applied`, `environments.applied`, `harnesses.applied` | The definition's name | |
+| `providers.deleted`, `environments.deleted`, `harnesses.deleted` | The definition's name | |
+| `keys.created`, `keys.revoked` | The key's id | Its `name`, when created |
+| `responses.created` | The response's id | `session`, `model` (the line as sent) |
+| `responses.cancelled`, `responses.deleted` | The response's id | |
+| `sessions.deleted` | The session's id | |
+| `files.created`, `files.deleted` | The file's id | `filename` and `bytes`, when created |
+
+The stores make the changes, so the stores tell of them: each method that changes something takes who is making
+the change. A turn that was not to be stored leaves nothing, and its removal is no change of anyone's: it is not
+told.
+
+### 15.4 Events: what happened by itself
+
+What nobody asked for is told after it has happened, and cannot be refused: `on_event(name, about)`, with `org_id`
+and `at` in every `about`.
+
+| `name` | `about` |
+|---|---|
+| `turn.finished` | `target` (the response's id), `session_id`, `model`, `status`, `reason`, `by` (who sent it), `usage` (the tokens its harness reported), and what its sandbox used: `seconds`, `cpus`, `memory_mb`, `cpu_seconds`, `memory_byte_seconds` |
+| `egress.connection` | `subject_id` (the turn, or the install), `environment`, `host`, `port`, `refused` (why, or empty), `sent`, `received` |
+
+An event may be missed (a process that dies between a turn's end and the telling). What an extension must not
+miss, it also reads from the rows: a turn's `used` is kept on the turn (section 11), so a round of `housekeep` can
+find what an event did not bring.
+
+### 15.5 Pages and sign-ins in the console
+
+An extension's `console()` folder is served under `/console/x/<name>/`, with the console's own headers. Its
+`edition.js` is a module that exports what it adds:
+
+```js
+import { top } from "../../components/layout.js";     // the console's own modules
+import { get } from "../../lib/api.js";
+import { add, clear, h } from "../../lib/dom.js";
+
+async function audit(main) {                           // draws the page at #/audit
+  add(clear(main), top("Audit", "Every change."), (await get("/v1/audit")).data.map(row => h("div", {}, row.name)));
+}
+export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", page: audit }];
+export const signIns = [{ label: "Sign in with single sign-on", href: "/v1/sso/start" }];
+```
+
+A page is listed in the sidebar under its `group` and drawn at `#/<id>`; an `id` the console or an earlier
+extension has is refused, in the browser's console and on the page. A sign-in is a link on the sign-in form: it
+leads away, and comes back to `/console/#credential=<token>` (section 12). A module may also export `signOut`, a
+function the console calls when someone signs out, before it forgets the credential: a sign-in that was made
+elsewhere is ended there. No file of an extension is served in place of one of the console's.
+
+### 15.6 Many organizations
+
+The core has one. Every row already carries `org_id` and every transaction on an organization's rows sets
+`hg.org_id`, so an extension adds three things and changes none: how organizations are made (`routes`, then
+`harnessgateway.edition.give(platform, org_id)` for what one starts with), how a caller is matched to one
+(`authenticate`), and row-level policies on that setting (`migrations`). A transaction that carries no
+organization is the platform's own (the queue, housekeeping) and sees every row.
+
+### 15.7 An example
+
+`tests/integration/edition.py` is a complete extension that uses every seam, and
+`tests/integration/test_extensions.py` loads it, and a second one after it, the way an installation does.
 
 ## 16. Where each part is
 
 Dependencies point one way: `api` and `runner` use `store`, `driver`, and `domain`; `store` and `driver` use
-`domain`; `domain` uses nothing.
+`domain`; `domain` uses nothing. `edition.py` and `testing.py` import from all of them, and nothing imports them.
 
 ```
 src/harnessgateway/
   cli.py  serve.py  settings.py  platform.py  extensions.py  errors.py  ids.py  shipped.py  defaults.py
+  edition.py    everything of the core an extension may import      testing.py   what its tests are written with
+  compose.yaml  how a released image is run (printed by `harnessgateway compose`)
   domain/       every rule, pure: no I/O
     line.py       the model line                       request.py    what a request must be; its credentials and files
     resolve.py    a line and its definitions           response.py   the response object and the response-level events
@@ -547,7 +743,8 @@ src/harnessgateway/
     sandbox.py    plans, variables, and policies       contract.py   the sandbox's fixed facts, and the contract's version
     resources.py  the three definitions                package.py    a package archive, read and written
     egress.py     host entries and the decision        sealing.py    secrets at rest
-    schema.py     the Responses API as JSON Schemas    view.py       view links        principal.py  who is calling
+    schema.py     the Responses API as JSON Schemas    view.py       view links
+    principal.py  who is calling                       change.py     a change, as extensions are told of it
   store/        PostgreSQL and blobs: one module for each group of tables
   driver/       base.py (the seam), docker.py, folders.py, meter.py
   runner/       runner.py (the queue), turn.py (one turn's steps), installer.py, housekeeping.py
@@ -558,39 +755,49 @@ packages/       shell, and harness-package-builder, which holds contract/ (three
                 SDK), example/ (a whole package), and requests/ (a session of a developer's requests)
 environments/   default.json
 console/        the pages
-tests/          unit, shipped, integration, live
+tests/          unit, shipped, integration, e2e
+Dockerfile  compose.dev.yaml
 ```
 
 `shipped.py` is the only place the server finds `console/`, `packages/`, `environments/`, and the contract.
 
 ## 17. The order to build it
 
-Each step is complete, with its tests, before the next.
+Each step is complete, with its tests, before the next. Each begins with the tests that fail without it.
 
 1. `errors`, `ids`, `settings`; then `domain/`, with `tests/unit`. Start with `line`, `request`, `events`, and
    `outcome`: they are the Responses API.
 2. The contract, in `packages/harness-package-builder/contract/`: `harnessgateway schema` writes the three schemas
    from the pin; then the builder's `AGENTS.md`, its example package, and its requests.
-3. `store/`: the schema file, `db`, then one module per group of tables.
+3. `store/`: the schema file, `db` (with the owners and the refusal of a newer database), then one module per group
+   of tables, each telling of the changes it makes.
 4. `driver/`: `folders` (with its tests), then `docker`.
-5. `runner/turn.py`, with a stand-in driver whose folders are real and whose sandbox prints what a test tells it
-   to; then `installer`, `runner`, `housekeeping`.
-6. `api/`, `platform`, `serve`, `cli`.
+5. `runner/turn.py`, with the stand-in driver of `testing.py`; then `installer`, `runner`, `housekeeping`.
+6. `extensions`, `platform`, `api/`, `serve`, `cli`, `edition`; `tests/integration/edition.py` and a second
+   extension loaded after it.
 7. `proxy/`.
 8. `packages/shell`, then the rest of `packages/harness-package-builder`; `environments/default.json`;
    `tests/shipped`.
 9. `console/`.
-10. `Dockerfile`, `compose.yaml`, `install.sh`; `tests/live` against a running installation.
+10. `Dockerfile`, `compose.yaml`, `compose.dev.yaml`; `tests/e2e` against an installation made from the image as
+    section 14.2 says.
 
 ## 18. Checks
 
 ```sh
 uv run ruff check . && uv run mypy          # lint, and strict types
-uv run pytest tests/unit tests/shipped      # the rules, and what ships held to the contract
-tests/run.sh                                # everything, on a real database (the installation must be up)
-HG_URL=… HG_KEY=hg_… python3 tests/live/turns.py     # a running installation, in real containers
-HG_URL=… HG_KEY=hg_… node tests/live/console.cjs     # every page of the console, in a real browser
+uv run pytest tests/unit tests/shipped      # the rules, and what ships held to the contract: no database, no Docker
+HG_TEST_DATABASE_URL=postgresql://… uv run pytest tests/integration     # on a database the tests may empty
+tests/e2e/run.sh                            # the image built from this tree, installed as section 14.2 says, in a
+                                            # folder and a namespace of its own; then every end-to-end check; then removed
 ```
+
+`tests/e2e/run.sh` runs `install.sh` (the four commands of section 14.2, and that a second `init` makes no second
+key), `turns.py` (real turns in real containers), `console.cjs` (every page of the console in a real browser),
+`update.sh` (the installation stopped and started again on the same data keeps its sessions; and one whose
+database a later version changed refuses to start), and `chain.sh` (the checkout's server with the sample edition
+and a second extension after it, in a real browser: both add their pages and sign-ins, and nothing is replaced).
+Continuous integration runs all four levels on every change, builds the image, and scans it.
 
 What must hold, and which test holds it:
 
@@ -600,26 +807,45 @@ What must hold, and which test holds it:
 | Every printed line becomes valid events and a valid response | `unit/test_events.py` |
 | A handover's words name every stint and each harness's memory | `unit/test_handover.py` |
 | A turn restores, runs, saves, and concludes; fork and rewind return to a response's state | `integration/test_turns.py` |
-| `store: false` leaves no response, no snapshot, and no session | `integration/test_turns.py` |
-| A harness is told where the one before it keeps its memory | `integration/test_turns.py`, `live/turns.py` |
-| The platform names no agent CLI | `unit/test_agnostic.py` |
+| `store: false` leaves no response, no snapshot, no session, and no record of a change | `integration/test_turns.py` |
+| A harness is told where the one before it keeps its memory | `integration/test_turns.py`, `e2e/turns.py` |
+| The platform names no agent CLI, and no edition | `unit/test_agnostic.py` |
 | What ships keeps the contract, and what the harness package builder is told is what the platform has | `shipped/test_packages.py` |
+| Every seam works, alone and with a second extension after it; an extension that fails on an event fails nothing else | `integration/test_extensions.py`, `unit/test_extensions.py`, `e2e/chain.sh` |
+| A change and its record commit together: an extension that raises undoes the change; every change of section 15.3 is told, once, with who made it | `integration/test_changes.py` |
+| Two owners may each have a schema file of one name; a database newer than the code is refused | `integration/test_schema.py` |
+| An extension imports the core only through `harnessgateway.edition` | `unit/test_edition.py` |
+| No secret is in a sandbox, a response, an event, a change, or a log | `integration/test_proxy.py`, `integration/test_changes.py`, `e2e/turns.py` |
+| An installation is made from the image alone, and is updated in place with its data | `e2e/install.sh`, `e2e/update.sh` |
 
-## 19. What 6.0.0 changes from 5.2.1
+## 19. What 1.0.0 changes from 6.0.1
 
-This version was built from `harnessgateway-core` 5.2.1. Everything this page does not list below is kept as it
-was: the API's routes, the definitions, the sandbox, the egress proxy, the Files and Containers APIs, view links,
-usage, keys, the console, the seams, and the deployment.
+What the platform does for a caller is unchanged: the API's routes, the definitions, the package contract (3), the
+sandbox, sessions, handover, the console's pages. What changes is how the platform is distributed, and what an
+edition is given. An installation of 6.x is not upgraded: 1.0.0 is installed fresh, and is the first version that
+is upgraded in place.
 
-| | 5.2.1 | 6.0.0 |
+| | 6.0.1 | 1.0.0 |
 |---|---|---|
-| The contract | 2 | 3 |
-| A handover | `history.json` (the missed turns' input and output) and a one-line `handover.txt`; what a package did with them was its choice | No history. `handover.txt` is the handover history, with where each harness keeps its memory; giving it to the harness is a rule |
-| A harness's memory | Not mentioned | A package keeps it inside the mind, and says where in `$HG_STATE/memory` |
-| A field a harness cannot honour | Left alone, and noted in the turn's log | The turn fails, naming the field |
-| `store: false` | The turn ran in its parent's session, was saved, then deleted | It runs in a session of its own, is never saved, and leaves its parent's session untouched |
-| The contract and its schemas | Given to every sandbox, at `$HG_CONTRACT` | Carried by the builder's package, and by nothing else |
-| The packages that ship | `shell` and `hg-fde`: given once, then the organization's | `shell` and `harness-package-builder`: the platform's, put at the running version's on every start, and not changed in place |
+| Installing | Clone the repository; `install.sh` builds the image on the host | The released image and four commands (section 14.2). `install.sh` is gone; `compose.yaml` is inside the image, names it, and builds nothing; `compose.dev.yaml` is for a checkout |
+| `HG_EXTENSIONS` | Set by the Compose file (to nothing, for the core) | Set by the image. The Compose file does not name it, and gives `serve` everything in `.env` |
+| The command line | `serve`, `proxy`, `init`, `schema` | And `compose`, `secrets` |
+| Schema files | Recorded by file name alone | Recorded with their owner; a database newer than the code is refused (section 13) |
+| Updating | Run the installer again; no promise | In place, with its data, from any 1.x to a later one (section 14.3) |
+| Several extensions | Loaded in order, but one extension's `edition.js` replaced another's, an extension that failed on an event stopped the rest from hearing, and two drivers of one name were taken silently | A chain: section 15.2 says what several mean for every seam |
+| What an extension imports | Any module of the core | `harnessgateway.edition`, and `harnessgateway.testing` for its tests |
+| How an extension gets the platform | As a side effect of `routes` | `start(platform)` |
+| Timed work of an extension | None | `housekeep(platform, elapsed_s)`, in the round the core takes |
+| Changes | Told after the change was committed, from the API's handlers, best effort (`on_event`); a first key, a cancelled or deleted response, and a file were not told | Told in the change's transaction, by the stores, with who made it (`on_change`, section 15.3) |
+| Events | `turn.finished`, without who sent it or the tokens | `turn.finished` with both, and `egress.connection` |
+| What a sandbox may reach | The environment's policy | And what `egress` narrows it to |
+| What a turn used | Added to the organization's day, and gone | Also kept on the turn (`used`), and shown with a session's turns |
+| The proxy's report | Bytes for each organization | Each connection: host, port, refusal, bytes |
+| View links | Signed with `HG_SECRET_KEY` itself | Signed with a key made once and kept sealed, so a key service can stand in for `HG_SECRET_KEY` |
+| The platform object | Its sealer and blob store were not kept on it | `platform.sealer`, `platform.blobs` |
+| `GET /v1/platform` | The core's facts | And the extensions loaded |
+| The console and editions | An edition's files were served in place of the console's | Served under `/console/x/<name>/`; pages and sign-ins are added, nothing is replaced; a credential may arrive as `#credential=` |
+| Tests against a running installation | `tests/live`, on an installation someone made | `tests/e2e`, on one the tests make from the image and remove |
 
 ## 20. Decided, and still open
 
@@ -630,6 +856,11 @@ Decided here, and the founder's to overrule:
 - An unsupported field fails inside the turn, as a failed response, because only a package knows what its harness
   can do and a package declares nothing. OpenAI answers the same mistake with HTTP 400 before any work starts.
 - The handover's words are the platform's, in one place, and are prompt content: they are the founder's to change.
+- An extension that raises in `on_change` refuses the request. The other choice, to make the change and log that
+  its record was lost, is the one an audit log cannot be built on.
+- A turn's end is an event and not a change: nothing may stop a turn from ending.
+- The first API key is printed by a command someone runs, never into a log.
+- 1.0.0 is installed fresh. Nothing is kept in the code for an installation of 6.x.
 
 Open:
 
@@ -637,3 +868,8 @@ Open:
   wants a change to cost nothing keeps the conversation itself and sends it in `input`.
 - A harness's own record is in a format the platform does not control, and the reading harness has to cope with
   it.
+- The queue is oldest first across every organization. With many organizations one can make the others wait; the
+  hosted service limits how many turns each may run at once (its `before_turn`), which bounds it, and a fair queue
+  is the core's to add when that is not enough.
+- A sandbox plan does not say which organization it is for. A driver that keeps organizations apart on its
+  infrastructure (a namespace each) needs it; it is added with the first driver that does.
