@@ -32,7 +32,7 @@ jobs:
           elif [ "$tagged" = "$GITHUB_SHA" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"                 # this commit is the release: run again, nothing to do
           else
-            echo "main moved but the version is still $version, which is released: give the change a new version in pyproject.toml and src/harnessgateway/__init__.py, and an entry in CHANGELOG.md" >&2
+            echo "main moved but the version is still $version, which is released: give the change a new version in pyproject.toml, src/harnessgateway/__init__.py, the Dockerfile and SPEC.md, and an entry in CHANGELOG.md" >&2
             exit 1
           fi
 
