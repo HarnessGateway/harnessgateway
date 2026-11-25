@@ -1,15 +1,10 @@
-"""The Responses API as JSON Schemas, generated from the OpenAI SDK this platform pins: a request, a response, and
-the events of its stream, kept for the package that builds packages. (`lines` is the platform's own rule for one
-printed line, which it checks against the SDK's types themselves: it is described here, and kept nowhere.)
+"""The Responses API as JSON Schemas, generated from the OpenAI SDK this platform pins: a request, the response a
+caller receives, and the events of its stream. They are OpenAI's own, with nothing added and nothing removed.
 
-Three are OpenAI's own, with nothing added and nothing removed: a request, the response a caller receives, and the
-events of its stream. The fourth is the platform's: one line a harness package's `run` may print, which is an
-output item or a stream event of those schemas with what the platform fills in left optional, or the stream's last
-event with only what a harness knows of the response.
-
-The files are kept beside the contract in words, in the package that builds packages (`shipped.py` says where), so
-that a change of the pin shows as a change of them, and the builder that ships with a version has that version's
-schemas. `harnessgateway schema` writes them; a test fails when they are not what the pin gives.
+The files are kept in the package that builds packages (`shipped.py` says where), so that a change of the pin shows
+as a change of them, and the builder that ships with a version has that version's schemas. `harnessgateway schema`
+writes them; a test fails when they are not what the pin gives. The server never reads them: it checks requests and
+printed lines against the SDK's types themselves.
 """
 
 import json
@@ -20,20 +15,8 @@ from typing import Any
 
 from openai.types.responses import Response, ResponseCreateParams, ResponseStreamEvent
 from pydantic import TypeAdapter
-from pydantic.json_schema import models_json_schema
-
-from harnessgateway.domain.events import ENDINGS, EVENTS, FLOWS, INCOMPLETE, ITEMS, NUMBERS, SAID
 
 SDK = f"openai {version('openai')}"            # the pin: what "the Responses API" means to this platform
-# What a harness says of the response in the stream's last event.
-_RESPONSE = {
-    "usage": {"type": "object", "required": ["input_tokens", "output_tokens"],
-              "properties": {"input_tokens": {"type": "integer"}, "output_tokens": {"type": "integer"}}},
-    "incomplete_details": {"type": "object", "required": ["reason"],
-                           "properties": {"reason": {"enum": list(INCOMPLETE)}}},
-    "error": {"type": "object", "required": ["message"],
-              "properties": {"message": {"type": "string"}, "code": {"type": "string"}}},
-}
 
 
 def request() -> dict[str, Any]:
@@ -51,34 +34,7 @@ def stream() -> dict[str, Any]:
     return TypeAdapter(ResponseStreamEvent).json_schema()
 
 
-def _ending(kind: str) -> dict[str, Any]:
-    said, needed = SAID[kind], [name for name in SAID[kind] if name != "usage"]
-    return {"type": "object", "required": ["type", *(["response"] if needed else [])], "properties": {
-        "type": {"const": kind},
-        "response": {"type": "object", "required": needed, "properties": {name: _RESPONSE[name] for name in said}}}}
-
-
-def lines() -> dict[str, Any]:
-    """One line a `run` may print: an output item, a stream event, or the stream's last event. What the platform
-    fills in is not required of a line: an item's id, an event's numbers, and the item a piece of text belongs to."""
-    models = [*ITEMS.values(), *EVENTS.values()]
-    named, made = models_json_schema([(model, "validation") for model in models])
-    definitions = made["$defs"]
-
-    def filled_in(model: type, *fields: str) -> None:
-        definition = definitions[named[(model, "validation")]["$ref"].rpartition("/")[2]]
-        definition["required"] = [name for name in definition.get("required", ()) if name not in fields]
-    for model in ITEMS.values():
-        filled_in(model, "id")
-    for model in EVENTS.values():
-        filled_in(model, *NUMBERS)
-    for flow in FLOWS.values():
-        filled_in(EVENTS[f"{flow.text}.delta"], "item_id", flow.index, *flow.extra)
-    return {"anyOf": [*(named[(model, "validation")] for model in models), *(_ending(kind) for kind in ENDINGS)],
-            "$defs": definitions}
-
-
-# Each file of the contract's schemas: what it is, and what makes it.
+# Each schema file: what it is, and what makes it.
 FILES: dict[str, tuple[str, Callable[[], dict[str, Any]]]] = {
     "request.schema.json": ("A request to POST /v1/responses, as OpenAI's SDK describes it: unchanged.", request),
     "response.schema.json": ("The response a caller receives, as OpenAI's SDK describes it: unchanged.", response),

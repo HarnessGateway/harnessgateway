@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.1
+
+Nothing changes for an installation. What 6.0.0 still said and held of the fourth schema is gone.
+
+- **The schemas module makes three files, and nothing else.** The platform's rule for one printed line was kept as a
+  fourth schema until 6.0.0 stopped writing it; the code that made it, and the words about it, were left behind. A
+  printed line is checked against the SDK's types themselves, as before.
+- **The architecture page says three schemas,** and that what the harness package builder is told names no agent
+  CLI: the test that holds the server and the console to that now reads the builder's own pages too.
+
 ## 6.0.0
 
 The platform, rebuilt to its specification ([SPEC.md](SPEC.md)). The API's routes, the definitions, the sandbox,

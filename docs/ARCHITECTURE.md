@@ -80,13 +80,13 @@ bookkeeping a response needs (the events' numbers, the items' places and ids, th
 itself is kept in), checking each against the OpenAI SDK's model of it.
 
 "The Responses API" means one pinned version of the OpenAI SDK, named in `pyproject.toml` and reported by
-`GET /v1/platform`. `domain/schema.py` writes that version as four JSON Schemas, kept beside the contract in words,
-in the builder's package: a request, a response and the stream's events, which are OpenAI's own and unchanged, and
-the platform's rule for one printed line. A test fails when the kept files are not what the pin gives, so a change
-of the pin shows as a change of them: `harnessgateway schema` writes them. The server never reads those files: it
-checks requests and printed lines against the SDK's types themselves.
+`GET /v1/platform`. `domain/schema.py` writes that version as three JSON Schemas, kept in the builder's package: a
+request, a response, and the stream's events, which are OpenAI's own and unchanged. A test fails when the kept files
+are not what the pin gives, so a change of the pin shows as a change of them: `harnessgateway schema` writes them.
+The server never reads those files: it checks requests and printed lines against the SDK's types themselves.
 
-The platform names no agent CLI: not in its code, not in the console, not in the contract. A test keeps that so.
+The platform names no agent CLI: not in its code, not in the console, not in what the builder is told. A test keeps
+that so.
 What is known about any one CLI is in its package, and how packages are built is what `harness-package-builder`
 is told.
 

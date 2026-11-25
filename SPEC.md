@@ -4,7 +4,7 @@ This page is everything needed to build the platform with no other context. It s
 promises, how each part works, which file holds which part, and in what order to build them. Where this page and
 the code disagree, this page is right and the code is a bug.
 
-It is version **6.0.0**: the open-source, self-hosted community edition. An enterprise edition is built on it
+It is version **6.0.1**: the open-source, self-hosted community edition. An enterprise edition is built on it
 through the seams of section 15, and never by changing it.
 
 ## 1. What it is
