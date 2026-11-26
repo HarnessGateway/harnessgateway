@@ -12,7 +12,7 @@ const URL = (process.env.HG_URL || "http://127.0.0.1:8000").replace(/\/$/, ""), 
 const IMAGE = process.env.HG_IMAGE || "python:3.13-slim", SHOTS = process.env.HG_SHOTS || "";
 const id = Date.now().toString(36), PROVIDER = `console-check-p${id}`, HARNESS = `console-check-h${id}`, ENVIRONMENT = `console-check-e${id}`;
 const LINE = `${ENVIRONMENT}/${HARNESS}/none/none`, WRITTEN = `console-check-w${id}`;        // a package written in a session
-const results = [], made = { sessions: new Set() };
+const results = [], made = { sessions: new Set(), keys: [] };
 
 const api = async (method, path, body) => {
   const response = await fetch(URL + path, { method, body: body && JSON.stringify(body), headers: { Authorization: `Bearer ${KEY}` } });
@@ -484,27 +484,63 @@ const api = async (method, path, body) => {
     expect(await page.evaluate(() => location.hash) === "#/usage/today", "the period is not in the address");
   });
 
-  await check("someone else who signs in in this browser has their own chats, and sees none of these", async () => {
+  // API keys
+  const signInAs = async key => {
+    await page.click("#signout");
+    await page.waitForSelector("#signin:not([hidden])");
+    await page.fill("#key", key);
+    await page.click("#signin button");
+    await page.waitForSelector("#shell:not([hidden])");
+  };
+  const newKey = async (name, more = {}) => {
+    await go("#/keys");
+    await page.click(".top button:has-text('New key')");
+    await page.fill(".dialog [name=name]", name);
+    if (more.ends) await page.fill(".dialog [name=ends]", more.ends);
+    if (more.scopes) await page.fill(".dialog [name=scopes]", more.scopes);
+    await page.click(".dialog button.primary");
+    await page.waitForSelector("#new-key .mono");
+    return page.textContent("#new-key .mono");
+  };
+  await check("an API key is made on its page and shown once, and with it the same person signs in: their chats are there", async () => {
     await go("#/chat");
     await page.waitForSelector(".rows a");
-    const mine = await page.locator(".rows a").count(), other = await api("POST", "/v1/keys", { name: "console-check another person" });
-    made.key = other.id;
-    const signInAs = async key => {
-      await page.click("#signout");
-      await page.waitForSelector("#signin:not([hidden])");
-      await page.fill("#key", key);
-      await page.click("#signin button");
-      await page.waitForSelector("#shell:not([hidden])");
-      await go("#/chat");
-      await page.waitForSelector(".composer");
-    };
-    await signInAs(other.key);
-    expect(mine > 0 && await page.locator(".rows a").count() === 0, "another person is shown the first one's chats");
-    await go("#/sessions");                                           // with keys alone, every key reads every session,
-    await page.waitForSelector(`.listing a:has-text("started by ${WHO}")`);      // and is shown whose each is
-    expect(await page.locator(".listing a:has-text('started by you')").count() === 0, "sessions someone else started are shown as this person's");
+    const mine = await page.locator(".rows a").count(), other = await newKey("console-check another key");
+    expect(other.startsWith("hg_") && other !== KEY, "the new key is not shown");
+    await shot("14-api-keys");
+    const listed = (await api("GET", "/v1/keys")).data.find(key => key.name === "console-check another key");
+    expect(listed && listed.subject === WHO && listed.scopes.length === 0 && !JSON.stringify(listed).includes(other), "the key is not kept as the owner's, or the API returns it");
+    made.keys.push(listed.id);
+    await go("#/usage"); await go("#/keys");
+    await page.waitForSelector(".panel :text('console-check another key')");
+    expect(await page.locator("#new-key").count() === 0, "the key is shown a second time");
+    await signInAs(other);
+    await go("#/chat");
+    await page.waitForSelector(".rows a");
+    expect(mine > 0 && await page.locator(".rows a").count() === mine, "the same person, with another key, is not shown their chats");
+    await go("#/sessions");
+    await page.waitForSelector(".listing a:has-text('started by you')");
     await signInAs(KEY);
-    expect(await page.locator(".rows a").count() === mine && (await stored()).length === mine, "the first person's chats did not come back");
+  });
+  await check("a key limited to some actions lists only the pages it may use, and is refused the rest; revoked, it is refused everything", async () => {
+    const narrow = await newKey("console-check narrow key", { ends: "2099-12-31", scopes: "responses.*\nsessions.read\nfiles.*\ncontainers.read\nenvironments.read\nharnesses.read\nproviders.read" });
+    const kept = (await api("GET", "/v1/keys")).data.find(key => key.name === "console-check narrow key");
+    expect(kept.scopes.length === 7 && kept.expires_at.startsWith("2099-12-31"), "its limits were not kept as typed");
+    made.keys.push(kept.id);
+    await signInAs(narrow);
+    const labels = await page.locator("#nav a").allTextContents();
+    expect(labels.join() === "Chat,Sessions", `the sidebar of a key limited to chatting is ${labels}`);
+    await go("#/providers");                                              // a page that is not theirs: the first that is, in its place
+    await page.waitForSelector(".composer");
+    const asked = await fetch(`${URL}/v1/usage`, { headers: { Authorization: `Bearer ${narrow}` } });
+    expect(asked.status === 403 && (await asked.json()).error.message.includes("which does not allow usage.read"), "a limited key did what it is limited away from");
+    await signInAs(KEY);
+    expect((await page.locator("#nav a").allTextContents()).join() === "Chat,Providers,Environments,Harnesses,Sessions,Usage,API keys", "the owner's sidebar is not every page");
+    await go("#/keys");
+    await page.click(".panel div:has(> div :text('console-check narrow key')) button:has-text('Revoke')");
+    await page.click(".dialog button.primary");
+    await page.waitForSelector(".panel :text('console-check narrow key')", { state: "detached" });
+    expect((await fetch(`${URL}/v1/permissions`, { headers: { Authorization: `Bearer ${narrow}` } })).status === 401, "a revoked key still signs in");
   });
 
   // tidying up, through the console
@@ -549,7 +585,7 @@ const api = async (method, path, body) => {
   await browser.close();
 })().catch(error => { console.log(`  FAIL  ${error.message}`); results.push([false, "the run"]); }).finally(async () => {
   for (const session of made.sessions) await api("DELETE", `/v1/sessions/${session}`).catch(() => {});
-  if (made.key) await api("DELETE", `/v1/keys/${made.key}`).catch(() => {});
+  for (const key of made.keys) await api("DELETE", `/v1/keys/${key}`).catch(() => {});
   for (const path of [`environments/${ENVIRONMENT}`, `harnesses/${HARNESS}`, `harnesses/${WRITTEN}`, `providers/${PROVIDER}`]) await api("DELETE", `/v1/${path}`).catch(() => {});
   const failed = results.filter(([ok]) => !ok).length;
   console.log(`\n${results.length - failed} of ${results.length} checks passed`);
