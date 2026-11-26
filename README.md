@@ -130,7 +130,8 @@ is the OpenAI error envelope, and names the field that was wrong.
 
 Chat, the three definitions, sessions and usage, at `/console` on the API's own address. It calls only the routes
 above, with the key you sign in with, so anything it does a program can do the same way. `HG_CONSOLE=off` serves
-the API without it.
+the API without it. [docs/walkthrough.mp4](docs/walkthrough.mp4) is a captioned walkthrough of it, recorded on
+1.0.0.
 
 The chat in it is an application built on the Responses API alone, and shows what one can be: replies streamed as
 markdown with the agent's thinking and steps, files given with a message, a message that interrupts a running turn
