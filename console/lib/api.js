@@ -6,6 +6,7 @@ export const session = {
   get key() { return sessionStorage.getItem(KEY); },
   set key(value) { value ? sessionStorage.setItem(KEY, value) : sessionStorage.removeItem(KEY); },
   who: "",          // who is signed in, as the platform names them in its answers: what in this browser is theirs is kept under it
+  allows: new Set(),      // the actions they may do, as the platform says: what a page asks before it reads what may not be theirs
 };
 
 /** One call. `body` is sent as JSON, or as it is when it is a Blob or a form. A refusal is thrown as an Error whose

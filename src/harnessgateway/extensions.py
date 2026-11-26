@@ -67,7 +67,8 @@ class Extension:
 
     async def authorize(self, who: Principal, action: str) -> None:
         """Called before a route runs, with what it does (`responses.write`, `providers.read`, …). Raise a
-        `Forbidden` to refuse it. The core allows whoever is authenticated to do everything."""
+        `Forbidden` to refuse it. The core allows whoever is authenticated to do everything their key is not
+        limited away from: a key's own scopes are checked before any extension is asked."""
 
     async def before_turn(self, who: Principal, request: dict[str, Any]) -> None:
         """Called before a request becomes a turn. Raise a `Refused` to refuse it, with words for the caller."""

@@ -1,5 +1,5 @@
-"""Changes: every one is told to the extensions inside the transaction that makes it, once, with who made it; and an
-extension that cannot keep its record undoes the change."""
+"""Changes: every one is told to the extensions inside the transaction that makes it, once, with who made it; an
+extension knows which key their request came with; and one that cannot keep its record undoes the change."""
 
 import os
 from pathlib import Path
@@ -10,15 +10,13 @@ import pytest
 from harnessgateway.api.app import public_app
 from harnessgateway.api.responses import accept
 from harnessgateway.domain.change import HOST, PLATFORM
-from harnessgateway.domain.principal import Principal
+from harnessgateway.domain.principal import OWNER, Principal
 from harnessgateway.errors import NotFound
 from harnessgateway.platform import Platform
 from harnessgateway.serve import init
 from harnessgateway.store.db import Database
 from harnessgateway.testing import FakeDriver, package, platform_on, settings_for
-from tests.integration.conftest import LINE, ORG
-
-SAMPLE = "tests.integration.edition:Edition"
+from tests.integration.conftest import LINE, ORG, SAMPLE
 
 
 @pytest.fixture
@@ -36,7 +34,7 @@ async def told(platform: Platform) -> list[tuple[str, str, str]]:
 async def test_every_change_made_through_the_api_is_told_once_with_who_made_it_and_never_a_secret(recorded: Platform):
     platform = recorded
     _, key = await platform.keys.create(ORG, "the tests' key", by=HOST)
-    used = (await platform.keys.all(ORG))[0].id
+    first, used = (await platform.keys.all(ORG))[0].id, OWNER          # the key, and who it acts as
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg", timeout=30,
                                  headers={"Authorization": f"Bearer {key}"}) as http:
         assert (await http.put("/v1/harnesses/echo", content=package())).status_code == 200
@@ -58,13 +56,20 @@ async def test_every_change_made_through_the_api_is_told_once_with_who_made_it_a
         assert (await http.delete("/v1/providers/acme")).status_code == 404
         assert (await http.get("/v1/providers")).status_code == 200                                   # read: nothing changed
     assert await told(platform) == [
-        ("keys.created", used, HOST), ("harnesses.applied", "echo", used), ("providers.applied", "acme", used),
+        ("keys.created", first, HOST), ("harnesses.applied", "echo", used), ("providers.applied", "acme", used),
         ("environments.applied", "default", used), ("keys.created", made["id"], used), ("files.created", uploaded["id"], used),
         ("responses.created", queued["id"], used), ("responses.cancelled", queued["id"], used),
         ("responses.deleted", queued["id"], used), ("sessions.deleted", session, used), ("files.deleted", uploaded["id"], used),
         ("keys.revoked", made["id"], used), ("providers.deleted", "acme", used)]
     everything = str(await platform.db.all(None, "SELECT * FROM sample_audit"))
     assert not any(secret in everything for secret in ("sk-real", "env-secret", key, made["key"]))
+    # An extension knows which key the caller of the request came with: every change made through the API with it.
+    rows = await platform.db.all(None, "SELECT name, key, about FROM sample_audit ORDER BY id")
+    assert [row["key"] for row in rows] == [None, *[first] * 12]                       # the first key was made on the host
+    created = next(row["about"] for row in rows if row["name"] == "responses.created")
+    assert created == {"session": session, "model": LINE, "key": first}                 # and a turn says which key sent it
+    await platform.keys.create(ORG, "made outside any request", by=used)                # no request: no key
+    assert (await platform.db.all(None, "SELECT key FROM sample_audit ORDER BY id DESC LIMIT 1")) == [{"key": None}]
 
 
 async def test_an_extension_that_cannot_keep_its_record_undoes_the_change_and_refuses_the_request(recorded: Platform):

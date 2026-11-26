@@ -74,7 +74,9 @@ def routes(api: Api) -> list[Route]:
         return made.shown()
 
     async def package(request: Request, who: Principal) -> Any:
-        """A harness's package, as the archive PUT takes: so a harness can be kept, moved and changed."""
+        """A harness's package, as the archive PUT takes: so a harness can be kept, moved and changed. It is asked
+        for as changing harnesses is: whoever only names a harness in a request reads that it is there, and takes
+        nothing of how it is built."""
         found = await resources.get(who.org_id, "harnesses", request.path_params["name"])
         filename = f"{found.name}.tar.gz"
         return Response(await resources.package(who.org_id, found.spec["digest"]), media_type="application/gzip",
@@ -87,7 +89,7 @@ def routes(api: Api) -> list[Route]:
         return {"name": name, "deleted": True}
 
     return [
-        api.route("/v1/harnesses/{name}/package", "GET", "harnesses.read", package),
+        api.route("/v1/harnesses/{name}/package", "GET", "harnesses.write", package),
         *(route for kind in KINDS for route in (              # the same four verbs for each of the three kinds
             api.route(f"/v1/{kind}", "GET", f"{kind}.read", partial(listed, kind)),
             api.route(f"/v1/{kind}/{{name}}", "GET", f"{kind}.read", partial(one, kind)),

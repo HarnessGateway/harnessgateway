@@ -4,5 +4,7 @@ CREATE TABLE sample_audit (
     org_id  text NOT NULL,
     name    text NOT NULL,
     target  text NOT NULL,
-    by      text NOT NULL
+    by      text NOT NULL,
+    about   jsonb NOT NULL,
+    key     text                -- the API key whoever made the change came with, when they came with one
 );

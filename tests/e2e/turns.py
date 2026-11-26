@@ -21,9 +21,9 @@ SHELL = pathlib.Path(__file__).parent.parent.parent / "packages" / "shell"
 results, sessions_made = [], set()
 
 
-def call(method, path, body=None, raw=False):
+def call(method, path, body=None, raw=False, key=None):
     data = body if isinstance(body, bytes) else json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(URL + path, data=data, method=method, headers={"Authorization": f"Bearer {KEY}"})
+    request = urllib.request.Request(URL + path, data=data, method=method, headers={"Authorization": f"Bearer {key or KEY}"})
     try:
         with urllib.request.urlopen(request, timeout=900) as answer:
             status, content = answer.status, answer.read()
@@ -198,7 +198,20 @@ usage = call("GET", "/v1/usage")[1]
 asked = urllib.request.Request(URL + f"/v1/sessions/{session}", headers={"Authorization": f"Bearer {KEY}"})
 with urllib.request.urlopen(asked, timeout=60) as answer:
     caller, owned = answer.headers.get("hg-subject"), json.loads(answer.read())
-check("a session names who started it, and every answer names its caller", caller and caller.startswith("key_") and owned["owner"] == caller, (caller, owned.get("owner")))
+check("a session names who started it, and every answer names its caller: with the core alone, the owner", caller == "owner" and owned["owner"] == caller, (caller, owned.get("owner")))
+status, narrow = call("POST", "/v1/keys", {"name": "live-check narrow", "scopes": ["responses.*"], "expires_at": "2099-01-01T00:00:00Z"})
+limited = narrow["key"]
+ran = call("POST", "/v1/responses", {"model": "live/shell/none/none", "input": "echo as-a-limited-key"}, key=limited)[1]
+sessions_made.add(ran.get("metadata", {}).get("hg_session"))
+refused, told = call("GET", "/v1/providers", key=limited), call("GET", "/v1/permissions", key=limited)[1]
+check("a key says who made it and how it ends, and a turn says which key sent it",
+      (narrow.get("created_by"), narrow.get("hint")) == ("owner", limited[-4:]) and turns_of(ran)[0]["key"] == narrow["id"]
+      and limited not in json.dumps(call("GET", "/v1/keys")[1]), (narrow.get("created_by"), narrow.get("hint")))
+check("a key acts as the owner within its scopes: it runs a turn, is refused what it is limited away from, is told what it may do, and makes no key",
+      status == 200 and "as-a-limited-key" in said(ran) and refused[0] == 403 and "which does not allow providers.read" in refused[1]["error"]["message"]
+      and told["allows"] == ["me.read", "responses.read", "responses.write"] and (told["subject"], told["key"]) == ("owner", narrow["id"])
+      and call("POST", "/v1/keys", {"name": "live-check minted"}, key=limited)[0] == 403, (status, refused, told))
+check("a revoked key is refused", call("DELETE", f"/v1/keys/{narrow['id']}")[1].get("revoked") is True and call("GET", "/v1/permissions", key=limited)[0] == 401)
 check("usage is the organization's processor time, memory, network and storage", usage["cpu_seconds"] > 0 and usage["memory_byte_seconds"] > 0
       and usage["network_out_bytes"] > 0 and usage["network_in_bytes"] > 0 and usage["storage_bytes"] > 0, usage)
 sessions = call("GET", "/v1/sessions?limit=5")[1]

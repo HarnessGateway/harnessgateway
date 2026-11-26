@@ -32,8 +32,9 @@ async def test_an_edition_replaces_parts_is_asked_and_told_and_adds_its_own_with
     edition = platform.extensions._all[0]
     assert isinstance(edition, Edition) and isinstance(platform.driver, FakeDriver)      # its driver runs the sandboxes
     assert edition.platform is platform                                                  # it was handed the platform
-    assert await platform.db.all(None, "SELECT owner, name FROM migrations ORDER BY owner") == [
-        {"owner": "core", "name": "0001_core.sql"}, {"owner": "sample", "name": "0001_edition.sql"}]
+    assert await platform.db.all(None, "SELECT owner, name FROM migrations ORDER BY owner, name") == [
+        {"owner": "core", "name": "0001_core.sql"}, {"owner": "core", "name": "0002_keys.sql"},
+        {"owner": "core", "name": "0003_files.sql"}, {"owner": "sample", "name": "0001_edition.sql"}]
     running = asyncio.create_task(Runner(platform, heartbeat_s=0.2).run())
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg",
@@ -50,6 +51,8 @@ async def test_an_edition_replaces_parts_is_asked_and_told_and_adds_its_own_with
             refused = await http.put("/v1/environments/default", headers=reader, json={"image": "node:22"})
             assert refused.status_code == 403 and "may read" in refused.json()["error"]["message"]    # its say on who may
             assert (await http.get("/v1/environments", headers=reader)).status_code == 200
+            assert (await http.get("/v1/harnesses/echo", headers=reader)).status_code == 200      # who reads harnesses reads which there are,
+            assert (await http.get("/v1/harnesses/echo/package", headers=reader)).status_code == 403     # and takes no package: that is changing them
             await http.put("/v1/environments/default", headers=admin, json={"image": "node:22", "harnesses": ["echo"]})
             over = await http.post("/v1/responses", headers={"X-Sample-User": f"{ORG}/over-quota"}, json={"model": LINE, "input": "x"})
             assert over.status_code == 400 and "quota" in over.json()["error"]["message"]    # its say before a turn
@@ -62,7 +65,7 @@ async def test_an_edition_replaces_parts_is_asked_and_told_and_adds_its_own_with
             assert await platform.grants.policy(done["id"], token) is None               # (the turn is over: its grant is gone)
             name, finished = edition.heard[-1]                                           # it hears what happened by itself
             assert name == "turn.finished" and finished["target"] == done["id"] and finished["by"] == "admin"
-            assert finished["status"] == "completed" and finished["usage"]["total_tokens"] == 5
+            assert finished["status"] == "completed" and finished["usage"]["total_tokens"] == 5 and finished["key"] is None      # signed in: no key
             assert finished["cpus"] == 2 and finished["memory_mb"] == 4096 and finished["seconds"] >= 0 and "cpu_seconds" in finished
             audit = (await http.get("/v1/audit", headers=reader)).json()["data"]         # its own route, on its own table:
             assert [(row["name"], row["target"], row["by"]) for row in audit] == [       # every change, with who made it
@@ -83,8 +86,9 @@ async def test_a_second_extension_adds_its_own_beside_the_firsts_and_one_that_fa
     platform = await loaded(db, tmp_path, SAMPLE, SECOND, HG_BLOBS="memory://anywhere")
     first, second = platform.extensions._all
     assert isinstance(first, Edition) and isinstance(second, Second) and second.started_after == ["sample", "second"]
-    assert await platform.db.all(None, "SELECT owner, name FROM migrations ORDER BY owner") == [   # two files of one name
-        {"owner": "core", "name": "0001_core.sql"}, {"owner": "sample", "name": "0001_edition.sql"},
+    assert await platform.db.all(None, "SELECT owner, name FROM migrations ORDER BY owner, name") == [   # two files of one name
+        {"owner": "core", "name": "0001_core.sql"}, {"owner": "core", "name": "0002_keys.sql"},
+        {"owner": "core", "name": "0003_files.sql"}, {"owner": "sample", "name": "0001_edition.sql"},
         {"owner": "second", "name": "0001_edition.sql"}]
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg", timeout=30) as http:
         admin = {"X-Sample-User": f"{ORG}/admin"}

@@ -28,7 +28,7 @@ import sys
 import uuid
 
 HARNESS, TURN = os.environ["HG_HARNESS"], os.environ["HG_TURN"]
-CONTRACT = os.path.join(HARNESS, "contract")       # PACKAGES.md, and the Responses API as the platform's schemas
+CONTRACT = os.path.join(HARNESS, "contract")       # the Responses API, as the platform's three schemas
 CLAUDE = os.path.join(HARNESS, "tools", "node_modules", ".bin", "claude")
 STATE = os.environ["HG_STATE"]
 SESSION = os.path.join(STATE, "session")           # Claude Code's own id for this session, kept with it

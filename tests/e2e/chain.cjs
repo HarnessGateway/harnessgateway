@@ -34,7 +34,7 @@ const results = [];
   });
   await check("both extensions' pages are in the sidebar, in the order the extensions were named, after the console's own", async () => {
     const labels = await page.locator("#nav a").allTextContents();
-    expect(labels.join() === "Chat,Providers,Environments,Harnesses,Sessions,Usage,Audit,Notes", `the sidebar is ${labels}`);
+    expect(labels.join() === "Chat,Providers,Environments,Harnesses,Sessions,Usage,Audit,Notes,API keys", `the sidebar is ${labels}`);
   });
   await check("a page whose name is taken is refused, on the page and in the browser's console, and takes nothing's place", async () => {
     await page.reload();

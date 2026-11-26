@@ -18,6 +18,7 @@ const ICONS = {
   branch: "M6 7.5v9M6 3a2.2 2.2 0 1 0 0 4.4A2.2 2.2 0 0 0 6 3zM6 16.6A2.2 2.2 0 1 0 6 21a2.2 2.2 0 0 0 0-4.4zM18 7a2.2 2.2 0 1 0 0 4.4A2.2 2.2 0 0 0 18 7zM18 11.4a6 6 0 0 1-6 6H8.2",
   play: "M7 5v14l12-7z", source: "M8 8l-4 4 4 4M16 8l4 4-4 4", eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
   rename: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z",
+  keys: "M4 10a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 10h9M18 10v3M21 10v2",
 };
 
 /** h("div", {class: "card", onclick: fn}, child, "text", [more]). A null, undefined or false child adds nothing. */

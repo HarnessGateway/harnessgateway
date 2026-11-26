@@ -23,7 +23,7 @@ RUN apk add --no-cache python-3.13 uv docker-cli ca-certificates-bundle \
 WORKDIR /
 # What this image is: its own name and tag, which `harnessgateway compose` writes into the Compose file it prints,
 # and the extensions it carries. The core carries none; an edition's image sets both to its own.
-ARG HG_IMAGE=ghcr.io/harnessgateway/harnessgateway:1.1.0
+ARG HG_IMAGE=ghcr.io/harnessgateway/harnessgateway:1.2.0
 ENV PATH=/opt/harnessgateway/bin:/usr/bin:/bin PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
     HG_IMAGE=${HG_IMAGE} HG_EXTENSIONS=
 LABEL org.opencontainers.image.title="harnessgateway" \

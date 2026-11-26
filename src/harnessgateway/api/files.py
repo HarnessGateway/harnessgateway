@@ -1,4 +1,5 @@
-"""The OpenAI Files API: an uploaded file is what a request's input may name."""
+"""The OpenAI Files API: an uploaded file is what a request's input may name. A file is its uploader's; anyone
+else reaches it only as `theirs` allows."""
 
 from collections.abc import AsyncIterator
 from typing import Any
@@ -8,16 +9,24 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from harnessgateway.api.http import Api, limit_of, listing
+from harnessgateway.api.http import FILES_CHANGE_ALL, FILES_READ_ALL, Api, limit_of, listing, may, theirs
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Invalid
+from harnessgateway.store.files import File
 
 PURPOSES = ("assistants", "batch", "fine-tune", "vision", "user_data", "evals")      # the ones that API names
 _PIECE = 1024 * 1024
 
 
 def routes(api: Api) -> list[Route]:
-    files = api.platform.files
+    platform = api.platform
+    files = platform.files
+
+    async def reached(request: Request, who: Principal, *, to_change: bool = False) -> File:
+        """The file a request names, once it is shown to be the caller's to reach."""
+        file = await files.get(who.org_id, request.path_params["id"])
+        await theirs(platform, who, file.owner, FILES_CHANGE_ALL if to_change else FILES_READ_ALL)
+        return file
 
     async def upload(request: Request, who: Principal) -> Any:
         form = await request.form()
@@ -35,21 +44,24 @@ def routes(api: Api) -> list[Route]:
         return kept.shown()
 
     async def page(request: Request, who: Principal) -> Any:
+        """The caller's own files; everyone's, for a caller who may read those."""
         limit = limit_of(request)
-        found = await files.page(who.org_id, after=request.query_params.get("after"), limit=limit + 1)
+        mine = None if await may(platform, who, FILES_READ_ALL) else who.subject
+        found = await files.page(who.org_id, owner=mine, after=request.query_params.get("after"), limit=limit + 1)
         return listing([file.shown() for file in found[:limit]], has_more=len(found) > limit)
 
     async def one(request: Request, who: Principal) -> Any:
-        return (await files.get(who.org_id, request.path_params["id"])).shown()
+        return (await reached(request, who)).shown()
 
     async def content(request: Request, who: Principal) -> Any:
-        file = await files.get(who.org_id, request.path_params["id"])
+        file = await reached(request, who)
         return StreamingResponse(files.content(who.org_id, file.id), media_type="application/octet-stream",
                                  headers={"Content-Length": str(file.bytes)})
 
     async def delete(request: Request, who: Principal) -> Any:
-        await files.delete(who.org_id, request.path_params["id"], by=who.subject)
-        return {"id": request.path_params["id"], "object": "file", "deleted": True}
+        file = await reached(request, who, to_change=True)
+        await files.delete(who.org_id, file.id, by=who.subject)
+        return {"id": file.id, "object": "file", "deleted": True}
 
     return [
         api.route("/v1/files", "POST", "files.write", upload),

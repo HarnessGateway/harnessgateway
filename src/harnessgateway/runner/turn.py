@@ -134,7 +134,7 @@ class TurnRunner:
             return await platform.turns.get(org_id, turn.id)
         await platform.announce("turn.finished", org_id, target=final.id, session_id=final.session_id,
                                 model=str(final.line), status=final.status, reason=final.reason, by=final.principal,
-                                usage=final.usage, **(used or {}))
+                                key=final.key_id, usage=final.usage, **(used or {}))
         return final
 
     async def _prepare(self, turn: Turn) -> _Ready:

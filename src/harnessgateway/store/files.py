@@ -1,4 +1,4 @@
-"""Uploaded files: what a request's input may name, and a turn then finds in its sandbox."""
+"""Uploaded files: what a request's input may name, and a turn then finds in its sandbox. A file is its uploader's."""
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -12,12 +12,13 @@ from harnessgateway.store.blobs import BlobStore
 from harnessgateway.store.db import Database, Tell
 
 FILE_MAX = 512 * 1024 * 1024
-_COLUMNS = "id, filename, purpose, bytes, created_at"
+_COLUMNS = "id, owner, filename, purpose, bytes, created_at"
 
 
 @dataclass(frozen=True)
 class File:
     id: str
+    owner: str                                 # who uploaded it
     filename: str
     purpose: str
     bytes: int
@@ -41,7 +42,8 @@ class Files:
 
     async def create(self, org_id: str, *, filename: str, purpose: str, parts: AsyncIterator[bytes],
                      by: str) -> File:
-        """Keep an upload. Its name must be a plain file name: a turn finds it in its sandbox under that name."""
+        """Keep an upload, as its uploader's (`by`). Its name must be a plain file name: a turn finds it in its
+        sandbox under that name."""
         if filename in ("", ".", "..") or "/" in filename or "\x00" in filename or len(filename) > 255:
             raise Invalid(f"{filename!r} is not a plain file name", param="file")
         file_id = new_id("file")
@@ -58,8 +60,8 @@ class Files:
         try:
             async with self._db.tx(org_id) as conn:
                 row = await (await conn.execute(
-                    f"INSERT INTO files (id, org_id, filename, purpose, bytes) VALUES (%s, %s, %s, %s, %s) "
-                    f"RETURNING {_COLUMNS}", [file_id, org_id, filename, purpose, size])).fetchone()
+                    f"INSERT INTO files (id, org_id, owner, filename, purpose, bytes) VALUES (%s, %s, %s, %s, %s, %s) "
+                    f"RETURNING {_COLUMNS}", [file_id, org_id, by, filename, purpose, size])).fetchone()
                 assert row is not None
                 await self._tell(conn, Change("files.created", org_id, by, file_id,
                                               {"filename": filename, "bytes": size}))
@@ -75,11 +77,12 @@ class Files:
             raise NotFound(f"there is no file {file_id}")
         return File(**row)
 
-    async def page(self, org_id: str, *, after: str | None, limit: int) -> list[File]:
-        """Files, newest first; those after `after` in that order when it is given."""
+    async def page(self, org_id: str, *, owner: str | None, after: str | None, limit: int) -> list[File]:
+        """Files, newest first; those after `after` in that order when it is given. With `owner`, that person's
+        alone."""
         rows = await self._db.all(org_id, f"SELECT {_COLUMNS} FROM files WHERE org_id = %s AND "
-                                          "(%s::text IS NULL OR id < %s) ORDER BY id DESC LIMIT %s",
-                                  [org_id, after, after, limit])
+                                          "(%s::text IS NULL OR owner = %s) AND (%s::text IS NULL OR id < %s) "
+                                          "ORDER BY id DESC LIMIT %s", [org_id, owner, owner, after, after, limit])
         return [File(**row) for row in rows]
 
     def content(self, org_id: str, file_id: str) -> AsyncIterator[bytes]:
