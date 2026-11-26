@@ -29,7 +29,8 @@ jobs:
       - run: uv sync --locked --extra dev
       - run: uv run ruff check .
       - run: uv run mypy
-      - run: find console -name "*.js" -exec node --check {} +    # it has no build step to catch one
+      - name: Every console file parses as the module it is (it has no build step to catch one)
+        run: find console -name "*.js" | while read -r file; do node --input-type=module --check < "$file" || { echo "$file"; exit 1; }; done
       - run: uv run pytest tests/unit tests/shipped tests/integration
         env:
           HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
