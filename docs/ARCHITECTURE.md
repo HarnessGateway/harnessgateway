@@ -149,7 +149,8 @@ the schema up to date before it serves anything.
 
 Every row carries `org_id`, every blob key begins with it, and every transaction on an organization's rows sets
 `hg.org_id`. The core creates one organization and has no way to make another. It has one person, too: its owner,
-whom every API key acts as. A key may be limited to some actions and given a time it ends, and that is checked
+whom every API key acts as. What a caller makes is theirs (a session, an uploaded file, a key), and each key says
+who made it and how it ends. A key may be limited to some actions and given a time it ends, and that is checked
 before an edition is asked anything: an edition adds who people are and what their roles allow, in the same
 patterns. An edition with many adds how they
 are made, how a caller is matched to one, and row-level policies on that setting; the core's queries do not change.

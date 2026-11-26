@@ -5,8 +5,9 @@ two commands of an update is a new major version, and says what.
 
 ## 1.2.0
 
-The core is for one person, and a key acts as them. Nothing is asked of whoever runs the platform: the two
-commands of an update, which add three columns to `keys`.
+The core is for one person, and a key acts as them. What a caller makes is theirs, and every key is accountable.
+Nothing is asked of whoever runs the platform: the two commands of an update, which add columns to `keys`,
+`turns`, and `files`.
 
 - **Every key is the owner's.** A key acts as whoever made it, and the core has one person, its owner. So the
   chats and the sessions someone has are theirs whichever key they sign in with: `hg-subject`, and a session's
@@ -15,12 +16,25 @@ commands of an update, which add three columns to `keys`.
 - **A key may be limited.** `POST /v1/keys` takes `expires_at`, a time from which the key is refused, and
   `scopes`, patterns of the actions it is limited to (`responses.*`, `*.read`). A key that is limited makes no key.
   A field of that request the platform does not know is now refused.
+- **A key is accountable.** A key says who made it (`created_by`) and how the key itself ends (`hint`: its last
+  four characters), so one that turns up in a log is told and revoked. A turn says which key sent it (`key`, with
+  a session's turns).
+- **An uploaded file is its uploader's**, as a session is whoever started it's. With the core alone every file is
+  still the owner's; an edition with people now keeps a file private to whoever uploaded it. A file uploaded
+  before this is the owner's.
+- **A harness's package is taken by whoever may change harnesses**: `GET /v1/harnesses/{name}/package` asks for
+  `harnesses.write`, where it asked for `harnesses.read`. With the core alone nothing changes.
 - **`GET /v1/permissions`** answers what the caller may do, of every action this installation's routes name.
-- **The console has an API keys page**, and its sidebar lists the pages the person signed in may use.
+- **The console has an API keys page**, and its sidebar lists the pages the person signed in may use. Wherever it
+  shows who (a session's owner, whose a key is, who made it), it shows a name, not an id.
 - **For an edition:** a `Principal` carries the key a caller came with and its scopes; another's keys are asked
   about as `keys.read_all` and `keys.write_all`; `Keys.create` takes who the key acts as, and `Keys.revoke_of`
   revokes everything that acts as someone; the rule of a pattern (`permission`) and `permit`, `may`, `make_key`,
-  and `OWNER` are in `harnessgateway.edition`.
+  and `OWNER` are in `harnessgateway.edition`. Another's uploaded files are asked about as `files.read_all` and
+  `files.write_all`: a role's `files.*` now allows them, so a role that is to keep files private names `files.read`
+  and `files.write`. `calling()` answers which request, and so which key, a change is being made in.
+  `responses.created` and `turn.finished` carry the key. An extension's `edition.js` may export `names`: who is
+  here, by id, for the console to show.
 
 ## 1.1.0
 

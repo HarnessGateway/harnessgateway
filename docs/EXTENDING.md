@@ -43,9 +43,11 @@ Extensions are a chain, so every seam says what several of them together mean.
 | `routes(api)` | None | All added after the core's. A path and method that already has a route is refused |
 | `console()` | None | Each extension's folder, under `/console/x/<name>/` |
 
-A session is its owner's (whoever started it). When someone else reaches one, `authorize` is asked a second
-question, `sessions.read_all` or `sessions.write_all`; for another's API key, `keys.read_all` or `keys.write_all`.
-The core alone allows them, and has one person; an extension with people says who may.
+What a caller makes is theirs: a session they started, an API key that acts as them, a file they uploaded. When
+someone else reaches one, `authorize` is asked a second question: `sessions.read_all` or `sessions.write_all`;
+for another's API key, `keys.read_all` or `keys.write_all`; for another's uploaded file, `files.read_all` or
+`files.write_all`. The core alone allows them, and has one person; an extension with people says who may. A pattern
+`files.*` allows them: a role that keeps files private names `files.read` and `files.write`.
 
 `who` is a `Principal`: its organization, its `subject` (who is calling), and, when they came with an API key,
 that `key` and its `scopes`. A key acts as whoever made it: `owner` in the core, and whatever subject an extension's
@@ -68,15 +70,20 @@ built on.
 |---|---|---|
 | `providers.applied`, `environments.applied`, `harnesses.applied`, and `.deleted` of each | The definition's name | |
 | `keys.created`, `keys.revoked` | The key's id | When created: its `name`, `subject`, `scopes`, and `expires_at` |
-| `responses.created`, `responses.cancelled`, `responses.deleted` | The response's id | `session` and `model`, when created |
+| `responses.created`, `responses.cancelled`, `responses.deleted` | The response's id | `session`, `model`, and `key` (the API key it was sent with, or `null`), when created |
 | `sessions.deleted` | The session's id | |
 | `files.created`, `files.deleted` | The file's id | `filename` and `bytes`, when created |
 
 `by` is the caller's subject, `host` for what `harnessgateway init` does, or `platform` for what the platform does
 by itself when it starts. A turn that was not to be stored is no change of anyone's.
 
+A change says who made it. An extension that also records which API key they came with asks `calling()` while it
+is told: the `Principal` of the request being answered, with its `key`, or nothing where no authenticated request
+is being answered. It is set for as long as a request is answered, and no longer.
+
 An **event** is what happened by itself. It is told after it happened, cannot be refused, and may be missed:
-`turn.finished` (who sent it, how it ended, the tokens its harness reported, and what its sandbox used) and
+`turn.finished` (who sent it, the key they sent it with, how it ended, the tokens its harness reported, and what
+its sandbox used) and
 `egress.connection` (each connection a sandbox made or was refused: host, port, why, and the bytes).
 
 ## An example
@@ -85,7 +92,7 @@ An **event** is what happened by itself. It is told after it happened, cannot be
 one loaded after it. `tests/integration/test_extensions.py` loads both the way an installation does. In short:
 
 ```python
-from harnessgateway.edition import Change, Connection, Extension, Forbidden, Platform, Principal
+from harnessgateway.edition import Change, Connection, Extension, Forbidden, Platform, Principal, calling
 
 
 class Enterprise(Extension):
@@ -103,8 +110,9 @@ class Enterprise(Extension):
             raise Forbidden(f"{who.subject} may not {action}")
 
     async def on_change(self, conn: Connection, change: Change) -> None:
-        await conn.execute("INSERT INTO enterprise_audit (org_id, name, by, target) VALUES (%s, %s, %s, %s)",
-                           [change.org_id, change.name, change.by, change.target])
+        caller = calling()                                 # the request this change is made in, when there is one
+        await conn.execute("INSERT INTO enterprise_audit (org_id, name, by, target, key) VALUES (%s, %s, %s, %s, %s)",
+                           [change.org_id, change.name, change.by, change.target, caller.key if caller else None])
 
     def migrations(self):
         return Path(__file__).parent / "schema"
@@ -125,6 +133,7 @@ async function audit(main) {                           // draws the page at #/au
 }
 export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", action: "audit.read", page: audit }];
 export const signIns = [{ label: "Sign in with single sign-on", href: "/v1/sso/start" }];
+export const names = async () => Object.fromEntries((await get("/v1/users")).data.map(user => [user.id, user.email]));
 ```
 
 A page is listed in the sidebar under its `group` and drawn at `#/<id>`, for whoever may do its `action`: the
@@ -132,8 +141,11 @@ console asks `GET /v1/permissions` once, at start, and a page that names no acti
 that is taken is refused. A
 sign-in is a link on the sign-in form: it leads away, and comes back to `/console/#credential=<token>`, which the
 console takes, removes from the address, and sends as `Authorization: Bearer …` from then on. A module may also
-export `signOut`, a function the console calls before it forgets the credential. No file of an extension is served
-in place of one of the console's.
+export `signOut`, a function the console calls before it forgets the credential; and `names`, a function that
+answers who is here, by id: the console shows a name wherever it shows who (a session's owner, whose a key is, who
+made it), and an id where nobody names one. `session.allows` (`lib/api.js`) holds the actions the person signed in
+may do, so `names` reads only what is theirs to read. No file of an extension is served in place of one of the
+console's.
 
 ## Many organizations
 
