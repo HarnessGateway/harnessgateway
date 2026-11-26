@@ -1,5 +1,5 @@
 """Whose a session is: whoever started it. Its owner reaches it; anyone else only when reaching everyone's is
-allowed, which the core alone allows every key, and an edition with roles decides."""
+allowed. The core alone has one person, its owner, and an edition with people decides who else may."""
 
 import os
 from pathlib import Path
@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 
 from harnessgateway.api.app import public_app
+from harnessgateway.domain.principal import OWNER
 from harnessgateway.platform import Platform
 from harnessgateway.store.db import Database
 from harnessgateway.testing import platform_on, public, run_next, settings_for
@@ -29,21 +30,19 @@ async def turn(platform: Platform, who: httpx.AsyncClient, **request) -> dict:
     return (await who.get(f"/v1/responses/{sent.json()['id']}")).json()
 
 
-async def test_with_keys_alone_every_key_reaches_every_session_and_each_answer_names_its_caller(platform: Platform):
+async def test_with_the_core_alone_every_session_is_the_owners_and_each_answer_names_its_caller(platform: Platform):
     await ready(platform)
-    (one, first), (two, second) = [await platform.keys.create(ORG, name, by=BY) for name in ("one", "two")]
+    (_, first), (_, second) = [await platform.keys.create(ORG, name, by=BY) for name in ("one", "two")]
     async with public(platform, first) as a, public(platform, second) as b:
         made = await turn(platform, a)
         session = made["metadata"]["hg_session"]
-        assert (await a.get("/v1/platform")).headers[SUBJECT] == one.id and (await b.get("/v1/sessions")).headers[SUBJECT] == two.id
-        assert (await a.get(f"/v1/responses/{made['id']}?stream=true")).headers[SUBJECT] == one.id       # a stream names them too
+        assert (await a.get("/v1/platform")).headers[SUBJECT] == (await b.get("/v1/sessions")).headers[SUBJECT] == OWNER
+        assert (await a.get(f"/v1/responses/{made['id']}?stream=true")).headers[SUBJECT] == OWNER    # a stream names them too
         assert SUBJECT not in (await public(platform, "hg_nobody").get("/v1/platform")).headers      # nobody is named nobody
-        listed = (await b.get("/v1/sessions")).json()["data"]                                        # another key's, and it is there:
-        assert [(each["id"], each["owner"]) for each in listed if each["id"] == session] == [(session, one.id)]
-        assert (await b.get(f"/v1/sessions/{session}")).json()["owner"] == one.id
-        again = await turn(platform, b, previous_response_id=made["id"])                             # and it may continue it,
-        assert again["metadata"]["hg_session"] == session
-        assert (await a.get(f"/v1/sessions/{session}")).json()["owner"] == one.id                    # which is still its owner's
+        listed = (await b.get("/v1/sessions")).json()["data"]                                        # another key: the same person
+        assert [(each["id"], each["owner"]) for each in listed if each["id"] == session] == [(session, OWNER)]
+        again = await turn(platform, b, previous_response_id=made["id"])                             # who continues what is theirs
+        assert again["metadata"]["hg_session"] == session and (await a.get(f"/v1/sessions/{session}")).json()["owner"] == OWNER
 
 
 async def test_a_session_is_its_owners_and_anyone_else_reaches_it_only_when_everyones_are_theirs_to_reach(db: Database, tmp_path: Path):

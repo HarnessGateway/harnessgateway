@@ -34,7 +34,7 @@ Extensions are a chain, so every seam says what several of them together mean.
 | `migrations()` | None | Each extension's one folder, applied after the core's, recorded under its name |
 | `start(platform)` | Nothing | Each, in order, once the schema is up to date and before anything is served |
 | `authenticate(request)` | An API key | The first that answers; the API key is asked last |
-| `authorize(who, action)` | Whoever is authenticated may do everything | Every one is asked; any may refuse (`Forbidden`) |
+| `authorize(who, action)` | Whoever is authenticated may do everything their key is not limited away from | Every one is asked, once the key's own scopes allow the action; any may refuse (`Forbidden`) |
 | `before_turn(who, request)` | Nothing | Every one is asked; any may refuse (`Refused`) |
 | `egress(org_id, policy)` | The environment's policy, as it is | Each narrows what the one before returned: more denied, never more allowed |
 | `on_change(conn, change)` | Nothing | Each, in order, inside the change's own transaction |
@@ -44,8 +44,15 @@ Extensions are a chain, so every seam says what several of them together mean.
 | `console()` | None | Each extension's folder, under `/console/x/<name>/` |
 
 A session is its owner's (whoever started it). When someone else reaches one, `authorize` is asked a second
-question, `sessions.read_all` or `sessions.write_all`: the core alone allows it, and an extension with roles says
-who may.
+question, `sessions.read_all` or `sessions.write_all`; for another's API key, `keys.read_all` or `keys.write_all`.
+The core alone allows them, and has one person; an extension with people says who may.
+
+`who` is a `Principal`: its organization, its `subject` (who is calling), and, when they came with an API key,
+that `key` and its `scopes`. A key acts as whoever made it: `owner` in the core, and whatever subject an extension's
+`authenticate` named when one of its people made the key. A key's scopes are checked by the core before any
+extension is asked, so an extension answers for the person, and never has to know the key. `permission.allows` and
+`permission.within` are the rule of a pattern, for an extension whose roles are made of them; `permit` and `may`
+ask the whole question (the key's scopes, then every extension) from an extension's own route.
 
 Every route names what it does as `noun.read` or `noun.write` (`responses.write`, `providers.read`, …): that is
 what `authorize` is asked about.
@@ -60,7 +67,7 @@ built on.
 | `name` | `target` | `about` |
 |---|---|---|
 | `providers.applied`, `environments.applied`, `harnesses.applied`, and `.deleted` of each | The definition's name | |
-| `keys.created`, `keys.revoked` | The key's id | Its `name`, when created |
+| `keys.created`, `keys.revoked` | The key's id | When created: its `name`, `subject`, `scopes`, and `expires_at` |
 | `responses.created`, `responses.cancelled`, `responses.deleted` | The response's id | `session` and `model`, when created |
 | `sessions.deleted` | The session's id | |
 | `files.created`, `files.deleted` | The file's id | `filename` and `bytes`, when created |
@@ -116,11 +123,13 @@ import { add, clear, h } from "../../lib/dom.js";
 async function audit(main) {                           // draws the page at #/audit
   add(clear(main), top("Audit", "Every change."), (await get("/v1/audit")).data.map(row => h("div", {}, row.name)));
 }
-export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", page: audit }];
+export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", action: "audit.read", page: audit }];
 export const signIns = [{ label: "Sign in with single sign-on", href: "/v1/sso/start" }];
 ```
 
-A page is listed in the sidebar under its `group` and drawn at `#/<id>`; an `id` that is taken is refused. A
+A page is listed in the sidebar under its `group` and drawn at `#/<id>`, for whoever may do its `action`: the
+console asks `GET /v1/permissions` once, at start, and a page that names no action is listed for everyone. An `id`
+that is taken is refused. A
 sign-in is a link on the sign-in form: it leads away, and comes back to `/console/#credential=<token>`, which the
 console takes, removes from the address, and sends as `Authorization: Bearer …` from then on. A module may also
 export `signOut`, a function the console calls before it forgets the credential. No file of an extension is served

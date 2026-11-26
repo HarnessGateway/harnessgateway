@@ -15,9 +15,10 @@ async def owned(db: Database) -> list[tuple[str, str]]:
 
 
 async def test_each_file_is_applied_once_and_two_owners_may_each_have_a_file_of_one_name(db: Database):
-    assert await db.migrate([(CORE, SCHEMA), SAMPLE, SECOND]) == ["core/0001_core.sql", "sample/0001_edition.sql", "second/0001_edition.sql"]
+    assert await db.migrate([(CORE, SCHEMA), SAMPLE, SECOND]) == [
+        "core/0001_core.sql", "core/0002_keys.sql", "sample/0001_edition.sql", "second/0001_edition.sql"]
     assert await db.migrate([(CORE, SCHEMA), SAMPLE, SECOND]) == []                       # again: nothing to do
-    assert await owned(db) == [("core", "0001_core.sql"), ("sample", "0001_edition.sql"), ("second", "0001_edition.sql")]
+    assert await owned(db) == [("core", "0001_core.sql"), ("core", "0002_keys.sql"), ("sample", "0001_edition.sql"), ("second", "0001_edition.sql")]
     assert await db.all(None, "SELECT count(*) AS rows FROM sample_audit") == [{"rows": 0}]
     assert await db.all(None, "SELECT count(*) AS rows FROM second_notes") == [{"rows": 0}]
 

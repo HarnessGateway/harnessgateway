@@ -7,7 +7,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.routing import Route
 
-from harnessgateway.api.http import Api, limit_of, listing, reaches, reads_all
+from harnessgateway.api.http import READ_ALL, Api, limit_of, listing, may, reaches
 from harnessgateway.domain.line import NONE
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import NotFound
@@ -52,7 +52,7 @@ def routes(api: Api) -> list[Route]:
 
     async def page(request: Request, who: Principal) -> Any:
         limit = limit_of(request)
-        mine = None if await reads_all(platform, who) else who.subject
+        mine = None if await may(platform, who, READ_ALL) else who.subject
         found = await sessions.page(who.org_id, owner=mine, after=request.query_params.get("after"), limit=limit + 1)
         return listing([_session(session) for session in found[:limit]], has_more=len(found) > limit)
 

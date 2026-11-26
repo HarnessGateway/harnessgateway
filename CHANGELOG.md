@@ -3,6 +3,25 @@
 What changed in each version, for someone who runs the platform. A version that asks anything of them beyond the
 two commands of an update is a new major version, and says what.
 
+## 1.2.0
+
+The core is for one person, and a key acts as them. Nothing is asked of whoever runs the platform: the two
+commands of an update, which add three columns to `keys`.
+
+- **Every key is the owner's.** A key acts as whoever made it, and the core has one person, its owner. So the
+  chats and the sessions someone has are theirs whichever key they sign in with: `hg-subject`, and a session's
+  `owner`, are `owner`, where they were the key's id. A session an earlier version recorded keeps the owner it
+  was given.
+- **A key may be limited.** `POST /v1/keys` takes `expires_at`, a time from which the key is refused, and
+  `scopes`, patterns of the actions it is limited to (`responses.*`, `*.read`). A key that is limited makes no key.
+  A field of that request the platform does not know is now refused.
+- **`GET /v1/permissions`** answers what the caller may do, of every action this installation's routes name.
+- **The console has an API keys page**, and its sidebar lists the pages the person signed in may use.
+- **For an edition:** a `Principal` carries the key a caller came with and its scopes; another's keys are asked
+  about as `keys.read_all` and `keys.write_all`; `Keys.create` takes who the key acts as, and `Keys.revoke_of`
+  revokes everything that acts as someone; the rule of a pattern (`permission`) and `permit`, `may`, `make_key`,
+  and `OWNER` are in `harnessgateway.edition`.
+
 ## 1.1.0
 
 A session is its owner's, and each person's chats are their own. Nothing is asked of whoever runs the platform:

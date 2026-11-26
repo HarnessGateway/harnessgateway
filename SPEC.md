@@ -4,13 +4,13 @@ This page is everything needed to build the platform with no other context. It s
 promises, how each part works, which file holds which part, and in what order to build them. Where this page and
 the code disagree, this page is right and the code is a bug.
 
-It is version **1.1.0** of the open-source, self-hosted community edition, whose installations are upgraded in
+It is version **1.2.0** of the open-source, self-hosted community edition, whose installations are upgraded in
 place since 1.0.0 (section 14.3). It is also the bottom of three layers, each a container image built on the one
 below it and each a package the core loads (section 15):
 
 | Layer | Repository | What it is |
 |---|---|---|
-| The core | `harnessgateway` (public, Apache-2.0) | This page. Complete by itself: one organization, one host, API keys |
+| The core | `harnessgateway` (public, Apache-2.0) | This page. Complete by itself: one person, one organization, one host, API keys |
 | The enterprise edition | `harnessgateway-enterprise` (private) | The core, and one extension: identity, audit, security, deployment at scale. Self-hosted, licensed |
 | The hosted service | `harnessgateway-cloud` (private) | The enterprise edition, and one more extension: many organizations, plans, billing. Run by HarnessGateway |
 
@@ -230,9 +230,9 @@ Its owner reaches a session as they always did. Anyone else who reaches one is r
 own for one who may not. What someone continues in another's session stays that session's owner's; what they fork
 from it is their own.
 
-The core alone allows whoever is authenticated to do everything, so with API keys alone every key reaches every
-session, as it always has. An edition with roles decides who else may: there, a session is private to whoever
-started it unless their role says otherwise. The two actions are named so that a role's `*.read` or `*.write`
+The core has one person, its owner, and every key acts as them (section 11.1): so with the core alone every session
+is the owner's, whichever key started it. An edition with people decides who else may reach one: there, a session is
+private to whoever started it unless their role says otherwise. The two actions are named so that a role's `*.read` or `*.write`
 does not match them: reading everything of an organization's is not reading everyone's conversations.
 
 So that a client knows which `owner` is itself, every answer to an authenticated caller names that caller in the
@@ -496,18 +496,45 @@ it builds to. The environment is what an organization starts with: given once, a
 | `POST /v1/containers/{id}/view` | A link a browser opens by itself for an hour: a token naming one session, signed with a key of the installation's own (made once, kept sealed in the `platform` table). Files are served through it sandboxed (a `Content-Security-Policy` with `sandbox`), with byte ranges |
 | `GET /v1/sessions`, `GET` `DELETE /v1/sessions/{id}`, `GET /v1/sessions/{id}/turns` | Every session the caller may read (section 5.5), each with its `owner`, as the requests and responses it is made of, with each turn's log and what its sandbox used (`used`: `seconds` it ran, `cpus` and `memory_mb` it was allowed, `cpu_seconds` and `memory_byte_seconds` it measured; `null` for a turn whose sandbox never started) |
 | `GET /v1/usage?start=&end=` | Processor time, memory, network bytes, and storage, for the lifetime or a range of days |
-| `POST` `GET /v1/keys`, `DELETE /v1/keys/{id}` | API keys: shown once, kept as a hash |
+| `POST` `GET /v1/keys`, `DELETE /v1/keys/{id}` | API keys (section 11.1): shown once, kept as a hash |
+| `GET /v1/permissions` | What the caller may do (section 11.1) |
 | `GET /v1/platform` | `version`, `contract`, `sdk`, `driver`, `isolation`, and `extensions`: the name and version of each one loaded, in order (empty for the core alone) |
 | `GET /healthz`, `GET /readyz` | Whether it is up, and whether it can reach its database and its driver |
 
 Lists are in the shape OpenAI's SDK pages through (`object`, `data`, `first_id`, `last_id`, `has_more`), with
 `limit` (1 to 100) and `after`.
 
+### 11.1 API keys, and who a key is
+
+A key acts as someone, and never does more than they may.
+
+- **Who.** The core has one person: the installation's owner (`owner`). A key acts as whoever made it, so in the
+  core every key is the owner's, and so is one made on the host (`harnessgateway init`). An edition with people
+  makes that a person, or an application's account: a key's `subject` is the subject of the caller who made it.
+- **Limits.** `POST /v1/keys` takes `name`, and optionally `expires_at` (a time, from which the key is refused as
+  an unknown one is) and `scopes`: patterns `noun.verb` in which either part may be `*` (`responses.*`, `*.read`),
+  over the actions routes name (section 15.2). A key with scopes does only what one of them matches, of what its
+  subject may do: that is checked on every request, before any extension is asked. Asking what the caller may do
+  (`me.read`) is never limited. A key that is limited, by scopes or by a time, makes no key: one it made could
+  reach further, or last longer, than itself.
+- **Whose.** A caller lists and revokes their own keys. Anyone else's are asked about at `authorize` as
+  `keys.read_all` and `keys.write_all`, as another's sessions are (section 5.5). The core alone allows it, and
+  has nobody else.
+- The key itself is shown once, when it is made; only its hash is kept. A key object is `id`, `name`, `subject`,
+  `scopes`, `created_at`, `expires_at`, `last_used_at`, and `revoked_at`.
+
+`GET /v1/permissions` (`me.read`) answers what the caller may do: `subject`, `key` (the id of the key they came
+with, when they came with one), and `allows`: every action of every route this installation has, an extension's
+included, that this caller would not be refused. It is what a client draws itself from: the console lists only the
+pages whose action is there.
+
 ## 12. The console
 
 Plain JavaScript modules in `console/`, served as they are at `/console` (`HG_CONSOLE=off` serves the API without
 it). It is a client of the public API, with the key someone signs in with: it has no route of its own. Pages: chat,
-providers, environments, harnesses, sessions, and usage. The chat is an application built on the Responses API
+providers, environments, harnesses, sessions, usage, and API keys. The sidebar lists the pages the person signed in
+may use (`GET /v1/permissions`, section 11.1): a page is listed when its action is allowed, which for the three
+definitions is writing them, since those pages are where they are built. The chat is an application built on the Responses API
 alone: streamed replies with thinking and steps, files given with a message, a message that interrupts a running
 turn, rewind and branch (the API's fork), and a panel that previews what the agent made through a view link.
 
@@ -545,7 +572,7 @@ edition to the core, and the edition's tables stay as they were.
 
 | Table | Holds |
 |---|---|
-| `orgs`, `keys` | The organization, and its API keys by hash |
+| `orgs`, `keys` | The organization, and its API keys by hash, each with who it acts as, its scopes, and when it ends |
 | `resources` | The three definitions: `spec`, and `sealed` secrets |
 | `packages`, `installs` | Package archives by digest; each install for an image, with its status and log |
 | `files` | Uploaded files |
@@ -590,7 +617,7 @@ edition's image sets both to its own. Nothing outside an image has to name its e
 The image is the whole distribution. A host needs Docker with Compose v2, and nothing from the repository:
 
 ```sh
-image=ghcr.io/harnessgateway/harnessgateway:1.1.0
+image=ghcr.io/harnessgateway/harnessgateway:1.2.0
 docker run --rm "$image" harnessgateway compose > compose.yaml    # how it is started, for this version
 docker run --rm "$image" harnessgateway secrets > .env            # once: the installation's secrets. Keep it
 docker compose up --detach --wait                                  # the database, the platform, the egress proxy
@@ -643,7 +670,8 @@ core's; none changes a layer below it.
 - **`harnessgateway.testing`** is what an extension's tests are written with: the stand-in driver (real folders, a
   sandbox that prints what a test tells it to), the smallest package, a platform on a test database, and running
   the next waiting turn as a runner does.
-- **The console's `lib/` and `components/`** are what an extension's pages import.
+- **The console's `lib/` and `components/`** are what an extension's pages import: among them `components/keys.js`,
+  the dialog that makes an API key, the one time it is shown, and the rows of a list of keys.
 - **The core's own tests pass with any extension loaded.** `HG_TEST_EXTENSIONS` names the extensions the core's
   integration tests load. Every edition runs the core's suite this way in its own checks: an extension that
   changes what the core does fails there.
@@ -670,7 +698,7 @@ core's; none changes a layer below it.
 | `migrations()` | None | Each extension's one folder, applied after the core's, in order, recorded under its name |
 | `start(platform)` | Nothing | Each, in order, once the schema is up to date and before anything is served, in `serve` and in `init`. It is where an extension is handed the platform. One that raises stops the process |
 | `authenticate(request)` | An API key | The first that answers; the API key is asked last |
-| `authorize(who, action)` | Whoever is authenticated may do everything | Every one is asked; any may refuse (`Forbidden`) |
+| `authorize(who, action)` | Whoever is authenticated may do everything their key is not limited away from | Every one is asked, once the key's own scopes allow the action; any may refuse (`Forbidden`) |
 | `before_turn(who, request)` | Nothing | Every one is asked; any may refuse (`Refused`) |
 | `egress(org_id, policy)` | The environment's policy, as it is | Each is given what the one before returned, and returns it narrowed: more denied, never more allowed |
 | `on_change(conn, change)` | Nothing | Each, in order, inside the change's own transaction (section 15.3) |
@@ -681,8 +709,11 @@ core's; none changes a layer below it.
 
 Every route names what it does as `noun.read` or `noun.write` (`responses.write`, `providers.read`, `keys.write`,
 …): that string is what `authorize` is asked about. Reaching a session that is not the caller's own asks a second one,
-`sessions.read_all` or `sessions.write_all` (section 5.5). `who` is a `Principal`: the organization whose data the request
-may touch, and a `subject` (an API key's id, or whatever an extension names).
+`sessions.read_all` or `sessions.write_all` (section 5.5), and another's key `keys.read_all` or `keys.write_all`
+(section 11.1). `who` is a `Principal`: the organization whose data the request may touch, a `subject` (who is
+calling: `owner` in the core, or whoever an extension names), and, when they came with an API key, that `key` and
+its `scopes`. The rule of a pattern (`permission.allows`, `permission.within`) is the core's, and an edition's
+roles are made of the same patterns.
 
 ### 15.3 Changes: a change and its record commit together
 
@@ -698,7 +729,7 @@ A `Change` is a `name`, the `org_id`, `by` (the caller's `subject`; `host` for w
 |---|---|---|
 | `providers.applied`, `environments.applied`, `harnesses.applied` | The definition's name | |
 | `providers.deleted`, `environments.deleted`, `harnesses.deleted` | The definition's name | |
-| `keys.created`, `keys.revoked` | The key's id | Its `name`, when created |
+| `keys.created`, `keys.revoked` | The key's id | When created: its `name`, `subject`, `scopes`, and `expires_at` |
 | `responses.created` | The response's id | `session`, `model` (the line as sent) |
 | `responses.cancelled`, `responses.deleted` | The response's id | |
 | `sessions.deleted` | The session's id | |
@@ -735,12 +766,13 @@ import { add, clear, h } from "../../lib/dom.js";
 async function audit(main) {                           // draws the page at #/audit
   add(clear(main), top("Audit", "Every change."), (await get("/v1/audit")).data.map(row => h("div", {}, row.name)));
 }
-export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", page: audit }];
+export const pages = [{ group: "Activity", id: "audit", label: "Audit", icon: "M5 4h14v16H5z", action: "audit.read", page: audit }];
 export const signIns = [{ label: "Sign in with single sign-on", href: "/v1/sso/start" }];
 ```
 
-A page is listed in the sidebar under its `group` and drawn at `#/<id>`; an `id` the console or an earlier
-extension has is refused, in the browser's console and on the page. A sign-in is a link on the sign-in form: it
+A page is listed in the sidebar under its `group` and drawn at `#/<id>`, for whoever may do its `action` (section
+11.1; a page that names none is listed for everyone); an `id` the console or an earlier extension has is refused,
+in the browser's console and on the page. A sign-in is a link on the sign-in form: it
 leads away, and comes back to `/console/#credential=<token>` (section 12). A module may also export `signOut`, a
 function the console calls when someone signs out, before it forgets the credential: a sign-in that was made
 elsewhere is ended there. No file of an extension is served in place of one of the console's.
@@ -778,6 +810,7 @@ src/harnessgateway/
     egress.py     host entries and the decision        sealing.py    secrets at rest
     schema.py     the Responses API as JSON Schemas    view.py       view links
     principal.py  who is calling                       change.py     a change, as extensions are told of it
+    permission.py actions, and patterns of them
   store/        PostgreSQL and blobs: one module for each group of tables
   driver/       base.py (the seam), docker.py, folders.py, meter.py
   runner/       runner.py (the queue), turn.py (one turn's steps), installer.py, housekeeping.py
@@ -845,6 +878,7 @@ What must hold, and which test holds it:
 | A harness is told where the one before it keeps its memory | `integration/test_turns.py`, `e2e/turns.py` |
 | The platform names no agent CLI, and no edition | `unit/test_agnostic.py` |
 | What ships keeps the contract, and what the harness package builder is told is what the platform has | `shipped/test_packages.py` |
+| A key acts as whoever made it, does only what its scopes match, is refused from its time, and makes no key once it is limited; a caller is told exactly what they may do | `unit/test_permission.py`, `integration/test_keys.py`, `e2e/turns.py`, `e2e/console.cjs` |
 | Every seam works, alone and with a second extension after it; an extension that fails on an event fails nothing else | `integration/test_extensions.py`, `unit/test_extensions.py`, `e2e/chain.sh` |
 | A change and its record commit together: an extension that raises undoes the change; every change of section 15.3 is told, once, with who made it | `integration/test_changes.py` |
 | Two owners may each have a schema file of one name; a database newer than the code is refused | `integration/test_schema.py` |
@@ -895,9 +929,13 @@ Decided here, and the founder's to overrule:
 - A turn's end is an event and not a change: nothing may stop a turn from ending.
 - The first API key is printed by a command someone runs, never into a log.
 - 1.0.0 is installed fresh. Nothing is kept in the code for an installation of 6.x.
-- A session is private to its owner only where an edition says so. The core has no roles, so with keys alone every
-  key reaches every session; what the core gives an edition is the question (`sessions.read_all`,
-  `sessions.write_all`), and each session's owner.
+- The core is for one person. Every key acts as its owner, so chats and sessions are theirs whichever key they
+  came with; what the core gives an edition is who a key acts as, the questions about anyone else's sessions and
+  keys (`sessions.read_all`, `sessions.write_all`, `keys.read_all`, `keys.write_all`), and each session's owner.
+- A key's own limits (its scopes, its time) are the core's, since the key and the actions are: an edition adds who
+  people are and what their roles allow, and a request must pass both.
+- A limited key makes no key. The other choice, to let it make keys no wider and no longer-lived than itself,
+  is more rule than its use is worth.
 - The console's chats are kept under who is signed in. Chats a browser kept before 1.1.0, under no one, are not
   shown: there is no telling whose they were.
 

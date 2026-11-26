@@ -11,15 +11,15 @@ one field of the request:
 Change any part and the agent built on the API does not change: the same request, the same session, the same
 files. A harness that calls no model is `environment/harness/none/none`.
 
-This repository is the open-source core: one host, Docker, one organization, API keys. It is an API, and it comes
-with a console for it: a client of that API, which nothing in the API needs.
+This repository is the open-source core: one person, one host, Docker, API keys. It is an API, and it comes with a
+console for it: a client of that API, which nothing in the API needs.
 
 ## Run it
 
 The image is the whole distribution. A host needs Docker with Compose v2, and nothing from this repository:
 
 ```sh
-image=ghcr.io/harnessgateway/harnessgateway:1.1.0
+image=ghcr.io/harnessgateway/harnessgateway:1.2.0
 docker run --rm "$image" harnessgateway compose > compose.yaml    # how it is started, for this version
 docker run --rm "$image" harnessgateway secrets > .env            # once: the installation's secrets. Keep it
 docker compose up --detach --wait                                  # the database, the platform, the egress proxy
@@ -119,16 +119,18 @@ A caller may keep the conversation instead, as the API allows: send the whole of
 | `GET` `PUT` `DELETE /v1/{providers,environments,harnesses}/{name}`, `GET /v1/harnesses/{name}/package` | The three definitions |
 | `GET /v1/sessions`, `GET` `DELETE /v1/sessions/{id}`, `GET …/turns` | Every session the caller may read, as the requests and responses it is made of, each with who started it (`owner`) |
 | `GET /v1/usage` | What the organization used: CPU, memory, network, storage. Its lifetime, or `?start=&end=` |
-| `POST` `GET /v1/keys`, `DELETE /v1/keys/{id}` | API keys |
+| `POST` `GET /v1/keys`, `DELETE /v1/keys/{id}` | API keys. A key acts as you; it may be limited to some actions (`scopes`) and given a time it ends (`expires_at`) |
+| `GET /v1/permissions` | What the caller may do, of every action the API has |
 | `GET /v1/platform`, `/healthz`, `/readyz` | What this installation is, and whether it can work |
 
 A response's `metadata.hg_session` names its session; `cntr_` and the rest of that id is its container. Every
-answer names its caller in the header `hg-subject`, which is how a client tells which sessions are its own. A refusal
+answer names its caller in the header `hg-subject`: with the core alone that is `owner`, the one person an
+installation has, whichever key they came with. A refusal
 is the OpenAI error envelope, and names the field that was wrong.
 
 ## The console
 
-Chat, the three definitions, sessions and usage, at `/console` on the API's own address. It calls only the routes
+Chat, the three definitions, sessions, usage, and API keys, at `/console` on the API's own address. It calls only the routes
 above, with the key you sign in with, so anything it does a program can do the same way. `HG_CONSOLE=off` serves
 the API without it. [docs/walkthrough.mp4](docs/walkthrough.mp4) is a captioned walkthrough of it, recorded on
 1.0.0.

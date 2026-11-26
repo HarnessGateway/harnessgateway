@@ -4,7 +4,7 @@ a list, and how a refusal reaches the caller (the OpenAI error envelope)."""
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from starlette.requests import Request
@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from harnessgateway.domain.events import storable
+from harnessgateway.domain.permission import ANYONE, allows
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import Forbidden, Invalid, Refused, TooLarge, Unauthorized
 from harnessgateway.platform import Platform
@@ -21,6 +22,8 @@ log = logging.getLogger(__name__)
 BODY_MAX = 32 * 1024 * 1024
 SUBJECT = "hg-subject"                         # the header an answer names its caller in
 READ_ALL, CHANGE_ALL = "sessions.read_all", "sessions.write_all"      # reaching sessions that are someone else's
+KEYS_READ_ALL, KEYS_CHANGE_ALL = "keys.read_all", "keys.write_all"    # and keys that are
+KEY_FIELDS = ("name", "expires_at", "scopes")                         # what a key is made from
 Handler = Callable[[Request, Principal], Awaitable[Any]]
 
 
@@ -52,6 +55,7 @@ class Api:
     authenticated and authorized exactly as the core's own are."""
 
     platform: Platform
+    actions: set[str] = field(default_factory=lambda: {ANYONE, READ_ALL, CHANGE_ALL, KEYS_READ_ALL, KEYS_CHANGE_ALL})
 
     async def who(self, request: Request) -> Principal:
         """Who is calling: an extension's answer first, then whoever an API key belongs to."""
@@ -65,9 +69,11 @@ class Api:
 
     def route(self, path: str, method: str, action: str, handler: Handler) -> Route:
         """A route for an authenticated caller who may do `action` (`responses.write`, `providers.read`, …)."""
+        self.actions.add(action)                   # every action there is: what a caller is told they may do
+
         async def handle(request: Request) -> Any:
             who = await self.who(request)
-            await self.platform.extensions.authorize(who, action)
+            await permit(self.platform, who, action)
             answer = await handler(request, who)
             response = answer if isinstance(answer, Response) else JSONResponse(answer)
             response.headers[SUBJECT] = who.subject        # so a client knows which owner is itself
@@ -75,20 +81,42 @@ class Api:
         return Route(path, answered(handle), methods=[method])
 
 
-async def reaches(platform: Platform, who: Principal, session_id: str, *, to_change: bool = False) -> None:
-    """A session is its owner's: whoever started it reaches it. Anyone else who does is reaching everyone's, and
-    the extensions are asked whether they may. The core alone allows it, as it allows everything."""
-    if await platform.sessions.owner(who.org_id, session_id) != who.subject:
-        await platform.extensions.authorize(who, CHANGE_ALL if to_change else READ_ALL)
+async def permit(platform: Platform, who: Principal, action: str) -> None:
+    """Refuse unless the caller may do `action`: the key they came with is not limited away from it, and no
+    extension refuses. It is the one place that is decided. Asking what one may do is never limited."""
+    if action != ANYONE and who.scopes and not allows(who.scopes, action):
+        raise Forbidden(f"this API key is limited to {', '.join(who.scopes)}, which does not allow {action}")
+    await platform.extensions.authorize(who, action)
 
 
-async def reads_all(platform: Platform, who: Principal) -> bool:
-    """Whether a caller may read every session of their organization, and not their own alone."""
+async def may(platform: Platform, who: Principal, action: str) -> bool:
+    """Whether the caller may do `action`."""
     try:
-        await platform.extensions.authorize(who, READ_ALL)
+        await permit(platform, who, action)
     except Forbidden:
         return False
     return True
+
+
+async def make_key(platform: Platform, who: Principal, sent: dict[str, Any], *, subject: str) -> dict[str, Any]:
+    """Make a key that acts as `subject` from what a caller sent, and answer it with the key itself: the only time
+    that is shown. A caller whose own key is limited makes none: a key it made could reach further, or last
+    longer, than itself."""
+    if unknown := sorted(set(sent) - set(KEY_FIELDS)):
+        raise Invalid(f"a key is made from {', '.join(KEY_FIELDS)}", param=unknown[0])
+    if who.key is not None and (await platform.keys.get(who.org_id, who.key)).limited:
+        raise Forbidden("a key that is limited makes no key: make one with a key that has no scopes and no end, or "
+                        "signed in")
+    key, text = await platform.keys.create(who.org_id, sent.get("name"), by=who.subject, subject=subject,
+                                           expires_at=sent.get("expires_at"), scopes=sent.get("scopes"))
+    return {**key.shown(), "key": text}
+
+
+async def reaches(platform: Platform, who: Principal, session_id: str, *, to_change: bool = False) -> None:
+    """A session is its owner's: whoever started it reaches it. Anyone else who does is reaching everyone's, and
+    is asked about as that. The core alone allows it, and has nobody else."""
+    if await platform.sessions.owner(who.org_id, session_id) != who.subject:
+        await permit(platform, who, CHANGE_ALL if to_change else READ_ALL)
 
 
 async def read_body(request: Request, limit: int = BODY_MAX) -> bytes:

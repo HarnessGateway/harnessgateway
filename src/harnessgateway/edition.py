@@ -12,16 +12,20 @@ from harnessgateway.api.http import (
     answered,
     limit_of,
     listing,
+    make_key,
+    may,
     page_of,
     parse_object,
+    permit,
     read_body,
     refused,
 )
 from harnessgateway.defaults import give
+from harnessgateway.domain import permission
 from harnessgateway.domain.change import HOST, PLATFORM, Change
 from harnessgateway.domain.egress import Connection as Passed
 from harnessgateway.domain.egress import EgressPolicy, HostEntry, entries, is_forbidden_address
-from harnessgateway.domain.principal import Principal
+from harnessgateway.domain.principal import OWNER, Principal
 from harnessgateway.domain.sandbox import Mount, SandboxPlan
 from harnessgateway.domain.sealing import KeySealer, Sealer
 from harnessgateway.domain.snapshot import Manifest
@@ -37,10 +41,11 @@ from harnessgateway.store.blobs import BlobMissing, BlobStore
 from harnessgateway.store.db import Connection, Database
 
 __all__ = [
-    "BODY_MAX", "FOLDERS", "HOST", "PLATFORM", "Api", "BlobMissing", "BlobStore", "Change", "ChunkStore", "Conflict",
-    "Connection", "Database", "Driver", "DriverError", "EgressPolicy", "Extension", "Forbidden", "HostEntry",
-    "Invalid", "KeySealer", "Lines", "LocalFolders", "Manifest", "Measured", "Mount", "NotFound", "OnLine", "Passed",
-    "Platform", "Principal", "Refused", "SandboxExit", "SandboxPlan", "Sealer", "Settings", "SettingsError",
-    "TooLarge", "Unauthorized", "__version__", "answered", "check_name", "entries", "fingerprint", "give",
-    "is_forbidden_address", "limit_of", "listing", "page_of", "parse_object", "read_body", "refused", "ulid",
+    "BODY_MAX", "FOLDERS", "HOST", "OWNER", "PLATFORM", "Api", "BlobMissing", "BlobStore", "Change", "ChunkStore",
+    "Conflict", "Connection", "Database", "Driver", "DriverError", "EgressPolicy", "Extension", "Forbidden",
+    "HostEntry", "Invalid", "KeySealer", "Lines", "LocalFolders", "Manifest", "Measured", "Mount", "NotFound",
+    "OnLine", "Passed", "Platform", "Principal", "Refused", "SandboxExit", "SandboxPlan", "Sealer", "Settings",
+    "SettingsError", "TooLarge", "Unauthorized", "__version__", "answered", "check_name", "entries", "fingerprint",
+    "give", "is_forbidden_address", "limit_of", "listing", "make_key", "may", "page_of", "parse_object", "permission",
+    "permit", "read_body", "refused", "ulid",
 ]
