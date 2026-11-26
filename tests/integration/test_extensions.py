@@ -51,6 +51,8 @@ async def test_an_edition_replaces_parts_is_asked_and_told_and_adds_its_own_with
             refused = await http.put("/v1/environments/default", headers=reader, json={"image": "node:22"})
             assert refused.status_code == 403 and "may read" in refused.json()["error"]["message"]    # its say on who may
             assert (await http.get("/v1/environments", headers=reader)).status_code == 200
+            assert (await http.get("/v1/harnesses/echo", headers=reader)).status_code == 200      # who reads harnesses reads which there are,
+            assert (await http.get("/v1/harnesses/echo/package", headers=reader)).status_code == 403     # and takes no package: that is changing them
             await http.put("/v1/environments/default", headers=admin, json={"image": "node:22", "harnesses": ["echo"]})
             over = await http.post("/v1/responses", headers={"X-Sample-User": f"{ORG}/over-quota"}, json={"model": LINE, "input": "x"})
             assert over.status_code == 400 and "quota" in over.json()["error"]["message"]    # its say before a turn
