@@ -16,8 +16,8 @@ from harnessgateway.api.http import (
     make_key,
     may,
     parse_object,
-    permit,
     read_body,
+    theirs,
 )
 from harnessgateway.domain import contract, schema
 from harnessgateway.domain.permission import ANYONE
@@ -53,8 +53,7 @@ def routes(api: Api) -> list[Route]:
 
     async def key_revoke(request: Request, who: Principal) -> Any:
         key = await keys.get(who.org_id, request.path_params["id"])
-        if key.subject != who.subject:             # someone else's: that is changing everyone's
-            await permit(platform, who, KEYS_CHANGE_ALL)
+        await theirs(platform, who, key.subject, KEYS_CHANGE_ALL)
         await keys.revoke(who.org_id, key.id, by=who.subject)
         return {"id": key.id, "object": "key", "revoked": True}
 

@@ -34,7 +34,7 @@ async def test_an_edition_replaces_parts_is_asked_and_told_and_adds_its_own_with
     assert edition.platform is platform                                                  # it was handed the platform
     assert await platform.db.all(None, "SELECT owner, name FROM migrations ORDER BY owner, name") == [
         {"owner": "core", "name": "0001_core.sql"}, {"owner": "core", "name": "0002_keys.sql"},
-        {"owner": "sample", "name": "0001_edition.sql"}]
+        {"owner": "core", "name": "0003_files.sql"}, {"owner": "sample", "name": "0001_edition.sql"}]
     running = asyncio.create_task(Runner(platform, heartbeat_s=0.2).run())
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg",
@@ -86,7 +86,7 @@ async def test_a_second_extension_adds_its_own_beside_the_firsts_and_one_that_fa
     assert isinstance(first, Edition) and isinstance(second, Second) and second.started_after == ["sample", "second"]
     assert await platform.db.all(None, "SELECT owner, name FROM migrations ORDER BY owner, name") == [   # two files of one name
         {"owner": "core", "name": "0001_core.sql"}, {"owner": "core", "name": "0002_keys.sql"},
-        {"owner": "sample", "name": "0001_edition.sql"},
+        {"owner": "core", "name": "0003_files.sql"}, {"owner": "sample", "name": "0001_edition.sql"},
         {"owner": "second", "name": "0001_edition.sql"}]
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg", timeout=30) as http:
         admin = {"X-Sample-User": f"{ORG}/admin"}

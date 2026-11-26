@@ -16,9 +16,7 @@ from harnessgateway.platform import Platform
 from harnessgateway.serve import init
 from harnessgateway.store.db import Database
 from harnessgateway.testing import FakeDriver, package, platform_on, settings_for
-from tests.integration.conftest import LINE, ORG
-
-SAMPLE = "tests.integration.edition:Edition"
+from tests.integration.conftest import LINE, ORG, SAMPLE
 
 
 @pytest.fixture

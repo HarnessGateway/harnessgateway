@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from harnessgateway.api.http import Api, listing, parse_object, reaches, read_body
+from harnessgateway.api.http import FILES_READ_ALL, Api, listing, parse_object, reaches, read_body, theirs
 from harnessgateway.domain.line import Line
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.request import file_ids, input_items, validate, without_credentials
@@ -25,7 +25,7 @@ _STREAMED = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}      # a st
 async def accept(platform: Platform, who: Principal, body: dict[str, Any]) -> Turn:
     """Queue the turn a valid request asks for; or refuse, naming what is wrong. A request continues from a turn
     that has ended and left a saved state, whose files fit the environment it now names, in a session the caller
-    may change."""
+    may change; and the uploaded files it names are ones the caller may read."""
     org_id = who.org_id
     resolved = await platform.resources.resolve(org_id, Line.parse(body.get("model")))
     parent, previous = None, body.get("previous_response_id")
@@ -47,9 +47,10 @@ async def accept(platform: Platform, who: Principal, body: dict[str, Any]) -> Tu
                           f"{resolved.line.environment!r} allows {allowed} MiB", param="model")
     for file_id in file_ids(body):
         try:
-            await platform.files.get(org_id, file_id)
+            file = await platform.files.get(org_id, file_id)
         except NotFound:
             raise Invalid(f"input names a file that does not exist: {file_id}", param="input") from None
+        await theirs(platform, who, file.owner, FILES_READ_ALL)
     body, credentials = without_credentials(body, new_placeholder)
     await platform.extensions.before_turn(who, body)
     return await platform.turns.create(who, resolved=resolved, request=body, parent=parent, credentials=credentials)

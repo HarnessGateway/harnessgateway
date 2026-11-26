@@ -1,5 +1,5 @@
-"""What every route shares: who is calling and whether they may, reading a body no further than a limit, pages of
-a list, and how a refusal reaches the caller (the OpenAI error envelope)."""
+"""What every route shares: who is calling and whether they may, whose a thing is, reading a body no further than a
+limit, pages of a list, and how a refusal reaches the caller (the OpenAI error envelope)."""
 
 import json
 import logging
@@ -22,7 +22,8 @@ log = logging.getLogger(__name__)
 BODY_MAX = 32 * 1024 * 1024
 SUBJECT = "hg-subject"                         # the header an answer names its caller in
 READ_ALL, CHANGE_ALL = "sessions.read_all", "sessions.write_all"      # reaching sessions that are someone else's
-KEYS_READ_ALL, KEYS_CHANGE_ALL = "keys.read_all", "keys.write_all"    # and keys that are
+KEYS_READ_ALL, KEYS_CHANGE_ALL = "keys.read_all", "keys.write_all"    # and keys that are,
+FILES_READ_ALL, FILES_CHANGE_ALL = "files.read_all", "files.write_all"      # and uploaded files
 KEY_FIELDS = ("name", "expires_at", "scopes")                         # what a key is made from
 Handler = Callable[[Request, Principal], Awaitable[Any]]
 
@@ -55,7 +56,8 @@ class Api:
     authenticated and authorized exactly as the core's own are."""
 
     platform: Platform
-    actions: set[str] = field(default_factory=lambda: {ANYONE, READ_ALL, CHANGE_ALL, KEYS_READ_ALL, KEYS_CHANGE_ALL})
+    actions: set[str] = field(default_factory=lambda: {
+        ANYONE, READ_ALL, CHANGE_ALL, KEYS_READ_ALL, KEYS_CHANGE_ALL, FILES_READ_ALL, FILES_CHANGE_ALL})
 
     async def who(self, request: Request) -> Principal:
         """Who is calling: an extension's answer first, then whoever an API key belongs to."""
@@ -112,11 +114,18 @@ async def make_key(platform: Platform, who: Principal, sent: dict[str, Any], *, 
     return {**key.shown(), "key": text}
 
 
+async def theirs(platform: Platform, who: Principal, owner: str | None, everyones: str) -> None:
+    """What someone made is theirs: a session they started, a key that acts as them, a file they uploaded. Its owner
+    reaches it. Anyone else who does is reaching everyone's, and is asked about as that (`everyones`: an action such
+    as `sessions.read_all`). The core alone allows it, and has nobody else."""
+    if owner != who.subject:
+        await permit(platform, who, everyones)
+
+
 async def reaches(platform: Platform, who: Principal, session_id: str, *, to_change: bool = False) -> None:
-    """A session is its owner's: whoever started it reaches it. Anyone else who does is reaching everyone's, and
-    is asked about as that. The core alone allows it, and has nobody else."""
-    if await platform.sessions.owner(who.org_id, session_id) != who.subject:
-        await permit(platform, who, CHANGE_ALL if to_change else READ_ALL)
+    """Refuse unless the caller may reach this session: it is theirs, or everyone's are theirs to reach."""
+    await theirs(platform, who, await platform.sessions.owner(who.org_id, session_id),
+                 CHANGE_ALL if to_change else READ_ALL)
 
 
 async def read_body(request: Request, limit: int = BODY_MAX) -> bytes:

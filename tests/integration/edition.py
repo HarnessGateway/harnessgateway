@@ -99,7 +99,7 @@ class Edition(Extension):
         if who.subject == "reader" and action.endswith(".write"):
             raise Forbidden(f"{who.subject} may read, and {action} is not reading")
         if who.subject.startswith("member") and action.endswith("_all"):     # roles, in miniature: their own, not everyone's
-            raise Forbidden(f"{who.subject} reaches their own sessions, and {action} is everyone's")
+            raise Forbidden(f"{who.subject} reaches what is their own, and {action} is everyone's")
 
     async def before_turn(self, who: Principal, request: dict[str, Any]) -> None:
         if who.subject == "over-quota":

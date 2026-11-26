@@ -8,8 +8,10 @@ import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import httpx
 import pytest
 
+from harnessgateway.api.app import public_app
 from harnessgateway.domain.principal import Principal
 from harnessgateway.ids import DEFAULT_ORG
 from harnessgateway.platform import Platform
@@ -18,6 +20,7 @@ from harnessgateway.store.turns import Turn
 from harnessgateway.testing import emptied, extensions_under_test, package, platform_on, run_next, settings_for
 
 ORG = DEFAULT_ORG
+SAMPLE = "tests.integration.edition:Edition"
 WHO = Principal(ORG, "key_tests")
 BY = WHO.subject
 LINE = "default/echo/none/none"
@@ -39,6 +42,12 @@ async def db() -> AsyncIterator[Database]:
 async def platform(db: Database, tmp_path: Path) -> Platform:
     return await platform_on(db, settings_for(os.environ["HG_TEST_DATABASE_URL"], tmp_path,
                                               HG_EXTENSIONS=",".join(extensions_under_test())))
+
+
+def person(platform: Platform, name: str) -> httpx.AsyncClient:
+    """A caller the sample edition signs in: `member…` reaches only what is their own, anyone else everyone's."""
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg", timeout=30,
+                             headers={"x-sample-user": f"{ORG}/{name}"})
 
 
 async def ready(platform: Platform, **environment) -> None:

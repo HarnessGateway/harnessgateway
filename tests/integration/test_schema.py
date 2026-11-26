@@ -16,9 +16,10 @@ async def owned(db: Database) -> list[tuple[str, str]]:
 
 async def test_each_file_is_applied_once_and_two_owners_may_each_have_a_file_of_one_name(db: Database):
     assert await db.migrate([(CORE, SCHEMA), SAMPLE, SECOND]) == [
-        "core/0001_core.sql", "core/0002_keys.sql", "sample/0001_edition.sql", "second/0001_edition.sql"]
+        "core/0001_core.sql", "core/0002_keys.sql", "core/0003_files.sql", "sample/0001_edition.sql", "second/0001_edition.sql"]
     assert await db.migrate([(CORE, SCHEMA), SAMPLE, SECOND]) == []                       # again: nothing to do
-    assert await owned(db) == [("core", "0001_core.sql"), ("core", "0002_keys.sql"), ("sample", "0001_edition.sql"), ("second", "0001_edition.sql")]
+    assert await owned(db) == [("core", "0001_core.sql"), ("core", "0002_keys.sql"), ("core", "0003_files.sql"), ("sample", "0001_edition.sql"),
+                               ("second", "0001_edition.sql")]
     assert await db.all(None, "SELECT count(*) AS rows FROM sample_audit") == [{"rows": 0}]
     assert await db.all(None, "SELECT count(*) AS rows FROM second_notes") == [{"rows": 0}]
 
@@ -36,9 +37,9 @@ async def test_a_database_a_later_version_changed_is_refused_and_an_owner_that_i
     later.mkdir()
     for file in SCHEMA.glob("*.sql"):
         (later / file.name).write_text(file.read_text())
-    (later / "0002_later.sql").write_text("CREATE TABLE made_later (id int);")
+    (later / "0009_later.sql").write_text("CREATE TABLE made_later (id int);")
     await db.migrate([(CORE, later), SAMPLE])                                            # a later version of the core ran here
-    with pytest.raises(NewerDatabase, match=r"changed by a later version than this one \(it has core/0002_later.sql\)"):
+    with pytest.raises(NewerDatabase, match=r"changed by a later version than this one \(it has core/0009_later.sql\)"):
         await db.migrate([(CORE, SCHEMA), SAMPLE])                                       # this version must not
     with pytest.raises(NewerDatabase):
         await db.migrate([(CORE, SCHEMA)])

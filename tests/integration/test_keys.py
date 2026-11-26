@@ -5,25 +5,15 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import httpx
-
-from harnessgateway.api.app import public_app
 from harnessgateway.domain.change import HOST
 from harnessgateway.domain.principal import OWNER
 from harnessgateway.platform import Platform
 from harnessgateway.store.db import Database
 from harnessgateway.testing import platform_on, public, run_next, settings_for
-from tests.integration.conftest import LINE, ORG, ready
+from tests.integration.conftest import LINE, ORG, SAMPLE, person, ready
 
-SAMPLE = "tests.integration.edition:Edition"
 SUBJECT = "hg-subject"
 SOON = (datetime.now(UTC) + timedelta(days=30)).isoformat()
-
-
-def person(platform: Platform, name: str) -> httpx.AsyncClient:
-    """A caller the sample edition signs in: `member…` reaches only what is their own."""
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg", timeout=30,
-                             headers={"x-sample-user": f"{ORG}/{name}"})
 
 
 async def test_in_the_core_every_key_is_the_owners_so_what_one_started_is_theirs_with_any_other(platform: Platform):
@@ -111,7 +101,7 @@ async def test_a_key_acts_as_whoever_made_it_and_theirs_are_anothers_only_where_
         assert [key["id"] for key in (await a.get("/v1/keys")).json()["data"]] == [hers["id"]]       # each lists their own,
         assert [key["id"] for key in (await b.get("/v1/keys")).json()["data"]] == [his["id"]]
         refused = await b.delete(f"/v1/keys/{hers['id']}")                             # and revokes their own
-        assert refused.status_code == 403 and "member-b reaches their own" in refused.json()["error"]["message"]
+        assert refused.status_code == 403 and "member-b reaches what is their own" in refused.json()["error"]["message"]
         assert {key["id"] for key in (await lead.get("/v1/keys")).json()["data"]} == {hers["id"], his["id"]}     # whoever may reach everyone's
         assert (await lead.delete(f"/v1/keys/{his['id']}")).json()["revoked"] and (await b.get("/v1/keys")).json()["data"][0]["revoked_at"]
         assert (await a.delete("/v1/keys/key_nothing")).status_code == 404

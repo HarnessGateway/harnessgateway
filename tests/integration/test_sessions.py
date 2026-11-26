@@ -6,21 +6,13 @@ from pathlib import Path
 
 import httpx
 
-from harnessgateway.api.app import public_app
 from harnessgateway.domain.principal import OWNER
 from harnessgateway.platform import Platform
 from harnessgateway.store.db import Database
 from harnessgateway.testing import platform_on, public, run_next, settings_for
-from tests.integration.conftest import BY, LINE, ORG, ready
+from tests.integration.conftest import BY, LINE, ORG, SAMPLE, person, ready
 
-SAMPLE = "tests.integration.edition:Edition"
 SUBJECT = "hg-subject"
-
-
-def person(platform: Platform, name: str) -> httpx.AsyncClient:
-    """A caller the sample edition signs in: `member…` reaches only their own sessions, anyone else everyone's."""
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=public_app(platform)), base_url="http://hg", timeout=30,
-                             headers={"x-sample-user": f"{ORG}/{name}"})
 
 
 async def turn(platform: Platform, who: httpx.AsyncClient, **request) -> dict:
@@ -75,7 +67,7 @@ async def test_a_session_is_its_owners_and_anyone_else_reaches_it_only_when_ever
                     await b.post(f"/v1/responses/{waiting['id']}/cancel"), await b.delete(f"/v1/responses/{first['id']}"),
                     await b.delete(f"/v1/sessions/{session}")]
         for refused in refusals:
-            assert refused.status_code == 403 and "member-b reaches their own sessions" in refused.json()["error"]["message"], refused.text
+            assert refused.status_code == 403 and "member-b reaches what is their own" in refused.json()["error"]["message"], refused.text
         assert (await a.put("/v1/harnesses/taken", json={"session": session, "path": "package"})).status_code == 400      # the owner: only no such folder
         assert (await a.get(f"/v1/sessions/{session}")).json()["turns"] == 3 and (await b.get("/v1/sessions/sess_nothing")).status_code == 404
         assert await run_next(platform) is not None
