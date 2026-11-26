@@ -12,6 +12,7 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from harnessgateway.domain.change import Change
 from harnessgateway.domain.egress import BoundSecret
 from harnessgateway.domain.line import NONE, Line
 from harnessgateway.domain.outcome import CANCELLED, FINAL, Outcome
@@ -21,7 +22,7 @@ from harnessgateway.domain.response import LAST_EVENTS, envelope_event, response
 from harnessgateway.domain.sealing import Sealer
 from harnessgateway.errors import Conflict, NotFound
 from harnessgateway.ids import new_id
-from harnessgateway.store.db import Connection, Database, announce
+from harnessgateway.store.db import Connection, Database, Tell, announce
 
 RUNNERS = "hg_runners"                         # the channel runners hear: a turn waits, or one is to be stopped
 WAITING = "waiting"
@@ -49,9 +50,11 @@ class Turn:
     model: str | None
     request: dict[str, Any] | None
     output: list[dict[str, Any]]
-    usage: dict[str, Any] | None
+    usage: dict[str, Any] | None               # the tokens its harness reported
+    used: dict[str, Any] | None                # what its sandbox used; None when it never started
     snapshot_id: str | None
     store: bool                                # False: nothing of it is kept once it is answered
+    principal: str | None                      # who sent it
     log: str
     created_at: datetime
     started_at: datetime | None
@@ -80,9 +83,10 @@ COLUMNS = ", ".join(field.name for field in fields(Turn))
 
 
 class Turns:
-    def __init__(self, db: Database, sealer: Sealer) -> None:
+    def __init__(self, db: Database, sealer: Sealer, tell: Tell) -> None:
         self._db = db
         self._sealer = sealer
+        self._tell = tell
 
     # making and reading
 
@@ -91,7 +95,8 @@ class Turns:
         """Queue a turn. With no parent it starts a session; with a session's latest turn as its parent it
         continues that session; with any other parent it starts a session forked from that turn. A turn that is
         not to be stored always has a session of its own, forked from its parent, so that forgetting it leaves
-        its parent's session as it was. The request's credentials are kept sealed beside it until the turn ends."""
+        its parent's session as it was, and it is no change of anyone's: it is not told. The request's credentials
+        are kept sealed beside it until the turn ends."""
         turn_id, line, org_id, stored = new_id("response"), resolved.line, who.org_id, request.get("store") is not False
         sealed = {secret.placeholder: {"hosts": list(secret.hosts), "value": self._sealer.seal(
             secret.value, org_id, "turns", turn_id, secret.placeholder)} for secret in credentials}
@@ -120,6 +125,9 @@ class Turns:
             await conn.execute("UPDATE sessions SET head_turn_id = %s, last_active_at = now() WHERE id = %s",
                                [turn_id, session_id])
             await self._event(conn, turn.id, envelope_event(turn.response(), 0, "response.created"))
+            if stored:
+                await self._tell(conn, Change("responses.created", org_id, who.subject, turn.id,
+                                              {"session": session_id, "model": str(line)}))
             await announce(conn, RUNNERS, WAITING)
         return turn
 
@@ -205,22 +213,24 @@ class Turns:
     # ending
 
     async def conclude(self, turn: Turn, outcome: Outcome, *, output: Sequence[dict[str, Any]] = (),
-                       usage: dict[str, Any] | None = None, snapshot_id: str | None = None, log: str = "") -> Turn:
-        """Make a turn final, once: its status and reason, its output, the usage its harness reported, and the
-        event that ends its stream. Conflict when it is final already."""
+                       usage: dict[str, Any] | None = None, used: dict[str, Any] | None = None,
+                       snapshot_id: str | None = None, log: str = "") -> Turn:
+        """Make a turn final, once: its status and reason, its output, the usage its harness reported, what its
+        sandbox used, and the event that ends its stream. Conflict when it is final already."""
         async with self._db.tx(turn.org_id) as conn:
-            return await self._conclude(conn, turn.id, outcome, output, usage, snapshot_id, log)
+            return await self._conclude(conn, turn.id, outcome, output, usage, used, snapshot_id, log)
 
     async def _conclude(self, conn: Connection, turn_id: str, outcome: Outcome, output: Sequence[dict[str, Any]] = (),
-                        usage: dict[str, Any] | None = None, snapshot_id: str | None = None, log: str = "") -> Turn:
+                        usage: dict[str, Any] | None = None, used: dict[str, Any] | None = None,
+                        snapshot_id: str | None = None, log: str = "") -> Turn:
         row = await (await conn.execute(
             "UPDATE turns SET status = %s, reason = %s, code = %s, message = %s, incomplete_reason = %s, "
-            "output = %s, usage = %s, snapshot_id = %s, log = %s, completed_at = now(), runner_id = NULL, "
+            "output = %s, usage = %s, used = %s, snapshot_id = %s, log = %s, completed_at = now(), runner_id = NULL, "
             "credentials = '{}' "
             f"WHERE id = %s AND {_OPEN} RETURNING {COLUMNS}",
             [outcome.status, outcome.reason, outcome.code, outcome.message, outcome.incomplete_reason,
-             Jsonb(list(output)), Jsonb(usage) if usage is not None else None, snapshot_id, log[-LOG_MAX:],
-             turn_id])).fetchone()
+             Jsonb(list(output)), Jsonb(usage) if usage is not None else None,
+             Jsonb(used) if used is not None else None, snapshot_id, log[-LOG_MAX:], turn_id])).fetchone()
         if row is None:
             raise Conflict(f"response {turn_id} is already final")
         turn = Turn(**row)
@@ -231,24 +241,27 @@ class Turns:
         await conn.execute("UPDATE sessions SET last_active_at = now() WHERE id = %s", [turn.session_id])
         return turn
 
-    async def cancel(self, org_id: str, turn_id: str) -> Turn:
+    async def cancel(self, org_id: str, turn_id: str, *, by: str) -> Turn:
         """Ask for a turn to stop. One still waiting is cancelled here and now; one in progress is marked and
-        its runner told, which stops it, saves what it left and ends it; a final one is returned as it is."""
+        its runner told, which stops it, saves what it left and ends it; a final one is returned as it is, and
+        nothing is told of it: nothing was changed."""
         async with self._db.tx(org_id) as conn:
             row = await (await conn.execute(
                 "SELECT status FROM turns WHERE org_id = %s AND id = %s AND deleted_at IS NULL FOR UPDATE",
                 [org_id, turn_id])).fetchone()
             if row is None:
                 raise NotFound(f"there is no response {turn_id}")
-            if row["status"] == "queued":
-                return await self._conclude(conn, turn_id, CANCELLED)
-            if row["status"] == "in_progress":
+            if row["status"] not in FINAL:
+                await self._tell(conn, Change("responses.cancelled", org_id, by, turn_id))
+                if row["status"] == "queued":
+                    return await self._conclude(conn, turn_id, CANCELLED)
                 await conn.execute("UPDATE turns SET cancel_requested = true WHERE id = %s", [turn_id])
                 await announce(conn, RUNNERS, STOP + turn_id)
         return await self.get(org_id, turn_id)
 
-    async def delete(self, org_id: str, turn_id: str) -> None:
-        """Remove a turn's request, output and events. Its row stays: later turns descend from it."""
+    async def delete(self, org_id: str, turn_id: str, *, by: str | None) -> None:
+        """Remove a turn's request, output and events. Its row stays: later turns descend from it. `by` is who
+        deletes it; None when the turn was not to be stored, and its removal is no change of anyone's."""
         async with self._db.tx(org_id) as conn:
             row = await (await conn.execute(
                 "SELECT status FROM turns WHERE org_id = %s AND id = %s AND deleted_at IS NULL FOR UPDATE",
@@ -260,6 +273,8 @@ class Turns:
             await conn.execute("UPDATE turns SET deleted_at = now(), request = NULL, output = '[]', log = '' "
                                "WHERE id = %s", [turn_id])
             await conn.execute("DELETE FROM events WHERE turn_id = %s", [turn_id])
+            if by is not None:
+                await self._tell(conn, Change("responses.deleted", org_id, by, turn_id))
 
     async def unstored(self, *, final_for_s: float) -> list[tuple[str, str]]:
         """Turns asked not to be stored that ended this long ago and are still there, as (organization, turn):

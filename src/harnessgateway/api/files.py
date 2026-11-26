@@ -30,7 +30,8 @@ def routes(api: Api) -> list[Route]:
         async def parts() -> AsyncIterator[bytes]:
             while piece := await file.read(_PIECE):
                 yield piece
-        kept = await files.create(who.org_id, filename=file.filename or "", purpose=str(purpose), parts=parts())
+        kept = await files.create(who.org_id, filename=file.filename or "", purpose=str(purpose), parts=parts(),
+                                  by=who.subject)
         return kept.shown()
 
     async def page(request: Request, who: Principal) -> Any:
@@ -47,7 +48,7 @@ def routes(api: Api) -> list[Route]:
                                  headers={"Content-Length": str(file.bytes)})
 
     async def delete(request: Request, who: Principal) -> Any:
-        await files.delete(who.org_id, request.path_params["id"])
+        await files.delete(who.org_id, request.path_params["id"], by=who.subject)
         return {"id": request.path_params["id"], "object": "file", "deleted": True}
 
     return [

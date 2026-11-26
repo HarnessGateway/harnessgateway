@@ -4,7 +4,8 @@
 #
 # The base is Chainguard's Wolfi, pinned by digest: its packages (Python, the Docker client) are rebuilt as fixes
 # land, which is what lets the scan in CI pass, on every change and every week. The Python environment is exactly
-# what uv.lock pins, so two builds of one commit agree. uv stays in the image: tests/run.sh adds pytest with it.
+# what uv.lock pins, so two builds of one commit agree. uv stays in the image: an edition's image installs its
+# package into this environment with it.
 FROM cgr.dev/chainguard/wolfi-base@sha256:be019c1c74fe69204a42c4e10bc4d886a49bf5403ffa74374ef7baa408fc9a26
 
 USER 0
@@ -20,7 +21,11 @@ RUN apk add --no-cache python-3.13 uv docker-cli ca-certificates-bundle \
  && cd / && rm -rf /src
 
 WORKDIR /
-ENV PATH=/opt/harnessgateway/bin:/usr/bin:/bin PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+# What this image is: its own name and tag, which `harnessgateway compose` writes into the Compose file it prints,
+# and the extensions it carries. The core carries none; an edition's image sets both to its own.
+ARG HG_IMAGE=ghcr.io/harnessgateway/harnessgateway:1.0.0
+ENV PATH=/opt/harnessgateway/bin:/usr/bin:/bin PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    HG_IMAGE=${HG_IMAGE} HG_EXTENSIONS=
 LABEL org.opencontainers.image.title="harnessgateway" \
       org.opencontainers.image.source="https://github.com/HarnessGateway/harnessgateway" \
       org.opencontainers.image.licenses="Apache-2.0"

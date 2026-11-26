@@ -3,8 +3,9 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from harnessgateway.domain.change import Change
 from harnessgateway.errors import Conflict, NotFound
-from harnessgateway.store.db import Database
+from harnessgateway.store.db import Database, Tell
 from harnessgateway.store.turns import COLUMNS, Turn
 
 _OPEN = "status IN ('queued', 'in_progress')"
@@ -37,8 +38,9 @@ class Session:
 
 
 class Sessions:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, tell: Tell) -> None:
         self._db = db
+        self._tell = tell
 
     async def get(self, org_id: str, session_id: str) -> Session:
         row = await self._db.one(org_id, f"{_SUMMARY} WHERE s.org_id = %s AND s.id = %s", [org_id, session_id])
@@ -75,9 +77,10 @@ class Sessions:
             "  SELECT 1 FROM turns o WHERE o.session_id = t.session_id AND o.deleted_at IS NULL)"), [org_id, turn_id])
         return row["session_id"] if row else None
 
-    async def remove(self, org_id: str, session_id: str) -> list[str]:
+    async def remove(self, org_id: str, session_id: str, *, by: str | None) -> list[str]:
         """Delete a session, its turns and their events. Returns the ids of its snapshots, which the caller
-        releases. Refused while one of its turns is waiting or running."""
+        releases. Refused while one of its turns is waiting or running. `by` is who deletes it; None when it is
+        the session of a turn that was not to be stored, whose removal is no change of anyone's."""
         async with self._db.tx(org_id) as conn:
             row = await (await conn.execute("SELECT id FROM sessions WHERE org_id = %s AND id = %s FOR UPDATE",
                                             [org_id, session_id])).fetchone()
@@ -90,6 +93,8 @@ class Sessions:
             snapshots = await (await conn.execute("SELECT id FROM snapshots WHERE org_id = %s AND session_id = %s",
                                                   [org_id, session_id])).fetchall()
             await conn.execute("DELETE FROM sessions WHERE id = %s", [session_id])
+            if by is not None:
+                await self._tell(conn, Change("sessions.deleted", org_id, by, session_id))
         return [snapshot["id"] for snapshot in snapshots]
 
     async def folders_hold(self, org_id: str, session_id: str, snapshot_id: str | None) -> None:

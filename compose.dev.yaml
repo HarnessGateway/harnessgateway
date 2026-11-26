@@ -1,0 +1,7 @@
+# For whoever works on the platform: the image built from this checkout (harnessgateway:dev), run as a release is,
+# with the same .env (`uv run harnessgateway secrets > .env`, once).
+#
+#   docker compose --project-directory . -f src/harnessgateway/compose.yaml -f compose.dev.yaml up --build --wait
+services:
+  serve:
+    build: .

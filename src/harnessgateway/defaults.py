@@ -30,18 +30,20 @@ def archive(name: str) -> bytes:
                          for file in package.rglob("*") if file.is_file())
 
 
-async def packages(platform: Platform, org_id: str) -> None:
+async def packages(platform: Platform, org_id: str, *, by: str) -> None:
     """Put each package that ships at this version's. One that is there already, unchanged, is left as it is."""
     for name in names():
         packed = archive(name)
         had = await platform.resources.find(org_id, "harnesses", name)
         if had is None or had.spec["digest"] != read_archive(packed).digest:
-            await platform.resources.add_package(org_id, name, packed)
+            await platform.resources.add_package(org_id, name, packed, by=by)
 
 
-async def give(platform: Platform, org_id: str) -> None:
+async def give(platform: Platform, org_id: str, *, by: str) -> None:
     """Give an organization what it starts with: the packages that ship, then the environments, which name them.
-    Giving them again puts each environment back as it ships."""
-    await packages(platform, org_id)
+    Giving them again puts each environment back as it ships. `by` is who gives them: whoever made the
+    organization."""
+    await packages(platform, org_id, by=by)
     for definition in sorted(shipped.folder("environments").glob("*.json")):
-        await platform.resources.apply(org_id, "environments", definition.stem, json.loads(definition.read_text()))
+        await platform.resources.apply(org_id, "environments", definition.stem, json.loads(definition.read_text()),
+                                       by=by)

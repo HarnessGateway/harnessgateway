@@ -6,7 +6,7 @@ import re
 import pytest
 
 from harnessgateway.domain.events import EVENTS, LineError, RunOutput, storable
-from tests.helpers import DONE, TEXT, lines
+from harnessgateway.testing import DONE, TEXT, lines
 
 SAYS = {"type": "message", "role": "assistant", "status": "completed",
         "content": [{"type": "output_text", "text": "Done.", "annotations": []}]}

@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from harnessgateway.domain.egress import BoundSecret, HostEntry, Policy, is_forbidden_address
+from harnessgateway.domain.egress import BoundSecret, Connection, HostEntry, Policy, is_forbidden_address
 from harnessgateway.proxy.authority import Authority
 from harnessgateway.proxy.http import HEAD_MAX, Head, put_secrets, read_head, refusal
 from harnessgateway.proxy.tunnel import Inside
@@ -31,7 +31,7 @@ _GONE = (ConnectionError, asyncio.IncompleteReadError, ssl.SSLError, TimeoutErro
 _GRANTED = b"HTTP/1.1 200 Connection established\r\n\r\n"
 
 PolicyOf = Callable[[str, str], Awaitable[Policy | None]]      # a sandbox's id and token -> what it may reach
-Count = Callable[[str, int, int], None]                        # an organization, bytes it sent, bytes it received
+Report = Callable[[Connection], None]                          # a connection a sandbox made, or was refused
 Upstream = tuple[asyncio.StreamReader, asyncio.StreamWriter]
 
 
@@ -72,10 +72,10 @@ async def _relay(reader: asyncio.StreamReader, client: Client, upstream: Upstrea
 
 
 class EgressProxy:
-    def __init__(self, policy_of: PolicyOf, count: Count, authority: Authority, *,
+    def __init__(self, policy_of: PolicyOf, report: Report, authority: Authority, *,
                  private_hosts: Sequence[str] = (), verify: ssl.SSLContext | None = None) -> None:
         self._policy_of = policy_of
-        self._count = count
+        self._report = report
         self._authority = authority
         self._private_hosts = [HostEntry.parse(entry) for entry in private_hosts]
         self._verify = verify or ssl.create_default_context()      # how the proxy verifies a host it reads for
@@ -128,8 +128,12 @@ class EgressProxy:
                 host, port = "", 0
         if not host or not 0 < port < 65536:
             return await refuse("400 Bad Request", "this proxy takes CONNECT host:port, and http:// URLs")
+        def report(refused: str = "", sent: int = 0, received: int = 0) -> None:
+            self._report(Connection(policy.org_id, policy.subject_id, policy.environment, host, port, refused,
+                                    sent, received))
         addresses, refused = await self._addresses(policy, host, port)
         if refused:
+            report(refused)
             return await refuse("403 Forbidden", refused)
 
         counted, secrets = [0, 0], policy.secrets_for(host, port)
@@ -154,7 +158,7 @@ class EgressProxy:
                     finally:
                         inside.close()
         finally:
-            self._count(policy.org_id, counted[0], counted[1])
+            report(sent=counted[0], received=counted[1])
 
     async def _addresses(self, policy: Policy, host: str, port: int) -> tuple[list[str], str]:
         """The addresses the host may be connected to at; or none, and why the connection is refused."""

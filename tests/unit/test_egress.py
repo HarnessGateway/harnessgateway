@@ -4,7 +4,15 @@ import json
 
 import pytest
 
-from harnessgateway.domain.egress import BoundSecret, EgressPolicy, HostEntry, Policy, entries, is_forbidden_address
+from harnessgateway.domain.egress import (
+    BoundSecret,
+    Connection,
+    EgressPolicy,
+    HostEntry,
+    Policy,
+    entries,
+    is_forbidden_address,
+)
 from harnessgateway.errors import Invalid
 
 
@@ -41,3 +49,24 @@ def test_a_policy_decides_by_mode_and_says_why_not():
     policy = Policy("org", "resp_1", "default", limited, (BoundSecret(("api.example.com",), "v", "hgs_x", "X-Key", "K "),))
     assert Policy.from_json(json.loads(json.dumps(policy.to_json()))) == policy
     assert policy.secrets_for("api.example.com", 443) and not policy.secrets_for("other.example.com", 443)
+
+
+def test_a_policy_is_narrowed_when_it_reaches_nothing_more_and_denies_everything_it_did():
+    limited = EgressPolicy("limited", ("api.example.com", "pypi.org"), ("bad.example.com",))
+    for narrower in (limited, EgressPolicy("limited", ("api.example.com",), ("bad.example.com", "worse.example.com")),
+                     EgressPolicy("closed", ("api.example.com",), ("bad.example.com",)), EgressPolicy("limited", (), ("bad.example.com",))):
+        assert limited.narrowed_to(narrower), narrower
+    for wider in (EgressPolicy("open", (), ("bad.example.com",)), EgressPolicy("limited", ("api.example.com", "new.example.com"), ("bad.example.com",)),
+                  EgressPolicy("limited", ("api.example.com",)), EgressPolicy("closed", ("new.example.com",), ("bad.example.com",))):
+        assert not limited.narrowed_to(wider), wider
+    anything = EgressPolicy("open", (), ("bad.example.com",))
+    assert anything.narrowed_to(EgressPolicy("limited", ("only.example.com",), ("bad.example.com", "x.example.com")))
+    assert not anything.narrowed_to(EgressPolicy("open")) and not anything.narrowed_to(EgressPolicy("limited", ("only.example.com",)))
+
+
+def test_a_connection_is_reported_whole_or_not_at_all():
+    made = Connection("org", "resp_1", "default", "api.example.com", 443, sent=10, received=20)
+    assert Connection(**json.loads(json.dumps(made.to_json()))) == made and made.refused == ""
+    for wrong in ({"port": "443"}, {"sent": -1}, {"host": None}, {"received": 1.5}, {"refused": 4}):
+        with pytest.raises(ValueError, match="a connection is"):
+            Connection(**{**made.to_json(), **wrong})

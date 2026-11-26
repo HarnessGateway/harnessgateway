@@ -16,7 +16,8 @@ GRANT_MAX_S = 25 * 3600                        # longer than any turn or install
 async def housekeep(platform: Platform, *, elapsed_s: float) -> None:
     """One round: what each organization stores, added to what it used for the `elapsed_s` since the last round;
     then the folders of idle sessions (their snapshots hold everything), turns that were not to be stored, the
-    installs of packages no harness is made from, chunks no snapshot names, and grants a dead process left."""
+    installs of packages no harness is made from, chunks no snapshot names, and grants a dead process left. Last,
+    each extension's own housekeeping."""
     await platform.usage.add_stored(elapsed_s)
     for session_id in await platform.sessions.idle(for_s=platform.settings.idle_s):
         for folder in session_folders(session_id).values():
@@ -27,6 +28,7 @@ async def housekeep(platform: Platform, *, elapsed_s: float) -> None:
         await platform.driver.remove(install_folder(install_id))
     await platform.snapshots.collect()
     await platform.grants.expire(older_than_s=GRANT_MAX_S)
+    await platform.extensions.housekeep(platform, elapsed_s)
 
 
 async def housekeeping(platform: Platform) -> None:

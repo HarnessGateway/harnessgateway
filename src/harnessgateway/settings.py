@@ -14,6 +14,9 @@ class SettingsError(Exception):
     """A setting is missing or wrong. The message names it and says what is allowed."""
 
 
+NO_SEALING_KEY = "HG_SECRET_KEY is 32 random bytes in base64: openssl rand -base64 32"
+
+
 def _text(env: Mapping[str, str], name: str, default: str | None = None) -> str:
     value = env.get(name) or default
     if value is None:
@@ -37,7 +40,7 @@ class Settings:
     """What `serve` runs with."""
 
     database_url: str
-    secret_key: bytes                          # seals secrets at rest
+    secret_key: bytes | None                   # seals secrets at rest; None: an extension's sealer does
     proxy_key: str                             # what the egress proxy proves itself with
     data: Path                                 # where the data volume is mounted: sandboxes' folders live on it
     blobs: str                                 # where bytes are kept: a path, or a URL an extension's store answers
@@ -53,12 +56,14 @@ class Settings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
-        try:
-            key = base64.b64decode(_text(env, "HG_SECRET_KEY"), validate=True)
-        except binascii.Error:
-            key = b""
-        if len(key) != 32:
-            raise SettingsError("HG_SECRET_KEY is 32 random bytes in base64: openssl rand -base64 32")
+        key = None
+        if env.get("HG_SECRET_KEY"):
+            try:
+                key = base64.b64decode(env["HG_SECRET_KEY"], validate=True)
+            except binascii.Error:
+                key = b""
+            if len(key) != 32:
+                raise SettingsError(NO_SEALING_KEY)
         runtime = _text(env, "HG_RUNTIME", "auto")
         if runtime not in ("auto", "runsc", "runc"):
             raise SettingsError(f"HG_RUNTIME is auto, runsc or runc: {runtime!r}")

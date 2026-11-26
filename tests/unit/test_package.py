@@ -8,7 +8,7 @@ import pytest
 
 from harnessgateway.domain.package import PackageFile, read_archive, write_archive
 from harnessgateway.errors import Invalid
-from tests.helpers import package
+from harnessgateway.testing import package
 
 
 def tar(*members: tuple[str, bytes, int], kind: bytes = tarfile.REGTYPE) -> bytes:

@@ -61,15 +61,14 @@ def routes(api: Api) -> list[Route]:
         not_the_platforms(kind, name)
         body = await read_body(request, PACKED_MAX)
         if kind == "harnesses" and body[:2] == _GZIP:
-            made = await resources.add_package(who.org_id, name, body)
+            made = await resources.add_package(who.org_id, name, body, by=who.subject)
         else:
             sent = parse_object(body)
             if kind == "harnesses" and "session" in sent:
                 archive = await package_from(who.org_id, sent["session"], sent.get("path"))
-                made = await resources.add_package(who.org_id, name, archive)
+                made = await resources.add_package(who.org_id, name, archive, by=who.subject)
             else:
-                made = await resources.apply(who.org_id, kind, name, sent)
-        await platform.announce(f"{kind}.applied", who.org_id, by=who, target=name)
+                made = await resources.apply(who.org_id, kind, name, sent, by=who.subject)
         return made.shown()
 
     async def package(request: Request, who: Principal) -> Any:
@@ -82,8 +81,7 @@ def routes(api: Api) -> list[Route]:
     async def delete(kind: str, request: Request, who: Principal) -> Any:
         name = request.path_params["name"]
         not_the_platforms(kind, name)
-        await resources.delete(who.org_id, kind, name)
-        await platform.announce(f"{kind}.deleted", who.org_id, by=who, target=name)
+        await resources.delete(who.org_id, kind, name, by=who.subject)
         return {"name": name, "deleted": True}
 
     return [

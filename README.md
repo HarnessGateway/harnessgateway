@@ -16,12 +16,22 @@ with a console for it: a client of that API, which nothing in the API needs.
 
 ## Run it
 
+The image is the whole distribution. A host needs Docker with Compose v2, and nothing from this repository:
+
 ```sh
-git clone https://github.com/HarnessGateway/harnessgateway && cd harnessgateway
-./install.sh                    # builds the image, starts it, and prints the first API key, once
+image=ghcr.io/harnessgateway/harnessgateway:1.0.0
+docker run --rm "$image" harnessgateway compose > compose.yaml    # how it is started, for this version
+docker run --rm "$image" harnessgateway secrets > .env            # once: the installation's secrets. Keep it
+docker compose up --detach --wait                                  # the database, the platform, the egress proxy
+docker compose exec serve harnessgateway init                      # the defaults, and the first API key, shown once
 ```
 
-Then open `http://127.0.0.1:8000` and sign in with the key: that is the console. Or use the API alone.
+Then open `http://127.0.0.1:8000` and sign in with the key: that is the console. Or use the API alone. `.env`
+also holds the port, the address it listens on, and a namespace, for a second installation on one host.
+
+**To update**, run the first command with the new image and `docker compose up --detach --wait`. The schema is
+brought up to date before anything is served, the data stays, and a version started by mistake on a database a
+later one changed refuses to start.
 
 It is one image run twice (`serve`: the API and the turn runner; `proxy`: the egress proxy) and PostgreSQL. Each
 turn is one more container, started through the Docker socket and gone when the turn ends. With gVisor (`runsc`)
@@ -130,9 +140,10 @@ checked by an integrity hash; without them everything still reads.
 
 ## Editions
 
-The core is complete by itself, and it is also what every other edition is built on. An edition is a package the
-core loads (`HG_EXTENSIONS`), never a fork: it replaces a part or adds its own at a seam, and each seam's default
-is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists them.
+The core is complete by itself, and it is also what every other edition is built on. An edition is the core's
+image with one or more packages added, which the core loads in order (`HG_EXTENSIONS`, set by the image). It is
+never a fork: an extension adds its own at a seam, or narrows what the core allows, and takes the place of nothing.
+[docs/EXTENDING.md](docs/EXTENDING.md) lists the seams.
 
 ## Where things are
 
@@ -144,7 +155,8 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 | `src/harnessgateway/runner/` | Takes turns from the queue and runs each: install, restore, sandbox, save, conclude |
 | `src/harnessgateway/proxy/` | The egress proxy: a process of its own with no database and no sealing key |
 | `src/harnessgateway/api/` | The routes |
-| `src/harnessgateway/extensions.py` | The seams an edition builds on |
+| `src/harnessgateway/extensions.py`, `edition.py`, `testing.py` | The seams an edition builds on, everything of the core it may import, and what its tests are written with |
+| `src/harnessgateway/compose.yaml` | How a released image is run: what `harnessgateway compose` prints |
 | `packages/` | The packages that ship: `shell`, and `harness-package-builder`, which holds what every package is written to: the Responses API as three schemas generated from the pinned SDK (`contract/`), a whole example package (`example/`), and a session of a developer's requests (`requests/`) |
 | `environments/` | What an organization starts with: the `default` environment, which carries both |
 | `console/` | The console: plain JavaScript modules, served as they are. `lib/` (the API, the DOM, files), `components/` (what pages are made of), `pages/` (one for each), `styles/` |
@@ -157,10 +169,9 @@ is the behaviour described here. [docs/EXTENDING.md](docs/EXTENDING.md) lists th
 
 ```sh
 uv run ruff check . && uv run mypy          # lint, and strict types
-uv run pytest tests/unit tests/shipped      # the rules, and what ships held to the contract
-tests/run.sh                                # everything, on a real database (the installation must be up)
-HG_URL=… HG_KEY=hg_… python3 tests/live/turns.py     # a running installation, in real containers
-HG_URL=… HG_KEY=hg_… node tests/live/console.cjs     # every page of its console, in a real browser (Playwright)
+uv run pytest tests/unit tests/shipped      # the rules, and what ships held to the contract: no database, no Docker
+HG_TEST_DATABASE_URL=postgresql://… uv run pytest tests/integration     # on a database the tests may empty
+tests/e2e/run.sh                            # the image built from this tree, installed as above, checked, and removed
 ```
 
 Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

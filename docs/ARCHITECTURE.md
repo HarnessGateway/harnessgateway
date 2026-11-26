@@ -50,7 +50,8 @@ the process that answers need not be the one that runs the turn.
 | `runner/` | The order of a turn's steps | It knows the steps and none of the mechanisms |
 | `proxy/` | The sandbox's only way out | A process of its own, with no database and no sealing key: what faces untrusted code holds nothing worth stealing but the secrets of sandboxes running right now |
 | `api/` | HTTP in, HTTP out | It validates and delegates; it decides nothing |
-| `extensions.py` | The seams | So that an edition adds to the core instead of changing it |
+| `extensions.py` | The seams, and what several extensions together mean at each | So that an edition adds to the core instead of changing it |
+| `edition.py`, `testing.py` | Everything of the core an extension imports, and what its tests are written with | So that the rest of the core may move without breaking an edition. Nothing in the core imports them |
 | `packages/`, `environments/` (the repository's, beside `src/`) | The packages that ship, and the environment an organization starts with | Given through the same stores as anything an organization adds: the platform still knows no harness |
 | `console/` (the repository's, beside `src/`) | The pages people use the platform through | A client of the API, served beside it: it has no route of its own, so the API is whole without it |
 
@@ -137,11 +138,30 @@ Nothing a turn needs lives in one process's memory.
 
 One process on one host is the community deployment. The same code runs as several.
 
+## Installing and updating
+
+The image is the whole distribution: it prints the Compose file it is run with (`harnessgateway compose`) and a new
+installation's secrets (`harnessgateway secrets`), and `harnessgateway init` prints the first API key, once, to
+whoever runs it, and never into a log. An update is the same Compose command with a newer image: `serve` brings
+the schema up to date before it serves anything.
+
 ## Organizations
 
 Every row carries `org_id`, every blob key begins with it, and every transaction on an organization's rows sets
 `hg.org_id`. The core creates one organization and has no way to make another. An edition with many adds how they
 are made, how a caller is matched to one, and row-level policies on that setting; the core's queries do not change.
+
+## Editions
+
+An edition is the core's image with one or more extensions installed, named in order by the image's own
+`HG_EXTENSIONS`. Extensions are a chain: a part (a driver, a blob store) is offered once, a question (who is
+calling, whether they may, whether a turn may start) is put to every one and any may refuse, and what one adds (a
+route, a table, a page) never takes the place of another's or of the core's. Two things an edition is built on:
+
+- **A change and its record commit together.** The stores make every change, and tell the extensions of it inside
+  the same transaction, with who made it. An extension that cannot keep its record undoes the change.
+- **The schema belongs to its owners.** Each applied file is recorded with the layer it came from, so every layer
+  numbers its own files, and a database a later version changed is refused at start.
 
 ## Security, in order of what matters
 

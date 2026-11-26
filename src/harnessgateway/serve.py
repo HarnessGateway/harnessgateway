@@ -12,15 +12,17 @@ from starlette.applications import Starlette
 from harnessgateway import __version__, defaults
 from harnessgateway.api.app import internal_app, public_app
 from harnessgateway.domain import contract
+from harnessgateway.domain.change import HOST, PLATFORM
 from harnessgateway.domain.sandbox import GIVEN_FOLDER
+from harnessgateway.driver.base import Driver
 from harnessgateway.extensions import Extensions
 from harnessgateway.ids import DEFAULT_ORG
 from harnessgateway.platform import Platform
-from harnessgateway.proxy.authority import new_authority, trust_bundle
+from harnessgateway.proxy.authority import trust_bundle
 from harnessgateway.runner.housekeeping import housekeeping
 from harnessgateway.runner.runner import Runner
 from harnessgateway.settings import Settings
-from harnessgateway.store.db import SCHEMA, Database
+from harnessgateway.store.db import CORE, SCHEMA, Database
 
 log = logging.getLogger(__name__)
 
@@ -34,17 +36,24 @@ class Broken(Exception):
     """A part of the platform that must keep running has ended. The process ends with it, to be started again."""
 
 
+async def prepared(settings: Settings, db: Database, *, driver: Driver | None = None) -> Platform:
+    """The platform on an open database, ready to work: its extensions loaded, every layer's schema up to date,
+    its organization there, and each extension started. `driver` stands in for the one the settings name."""
+    extensions = Extensions.load(settings.extensions)
+    await db.migrate([(CORE, SCHEMA), *extensions.migrations()])
+    platform = Platform.of(settings, db, extensions, driver=driver)
+    await platform.orgs.ensure(DEFAULT_ORG, "Organization")
+    await extensions.start(platform)
+    return platform
+
+
 @contextlib.asynccontextmanager
 async def opened(settings: Settings) -> AsyncIterator[Platform]:
-    """The platform, on a database whose schema is up to date and which has its organization."""
-    extensions = Extensions.load(settings.extensions)
+    """The platform, ready to work, for as long as the block lasts."""
     db = Database(settings.database_url)
     await db.open()
     try:
-        await db.migrate([SCHEMA, *extensions.migrations()])
-        platform = Platform.of(settings, db, extensions)
-        await platform.orgs.ensure(DEFAULT_ORG, "Organization")
-        yield platform
+        yield await prepared(settings, db)
     finally:
         await db.close()
 
@@ -60,8 +69,9 @@ async def init(settings: Settings, *, new_key: bool = False) -> str | None:
         if existing and not new_key:
             return None
         if not existing:
-            await defaults.give(platform, DEFAULT_ORG)
-        return (await platform.keys.create(DEFAULT_ORG, "made on the host" if existing else "first key"))[1]
+            await defaults.give(platform, DEFAULT_ORG, by=HOST)
+        name = "made on the host" if existing else "first key"
+        return (await platform.keys.create(DEFAULT_ORG, name, by=HOST))[1]
 
 
 class _Server(uvicorn.Server):
@@ -81,10 +91,10 @@ async def serve(settings: Settings) -> None:
         if isolation == "none":
             log.warning("ISOLATION IS NONE: sandboxes share this host's kernel. This is for development and for "
                         "trusted code only. Install gVisor (runsc) to isolate them.")
-        certificate, _ = await platform.authority.get(new_authority)
+        certificate, _ = await platform.authority()
         await platform.driver.fill(GIVEN_FOLDER, given(certificate))
         for org_id in await platform.orgs.all():   # the packages that ship follow the platform: each is this version's
-            await defaults.packages(platform, org_id)
+            await defaults.packages(platform, org_id, by=PLATFORM)
 
         def server(app: Starlette, port: int) -> _Server:
             return _Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_config=None,  # noqa: S104

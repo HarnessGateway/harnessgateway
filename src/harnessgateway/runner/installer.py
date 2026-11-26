@@ -48,8 +48,8 @@ class Installer:
         await platform.driver.fill(install_folder(install_id), {file.path: file.content for file in package.files},
                                    executable=[file.path for file in package.files if file.executable])
         token = new_token()
-        await platform.grants.put(Policy(org_id, install_id, resolved.line.environment, install_policy(environment)),
-                                  token)
+        may_reach = await platform.extensions.egress(org_id, install_policy(environment))
+        await platform.grants.put(Policy(org_id, install_id, resolved.line.environment, may_reach), token)
         plan = install_plan(install_id=install_id, image_id=image_id, environment=environment, proxy_token=token)
         lines: list[str] = []
 

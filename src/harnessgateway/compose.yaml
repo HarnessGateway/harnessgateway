@@ -1,13 +1,12 @@
 # HarnessGateway on one host with Docker: a database, the platform, and the egress proxy. Its values come from
-# the .env file beside it, which install.sh writes.
+# the .env file beside it, which `harnessgateway secrets` writes once.
 #
 # Sandboxes are sibling containers the platform starts through the Docker socket, each given a few folders of the
 # data volume. Everything is named after HG_NAMESPACE, so two installations can share one host.
 name: ${HG_NAMESPACE:-hg}
 
 x-platform: &platform
-  image: ${HG_IMAGE:-harnessgateway:local}       # built here by install.sh; a release is ghcr.io/harnessgateway/harnessgateway
-  build: .
+  image: ${HG_IMAGE:-harnessgateway:dev}
   restart: unless-stopped
 
 services:
@@ -30,16 +29,11 @@ services:
   serve:
     <<: *platform
     command: ["harnessgateway", "serve"]
+    env_file: .env                                     # everything in it: an edition's settings reach it unnamed here
     environment:
       HG_DATABASE_URL: postgresql://hg:${HG_DB_PASSWORD:?}@db:5432/hg
-      HG_SECRET_KEY: ${HG_SECRET_KEY:?}
-      HG_PROXY_KEY: ${HG_PROXY_KEY:?}
       HG_NAMESPACE: ${HG_NAMESPACE:-hg}
-      HG_RUNTIME: ${HG_RUNTIME:-auto}
-      HG_MAX_TURNS: ${HG_MAX_TURNS:-8}
-      HG_EXTENSIONS: ${HG_EXTENSIONS:-}
-      HG_CONSOLE: ${HG_CONSOLE:-on}
-      HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}
+      HG_PORT: "8000"                                  # in its container; HG_PORT in .env is the host's, below
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock      # how it starts sandboxes, and measures them
       - data:/data
@@ -49,11 +43,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:                                       # ready: it reaches its database and what runs its sandboxes
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
 
   proxy:
     <<: *platform
     command: ["harnessgateway", "proxy"]
-    environment:
+    environment:                                       # its own three settings: never the database, never a key
       HG_PROXY_KEY: ${HG_PROXY_KEY:?}
       HG_PRIVATE_HOSTS: ${HG_PRIVATE_HOSTS:-}
       HG_LOG_LEVEL: ${HG_LOG_LEVEL:-info}

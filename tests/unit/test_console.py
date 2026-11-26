@@ -12,7 +12,7 @@ from harnessgateway.api import console
 from harnessgateway.settings import Settings, SettingsError
 
 
-def client(*added: Path) -> TestClient:
+def client(*added: tuple[str, Path]) -> TestClient:
     return TestClient(Starlette(routes=console.routes(added)), follow_redirects=False)
 
 
@@ -49,18 +49,23 @@ def test_what_renders_an_agents_document_is_served_sandboxed_and_the_console_is_
     assert "sandbox" not in http.get("/console/").headers["content-security-policy"]
 
 
-def test_an_edition_adds_files_and_the_last_named_is_looked_in_first(tmp_path: Path):
+def test_each_extension_adds_its_files_under_its_own_name_and_none_takes_the_place_of_another(tmp_path: Path):
     first, last = tmp_path / "first", tmp_path / "last"
     for folder, pages in ((first, "one"), (last, "two")):
         folder.mkdir()
         (folder / "edition.js").write_text(f"export const pages = [/* {pages} */];")
-    (first / "extra.js").write_text("export {};")
-    http = client(first, last)
-    assert "two" in http.get("/console/edition.js").text                     # in place of the core's, and of the first's
-    assert http.get("/console/extra.js").status_code == 200                  # added
-    assert "import { pages }" in http.get("/console/app.js").text            # the core's own, still
-    assert http.get("/console/lib/api.js").status_code == 200                # in its folders
-    assert "pages = []" in client().get("/console/edition.js").text          # the core adds no page
+    (first / "app.js").write_text("// not the console's")
+    (tmp_path / "secret.txt").write_text("outside both")
+    http = client(("first", first), ("last", last))
+    assert http.get("/console/extensions.json").json() == ["first", "last"]      # in the order they were named
+    assert "one" in http.get("/console/x/first/edition.js").text and "two" in http.get("/console/x/last/edition.js").text
+    assert "default-src 'self'" in http.get("/console/x/first/edition.js").headers["content-security-policy"]
+    assert "import { editions }" in http.get("/console/app.js").text            # the console's own, whatever an extension holds
+    assert http.get("/console/x/first/app.js").text == "// not the console's"
+    for path in ("/console/edition.js", "/console/x/nobody/edition.js", "/console/x/first/../secret.txt",
+                 "/console/x/first/%2e%2e/secret.txt", "/console/x/first/..%2fsecret.txt", "/console/x/last/app.js"):
+        assert http.get(path).status_code == 404, path
+    assert client().get("/console/extensions.json").json() == []                # the core adds nothing
 
 
 def test_an_installation_says_whether_it_serves_the_console():

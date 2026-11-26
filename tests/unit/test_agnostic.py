@@ -1,5 +1,5 @@
 """The platform is agent infrastructure: it runs any harness package, and knows no agent CLI. Everything about one
-is in its package. This is what keeps that true."""
+is in its package. And it knows no edition: an edition is added at a seam. This is what keeps both true."""
 
 import re
 
@@ -21,3 +21,14 @@ def test_the_server_the_console_and_what_the_builder_is_told_name_no_agent_cli()
     named = {f"{path.relative_to(server.parent)}: {found[0]}" for path in files
              for found in [_CLIS.search(path.read_text(errors="ignore"))] if found}
     assert not named, f"an agent CLI is named outside a package: {sorted(named)}"
+
+
+def test_the_server_and_the_console_name_no_edition():
+    """An edition adds to the core at a seam: a change that makes the core name one is the wrong change."""
+    source = shipped.folder("console").parent / "src" / "harnessgateway"
+    assert source.is_dir(), "this test reads a checkout"
+    editions = re.compile(r"hgenterprise|hgcloud|\benterprise\b|hosted service", re.I)
+    named = {f"{path.relative_to(source.parent.parent)}: {found[0]}" for folder in (source, shipped.folder("console"))
+             for path in folder.rglob("*") if path.is_file() and path.suffix in (*_READ, ".yaml")
+             for found in [editions.search(path.read_text(errors="ignore"))] if found}
+    assert not named, f"the core names an edition: {sorted(named)}"

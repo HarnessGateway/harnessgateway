@@ -95,6 +95,7 @@ CREATE TABLE turns (
     credentials        jsonb NOT NULL DEFAULT '{}',    -- what the request carried, sealed, by its placeholder: until it ends
     output             jsonb NOT NULL DEFAULT '[]',
     usage              jsonb,                          -- the tokens its harness reported
+    used               jsonb,                          -- what its sandbox used; NULL when it never started
     snapshot_id        text,
     store              boolean NOT NULL DEFAULT true,
     cancel_requested   boolean NOT NULL DEFAULT false,
@@ -164,7 +165,7 @@ CREATE TABLE grants (
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- What belongs to the installation as a whole: its certificate authority.
+-- What the installation makes once and keeps sealed: its certificate authority, the key view links are signed with.
 CREATE TABLE platform (
     name   text PRIMARY KEY,
     value  jsonb NOT NULL

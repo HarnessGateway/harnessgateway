@@ -1,5 +1,5 @@
 name: ci
-# Every level of the checks that a hosted runner can run, and the image built and scanned. It also runs every
+# Every level of the checks (unit, integration, end to end), and the image built and scanned. It also runs every
 # week: a vulnerability can be published against an image that has not changed.
 on:
   push:
@@ -34,42 +34,43 @@ jobs:
         env:
           HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
 
-  # A whole platform as a user installs it: the image built from this tree by install.sh, then real turns in real
-  # containers, and every page of the console in a real browser.
-  live:
+  # A whole platform as a user installs it: the image built from this tree, installed from it alone (SPEC.md
+  # section 14.2), then real turns in real containers, every page of the console in a real browser, an update in
+  # place, and the extension chain in a browser. The run removes what it made.
+  e2e:
     runs-on: ubuntu-latest
-    env:
-      HG_URL: http://127.0.0.1:8000
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: hg
+          POSTGRES_PASSWORD: hg
+          POSTGRES_DB: hg_test
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U hg" --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install the platform as a user does
-        run: |
-          set -o pipefail
-          ./install.sh | sed -E 's/hg_[A-Za-z0-9_-]{20,}/hg_(the key)/'        # the key it prints is not for a public log
-          key=$(docker compose exec -T serve harnessgateway init --new-key </dev/null | awk 'END {print $NF}')
-          echo "::add-mask::$key"
-          echo "HG_KEY=$key" >> "$GITHUB_ENV"
-      - name: Real turns, in real containers
-        run: python3 tests/live/turns.py
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra dev
       - name: A browser, for the console's checks
         run: |
           npm install --global playwright
           npx playwright install --with-deps chromium
           echo "NODE_PATH=$(npm root --global)" >> "$GITHUB_ENV"
-      - name: Every page of the console
-        run: node tests/live/console.cjs
-      - name: What the platform logged, when that failed
-        if: failure()
-        run: docker compose logs --tail 200 serve proxy
+      - name: Every end-to-end check
+        run: tests/e2e/run.sh
+        env:
+          HG_TEST_DATABASE_URL: postgresql://hg:hg@localhost:5432/hg_test
 
   image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t harnessgateway:ci .
-      - name: The image runs, and holds the console and what an installation starts with
+      - name: The image runs, says what it is, and holds the console and what an installation starts with
         run: |
           docker run --rm harnessgateway:ci harnessgateway --version
+          docker run --rm harnessgateway:ci harnessgateway compose | grep -q "ghcr.io/harnessgateway/harnessgateway:$(docker run --rm harnessgateway:ci harnessgateway --version)"
           docker run --rm harnessgateway:ci python -c "
           from harnessgateway import defaults, shipped
           from harnessgateway.domain.package import read_archive
