@@ -27,6 +27,7 @@ Nothing is asked of whoever runs the platform: the two commands of an update, wh
 - **`GET /v1/permissions`** answers what the caller may do, of every action this installation's routes name.
 - **The console has an API keys page**, and its sidebar lists the pages the person signed in may use. Wherever it
   shows who (a session's owner, whose a key is, who made it), it shows a name, not an id.
+- The captioned walkthrough, `docs/walkthrough.mp4`, is recorded again on this version.
 - **For an edition:** a `Principal` carries the key a caller came with and its scopes; another's keys are asked
   about as `keys.read_all` and `keys.write_all`; `Keys.create` takes who the key acts as, and `Keys.revoke_of`
   revokes everything that acts as someone; the rule of a pattern (`permission`) and `permit`, `may`, `make_key`,
