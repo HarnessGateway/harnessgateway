@@ -16,7 +16,7 @@ import { bytes } from "../../lib/format.js";
 import { SHOWCASE, baseName, dirName, inWork, kindOf } from "../../lib/kinds.js";
 import { keep, kept } from "../../lib/storage.js";
 import { ensureView, filesOf, packagesIn } from "../../lib/work.js";
-import { begin, branch, chats, find, head, remove, rewind, save, unfinished } from "./chats.js";
+import { begin, branch, chats, find, head, own, remove, rewind, save, unfinished } from "./chats.js";
 import { composer as makeComposer } from "./composer.js";
 import { modelLine } from "./line.js";
 import { badge, sidePanel } from "./panel.js";
@@ -48,6 +48,7 @@ async function adopt(session) {
 
 export async function chat(main, params) {
   main.className = "full";
+  own();
   const [environments, harnesses, providers] = await Promise.all([all("/v1/environments", "name"), all("/v1/harnesses", "name"), all("/v1/providers", "name")]);
   if (!environments.some(found => found.harnesses.length)) return void add(clear(main), setup(providers, harnesses, environments));
   if (params[0] === "open") return void await adopt(params[1]);

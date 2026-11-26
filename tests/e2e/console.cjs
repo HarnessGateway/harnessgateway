@@ -42,7 +42,8 @@ const api = async (method, path, body) => {
   const tab = async label => { await page.click(`.tabs a:has-text("${label}")`); await page.waitForTimeout(200); };
   const labelled = label => `div:has(> label:text-is("${label}")) > input`;
   const picked = async action => { const [chooser] = await Promise.all([page.waitForEvent("filechooser"), action()]); return chooser; };
-  const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("hg.chats")));       // the chat's own list, newest first
+  const WHO = (await fetch(`${URL}/v1/platform`, { headers: { Authorization: `Bearer ${KEY}` } })).headers.get("hg-subject");      // as the platform names this key
+  const stored = () => page.evaluate(who => JSON.parse(localStorage.getItem(`hg.chats.${who}`)), WHO);       // this person's own list of chats, newest first
   const say = async words => {
     const said = await page.locator(".said").count();
     await page.fill(".composer textarea", words);
@@ -411,7 +412,7 @@ const api = async (method, path, body) => {
     await go("#/chat");
     expect(await page.locator(".rows a").count() === 2, "the chat lists a session it did not start");
     await go("#/sessions");
-    await page.waitForSelector(`.listing a[href="#/sessions/${direct}"]`);
+    await page.waitForSelector(`.listing a[href="#/sessions/${direct}"]:has-text("started by you")`);
     await shot("10-sessions");
     await go(`#/sessions/${direct}`);
     await page.click("button:has-text('Continue in chat')");
@@ -483,6 +484,29 @@ const api = async (method, path, body) => {
     expect(await page.evaluate(() => location.hash) === "#/usage/today", "the period is not in the address");
   });
 
+  await check("someone else who signs in in this browser has their own chats, and sees none of these", async () => {
+    await go("#/chat");
+    await page.waitForSelector(".rows a");
+    const mine = await page.locator(".rows a").count(), other = await api("POST", "/v1/keys", { name: "console-check another person" });
+    made.key = other.id;
+    const signInAs = async key => {
+      await page.click("#signout");
+      await page.waitForSelector("#signin:not([hidden])");
+      await page.fill("#key", key);
+      await page.click("#signin button");
+      await page.waitForSelector("#shell:not([hidden])");
+      await go("#/chat");
+      await page.waitForSelector(".composer");
+    };
+    await signInAs(other.key);
+    expect(mine > 0 && await page.locator(".rows a").count() === 0, "another person is shown the first one's chats");
+    await go("#/sessions");                                           // with keys alone, every key reads every session,
+    await page.waitForSelector(`.listing a:has-text("started by ${WHO}")`);      // and is shown whose each is
+    expect(await page.locator(".listing a:has-text('started by you')").count() === 0, "sessions someone else started are shown as this person's");
+    await signInAs(KEY);
+    expect(await page.locator(".rows a").count() === mine && (await stored()).length === mine, "the first person's chats did not come back");
+  });
+
   // tidying up, through the console
   await check("a chat is removed from the browser, and its session stays", async () => {
     await go("#/chat");
@@ -525,6 +549,7 @@ const api = async (method, path, body) => {
   await browser.close();
 })().catch(error => { console.log(`  FAIL  ${error.message}`); results.push([false, "the run"]); }).finally(async () => {
   for (const session of made.sessions) await api("DELETE", `/v1/sessions/${session}`).catch(() => {});
+  if (made.key) await api("DELETE", `/v1/keys/${made.key}`).catch(() => {});
   for (const path of [`environments/${ENVIRONMENT}`, `harnesses/${HARNESS}`, `harnesses/${WRITTEN}`, `providers/${PROVIDER}`]) await api("DELETE", `/v1/${path}`).catch(() => {});
   const failed = results.filter(([ok]) => !ok).length;
   console.log(`\n${results.length - failed} of ${results.length} checks passed`);

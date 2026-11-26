@@ -1,14 +1,23 @@
 // The chat's own conversations, kept in this browser. A chat is a title, the model line last used, its session,
 // and for each message what was said and the id of the response it was given: the reply itself is read from the
 // API whenever it is shown. Nothing here is the platform's: any application built on the Responses API keeps
-// something like it.
+// something like it. Each person's chats are their own: in a browser several people use, and for someone who may read
+// every session, the chat lists only what that person began here.
+import { session } from "../../lib/api.js";
 import { keep, kept } from "../../lib/storage.js";
 
 const KEY = "hg.chats", KEPT = 200;
 /** Newest first: {id, title, model, session, from, note, exchanges: [{text, attachments, note, response, status,
  *  interrupted, files}]}. `from` is the response a chat with no exchange of its own continues from. */
-export const chats = kept(KEY, []);
-export const save = () => keep(KEY, chats.slice(0, KEPT));
+export const chats = [];
+let whose = null;
+/** Take up the chats of whoever is signed in, when that is no longer whose these are. */
+export function own() {
+  if (whose === session.who) return;
+  whose = session.who;
+  chats.splice(0, chats.length, ...kept(`${KEY}.${whose}`, []));
+}
+export const save = () => keep(`${KEY}.${whose}`, chats.slice(0, KEPT));
 export const find = id => chats.find(chat => chat.id === id) || null;
 
 export function begin(title, model, more = {}) {

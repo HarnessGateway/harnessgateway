@@ -5,6 +5,7 @@ const KEY = "hg.key";
 export const session = {
   get key() { return sessionStorage.getItem(KEY); },
   set key(value) { value ? sessionStorage.setItem(KEY, value) : sessionStorage.removeItem(KEY); },
+  who: "",          // who is signed in, as the platform names them in its answers: what in this browser is theirs is kept under it
 };
 
 /** One call. `body` is sent as JSON, or as it is when it is a Blob or a form. A refusal is thrown as an Error whose
@@ -19,6 +20,7 @@ export async function call(method, path, body, { raw = false, signal } = {}) {
     if (response.status === 401) window.dispatchEvent(new Event("hg-signed-out"));
     throw error;
   }
+  session.who = response.headers.get("hg-subject") || session.who;
   return raw ? response : response.json();
 }
 export const get = (path, options) => call("GET", path, undefined, options);

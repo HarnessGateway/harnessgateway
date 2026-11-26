@@ -8,7 +8,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from harnessgateway import defaults
-from harnessgateway.api.http import Api, page_of, parse_object, read_body
+from harnessgateway.api.http import Api, page_of, parse_object, reaches, read_body
 from harnessgateway.domain.package import PACKED_MAX, UNPACKED_MAX, PackageFile, is_stray, write_archive
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.resources import KINDS
@@ -36,13 +36,15 @@ def routes(api: Api) -> list[Route]:
     async def one(kind: str, request: Request, who: Principal) -> Any:
         return (await resources.get(who.org_id, kind, request.path_params["name"])).shown()
 
-    async def package_from(org_id: str, session_id: object, path: object) -> bytes:
+    async def package_from(who: Principal, session_id: object, path: object) -> bytes:
         """A package taken from a folder of a session's work, as it was last saved: how a package an agent wrote
         becomes a harness."""
         if not isinstance(path, str) or not path.strip("/"):
             raise Invalid("path is the package's folder in the session's work", param="path")
         if not is_id(session_id, "session"):
             raise Invalid(f"session names no session: {session_id!r}", param="session")
+        org_id = who.org_id
+        await reaches(platform, who, str(session_id))
         saved = await sessions.saved(org_id, (await sessions.get(org_id, str(session_id))).id)
         found = (await snapshots.manifest(org_id, saved)).files(f"work/{path.strip('/')}/")
         entries = {name: entry for name, entry in found.items() if not is_stray(name)}
@@ -65,7 +67,7 @@ def routes(api: Api) -> list[Route]:
         else:
             sent = parse_object(body)
             if kind == "harnesses" and "session" in sent:
-                archive = await package_from(who.org_id, sent["session"], sent.get("path"))
+                archive = await package_from(who, sent["session"], sent.get("path"))
                 made = await resources.add_package(who.org_id, name, archive, by=who.subject)
             else:
                 made = await resources.apply(who.org_id, kind, name, sent, by=who.subject)

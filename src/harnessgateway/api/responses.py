@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from harnessgateway.api.http import Api, listing, parse_object, read_body
+from harnessgateway.api.http import Api, listing, parse_object, reaches, read_body
 from harnessgateway.domain.line import Line
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.request import file_ids, input_items, validate, without_credentials
@@ -24,7 +24,8 @@ _STREAMED = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}      # a st
 
 async def accept(platform: Platform, who: Principal, body: dict[str, Any]) -> Turn:
     """Queue the turn a valid request asks for; or refuse, naming what is wrong. A request continues from a turn
-    that has ended and left a saved state, whose files fit the environment it now names."""
+    that has ended and left a saved state, whose files fit the environment it now names, in a session the caller
+    may change."""
     org_id = who.org_id
     resolved = await platform.resources.resolve(org_id, Line.parse(body.get("model")))
     parent, previous = None, body.get("previous_response_id")
@@ -34,6 +35,7 @@ async def accept(platform: Platform, who: Principal, body: dict[str, Any]) -> Tu
         except NotFound:
             raise Invalid(f"previous_response_id names no response: {previous}",
                           param="previous_response_id") from None
+        await reaches(platform, who, parent.session_id, to_change=True)
         if not parent.final:
             raise Conflict(f"the session has a turn in progress: {parent.id}")
         if parent.snapshot_id is None:
@@ -88,22 +90,30 @@ def routes(api: Api) -> list[Route]:
             if forget:
                 await platform.forget(who.org_id, turn.id)
 
-    async def retrieve(request: Request, who: Principal) -> Any:
+    async def reached(request: Request, who: Principal, *, to_change: bool = False) -> Turn:
+        """The response a request names, once its session is shown to be the caller's to reach."""
         turn = await turns.get(who.org_id, turn_id(request))
+        await reaches(platform, who, turn.session_id, to_change=to_change)
+        return turn
+
+    async def retrieve(request: Request, who: Principal) -> Any:
+        turn = await reached(request, who)
         if request.query_params.get("stream") == "true":
             after = request.query_params.get("starting_after", "-1")
             return stream(who.org_id, turn.id, after=int(after) if after.lstrip("-").isdigit() else -1)
         return turn.response()
 
     async def cancel(request: Request, who: Principal) -> Any:
-        return (await turns.cancel(who.org_id, turn_id(request), by=who.subject)).response()
+        turn = await reached(request, who, to_change=True)
+        return (await turns.cancel(who.org_id, turn.id, by=who.subject)).response()
 
     async def delete(request: Request, who: Principal) -> Any:
-        await turns.delete(who.org_id, turn_id(request), by=who.subject)
+        turn = await reached(request, who, to_change=True)
+        await turns.delete(who.org_id, turn.id, by=who.subject)
         return {"id": request.path_params["id"], "object": "response", "deleted": True}
 
     async def inputs(request: Request, who: Principal) -> Any:
-        turn = await turns.get(who.org_id, turn_id(request))
+        turn = await reached(request, who)
         return listing(input_items(turn.id, turn.request or {}))
 
     return [

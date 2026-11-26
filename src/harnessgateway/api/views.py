@@ -10,7 +10,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
 from harnessgateway.api.containers import Work
-from harnessgateway.api.http import Api, answered
+from harnessgateway.api.http import Api, answered, reaches
 from harnessgateway.domain import view
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.snapshot import CHUNK, Entry
@@ -35,6 +35,7 @@ def routes(api: Api) -> list[Route]:
             session = await platform.sessions.get(who.org_id, session_of(container))
         except NotFound:
             raise NotFound(f"there is no container {container}") from None
+        await reaches(platform, who, session.id)
         expires_at = int(time.time()) + view.LASTS_S
         token = view.sign(await signing_key(), who.org_id, session.id, expires_at=expires_at)
         return {"url": f"/view/{token}/", "expires_at": expires_at}

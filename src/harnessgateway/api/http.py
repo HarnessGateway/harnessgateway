@@ -13,12 +13,14 @@ from starlette.routing import Route
 
 from harnessgateway.domain.events import storable
 from harnessgateway.domain.principal import Principal
-from harnessgateway.errors import Invalid, Refused, TooLarge, Unauthorized
+from harnessgateway.errors import Forbidden, Invalid, Refused, TooLarge, Unauthorized
 from harnessgateway.platform import Platform
 
 log = logging.getLogger(__name__)
 
 BODY_MAX = 32 * 1024 * 1024
+SUBJECT = "hg-subject"                         # the header an answer names its caller in
+READ_ALL, CHANGE_ALL = "sessions.read_all", "sessions.write_all"      # reaching sessions that are someone else's
 Handler = Callable[[Request, Principal], Awaitable[Any]]
 
 
@@ -66,8 +68,27 @@ class Api:
         async def handle(request: Request) -> Any:
             who = await self.who(request)
             await self.platform.extensions.authorize(who, action)
-            return await handler(request, who)
+            answer = await handler(request, who)
+            response = answer if isinstance(answer, Response) else JSONResponse(answer)
+            response.headers[SUBJECT] = who.subject        # so a client knows which owner is itself
+            return response
         return Route(path, answered(handle), methods=[method])
+
+
+async def reaches(platform: Platform, who: Principal, session_id: str, *, to_change: bool = False) -> None:
+    """A session is its owner's: whoever started it reaches it. Anyone else who does is reaching everyone's, and
+    the extensions are asked whether they may. The core alone allows it, as it allows everything."""
+    if await platform.sessions.owner(who.org_id, session_id) != who.subject:
+        await platform.extensions.authorize(who, CHANGE_ALL if to_change else READ_ALL)
+
+
+async def reads_all(platform: Platform, who: Principal) -> bool:
+    """Whether a caller may read every session of their organization, and not their own alone."""
+    try:
+        await platform.extensions.authorize(who, READ_ALL)
+    except Forbidden:
+        return False
+    return True
 
 
 async def read_body(request: Request, limit: int = BODY_MAX) -> bytes:

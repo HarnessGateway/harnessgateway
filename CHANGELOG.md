@@ -3,6 +3,23 @@
 What changed in each version, for someone who runs the platform. A version that asks anything of them beyond the
 two commands of an update is a new major version, and says what.
 
+## 1.1.0
+
+A session is its owner's, and each person's chats are their own. Nothing is asked of whoever runs the platform:
+the two commands of an update, and no change to the schema.
+
+- **A session names who started it** (`owner`). Its owner reaches it as before. Anyone else who reads or changes
+  it is asked for as `sessions.read_all` or `sessions.write_all`, at the `authorize` seam. With API keys alone
+  nothing changes: every key still reaches every session. An edition with roles now keeps a session private to
+  whoever started it, unless their role allows everyone's.
+- **`GET /v1/sessions` lists what the caller may read**: every session for a caller who may read all of them,
+  their own otherwise.
+- **Every answer to an authenticated caller names that caller** in the header `hg-subject`.
+- **The console keeps each person's chats apart.** The chat's list is kept in the browser under who is signed in,
+  so two people who use one browser no longer see each other's, and someone who may read every session sees only
+  their own chats. The Sessions page shows who started each session. Chats a browser kept under an earlier version
+  are no longer shown.
+
 ## 1.0.0
 
 The first version whose installations are updated in place, and the base of every edition
