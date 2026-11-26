@@ -1,5 +1,6 @@
 """API keys: a key acts as whoever made it and never does more than they may. It may be narrowed, and given a time
-from which it is refused; one that is limited makes no key. A caller is told exactly what they may do."""
+from which it is refused; one that is limited makes no key. A key says who made it and how it ends, and a turn which
+key sent it. A caller is told exactly what they may do."""
 
 import os
 from datetime import UTC, datetime, timedelta
@@ -20,10 +21,13 @@ async def test_in_the_core_every_key_is_the_owners_so_what_one_started_is_theirs
     await ready(platform)
     made, first = await platform.keys.create(ORG, "first key", by=HOST)             # as `harnessgateway init` makes one
     assert (made.subject, made.scopes, made.expires_at) == (OWNER, [], None)
+    assert (made.created_by, made.hint) == (HOST, first[-4:]) and first not in str(made)      # who made it, and how it ends
     async with public(platform, first) as a:
         second = (await a.post("/v1/keys", json={"name": "my app"})).json()
         assert second["subject"] == OWNER and second["key"].startswith("hg_") and second["object"] == "key"
-        assert set(second) == {"id", "object", "name", "subject", "scopes", "created_at", "expires_at", "last_used_at", "revoked_at", "key"}
+        assert set(second) == {"id", "object", "name", "subject", "created_by", "hint", "scopes", "created_at", "expires_at", "last_used_at",
+                               "revoked_at", "key"}
+        assert (second["created_by"], second["hint"]) == (OWNER, second["key"][-4:])
         async with public(platform, second["key"]) as b:
             assert (await a.get("/v1/platform")).headers[SUBJECT] == (await b.get("/v1/platform")).headers[SUBJECT] == OWNER
             sent = await a.post("/v1/responses", json={"model": LINE, "input": "hi", "background": True})
@@ -31,11 +35,13 @@ async def test_in_the_core_every_key_is_the_owners_so_what_one_started_is_theirs
             session = sent.json()["metadata"]["hg_session"]
             listed = (await b.get("/v1/sessions")).json()["data"]                     # the other key: the same person
             assert [(each["id"], each["owner"]) for each in listed] == [(session, OWNER)]
+            sent_with = [turn["key"] for turn in (await b.get(f"/v1/sessions/{session}/turns")).json()["data"]]
+            assert sent_with == [made.id]                                             # a turn says which key sent it
             assert [key["name"] for key in (await b.get("/v1/keys")).json()["data"]] == ["first key", "my app"]
             assert (await b.delete(f"/v1/keys/{made.id}")).json()["revoked"]          # theirs to revoke, with either
         assert (await a.get("/v1/platform")).status_code == 401
-    told = await platform.db.all(None, "SELECT principal FROM turns")
-    assert told == [{"principal": OWNER}]
+    told = await platform.db.all(None, "SELECT principal, key_id FROM turns")
+    assert told == [{"principal": OWNER, "key_id": made.id}]
 
 
 async def test_a_key_is_refused_from_its_time_and_does_only_what_its_scopes_match(platform: Platform):

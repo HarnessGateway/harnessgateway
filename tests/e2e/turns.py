@@ -204,6 +204,9 @@ limited = narrow["key"]
 ran = call("POST", "/v1/responses", {"model": "live/shell/none/none", "input": "echo as-a-limited-key"}, key=limited)[1]
 sessions_made.add(ran.get("metadata", {}).get("hg_session"))
 refused, told = call("GET", "/v1/providers", key=limited), call("GET", "/v1/permissions", key=limited)[1]
+check("a key says who made it and how it ends, and a turn says which key sent it",
+      (narrow.get("created_by"), narrow.get("hint")) == ("owner", limited[-4:]) and turns_of(ran)[0]["key"] == narrow["id"]
+      and limited not in json.dumps(call("GET", "/v1/keys")[1]), (narrow.get("created_by"), narrow.get("hint")))
 check("a key acts as the owner within its scopes: it runs a turn, is refused what it is limited away from, is told what it may do, and makes no key",
       status == 200 and "as-a-limited-key" in said(ran) and refused[0] == 403 and "which does not allow providers.read" in refused[1]["error"]["message"]
       and told["allows"] == ["me.read", "responses.read", "responses.write"] and (told["subject"], told["key"]) == ("owner", narrow["id"])

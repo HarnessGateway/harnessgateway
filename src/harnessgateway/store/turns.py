@@ -55,6 +55,7 @@ class Turn:
     snapshot_id: str | None
     store: bool                                # False: nothing of it is kept once it is answered
     principal: str | None                      # who sent it
+    key_id: str | None                         # the API key they sent it with; None: they came with none
     log: str
     created_at: datetime
     started_at: datetime | None
@@ -114,12 +115,12 @@ class Turns:
                                    [session_id, org_id, parent.id if parent else None])
             row = await (await conn.execute(
                 "INSERT INTO turns (id, org_id, session_id, parent_id, number, status, environment, harness, "
-                "provider, model, request, credentials, store, principal) "
-                f"VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
+                "provider, model, request, credentials, store, principal, key_id) "
+                f"VALUES (%s, %s, %s, %s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {COLUMNS}",
                 [turn_id, org_id, session_id, parent.id if parent else None, parent.number + 1 if parent else 1,
                  line.environment, line.harness,
                  line.provider if resolved.provider else None, resolved.model or None, Jsonb(dict(request)),
-                 Jsonb(sealed), stored, who.subject])).fetchone()
+                 Jsonb(sealed), stored, who.subject, who.key])).fetchone()
             assert row is not None
             turn = Turn(**row)
             await conn.execute("UPDATE sessions SET head_turn_id = %s, last_active_at = now() WHERE id = %s",
@@ -127,7 +128,7 @@ class Turns:
             await self._event(conn, turn.id, envelope_event(turn.response(), 0, "response.created"))
             if stored:
                 await self._tell(conn, Change("responses.created", org_id, who.subject, turn.id,
-                                              {"session": session_id, "model": str(line)}))
+                                              {"session": session_id, "model": str(line), "key": who.key}))
             await announce(conn, RUNNERS, WAITING)
         return turn
 

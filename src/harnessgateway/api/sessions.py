@@ -31,12 +31,12 @@ def _session(session: Session) -> dict[str, Any]:
 
 def _turn(turn: Turn) -> dict[str, Any]:
     """A turn as its two payloads: the request as it was sent, and the response as the Responses API returns it.
-    The log is what its sandbox printed beside them, and `used` what that sandbox used. A deleted turn has neither
-    payload."""
+    The log is what its sandbox printed beside them, `used` what that sandbox used, and `key` the API key it was
+    sent with, when it was sent with one. A deleted turn has neither payload."""
     kept = turn.deleted_at is None
     return {"id": turn.id, "object": "session.turn", "number": turn.number, "parent_id": turn.parent_id,
             "status": turn.status, "model": str(turn.line), "deleted": not kept, "request": turn.request,
-            "response": turn.response() if kept else None, "log": turn.log, "used": turn.used,
+            "response": turn.response() if kept else None, "log": turn.log, "used": turn.used, "key": turn.key_id,
             "created_at": _time(turn.created_at),
             "started_at": _time(turn.started_at), "completed_at": _time(turn.completed_at)}
 

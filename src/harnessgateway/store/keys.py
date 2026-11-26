@@ -1,5 +1,6 @@
-"""API keys. A key is shown once, when it is made; after that only its hash is kept. A key acts as someone (its
-subject), and may be limited: to the actions its scopes match, and until a time."""
+"""API keys. A key is shown once, when it is made; after that only its hash is kept, with its last characters: by
+those, someone who finds a key knows which it is. A key acts as someone (its subject), says who made it, and may be
+limited: to the actions its scopes match, and until a time."""
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,7 +15,8 @@ from harnessgateway.errors import Invalid, NotFound
 from harnessgateway.ids import fingerprint, new_api_key, new_id
 from harnessgateway.store.db import Connection, Database, Tell
 
-_COLUMNS = "id, name, subject, scopes, created_at, expires_at, last_used_at, revoked_at"
+_COLUMNS = "id, name, subject, created_by, hint, scopes, created_at, expires_at, last_used_at, revoked_at"
+HINT = 4                                       # how many of a key's last characters are kept: enough to tell it by
 _LIVE = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())"
 
 
@@ -23,6 +25,8 @@ class Key:
     id: str
     name: str
     subject: str                               # who it acts as
+    created_by: str | None                     # who made it; None: it was made before that was kept
+    hint: str | None                           # the last characters of the key itself; None, the same
     scopes: list[str]                          # the patterns it is limited to; none: it is not limited
     created_at: datetime
     expires_at: datetime | None                # from when it is refused; None: never
@@ -36,7 +40,8 @@ class Key:
     def shown(self) -> dict[str, Any]:
         def time(value: datetime | None) -> str | None:
             return value.isoformat() if value else None
-        return {"id": self.id, "object": "key", "name": self.name, "subject": self.subject, "scopes": self.scopes,
+        return {"id": self.id, "object": "key", "name": self.name, "subject": self.subject,
+                "created_by": self.created_by, "hint": self.hint, "scopes": self.scopes,
                 "created_at": time(self.created_at), "expires_at": time(self.expires_at),
                 "last_used_at": time(self.last_used_at), "revoked_at": time(self.revoked_at)}
 
@@ -64,17 +69,18 @@ class Keys:
 
     async def create(self, org_id: str, name: object, *, by: str, subject: str = OWNER, expires_at: object = None,
                      scopes: object = None) -> tuple[Key, str]:
-        """Make a key that acts as `subject`: the installation's owner, unless an edition has other people.
-        Returns its record and the key itself, which is never available again."""
+        """Make a key that acts as `subject`: the installation's owner, unless an edition has other people. `by` is
+        who makes it. Returns its record and the key itself, which is never available again."""
         if not isinstance(name, str) or not 0 < len(name) <= 200:
             raise Invalid("name is 1 to 200 characters: what the key is for", param="name")
         limits, ends = permission.checked(scopes if scopes is not None else [], "scopes"), _moment(expires_at)
         text = new_api_key()
         async with self._db.tx(org_id) as conn:
             row = await (await conn.execute(
-                "INSERT INTO keys (id, org_id, name, hash, subject, scopes, expires_at) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING {_COLUMNS}",
-                [new_id("key"), org_id, name, fingerprint(text), subject, Jsonb(list(limits)), ends])).fetchone()
+                "INSERT INTO keys (id, org_id, name, hash, subject, created_by, hint, scopes, expires_at) "
+                f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING {_COLUMNS}",
+                [new_id("key"), org_id, name, fingerprint(text), subject, by, text[-HINT:], Jsonb(list(limits)),
+                 ends])).fetchone()
             assert row is not None
             key = Key(**row)
             about = {name: key.shown()[name] for name in ("name", "subject", "scopes", "expires_at")}

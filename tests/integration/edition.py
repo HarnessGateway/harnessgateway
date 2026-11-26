@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+from psycopg.types.json import Jsonb
 from starlette.requests import Request
 from starlette.routing import BaseRoute
 
@@ -24,6 +25,7 @@ from harnessgateway.edition import (
     Principal,
     Sealer,
     Settings,
+    calling,
 )
 from harnessgateway.testing import FakeDriver
 
@@ -113,8 +115,10 @@ class Edition(Extension):
     async def on_change(self, conn: Connection, change: Change) -> None:
         if change.target == "unrecorded":
             raise Forbidden("the sample edition could not record this change")
-        await conn.execute("INSERT INTO sample_audit (org_id, name, target, by) VALUES (%s, %s, %s, %s)",
-                           [change.org_id, change.name, change.target, change.by])
+        caller = calling()                         # whose request this change is made in: an audit log says which key
+        await conn.execute("INSERT INTO sample_audit (org_id, name, target, by, about, key) VALUES (%s, %s, %s, %s, %s, %s)",
+                           [change.org_id, change.name, change.target, change.by, Jsonb(change.about),
+                            caller.key if caller and caller.subject == change.by else None])
 
     async def on_event(self, name: str, about: dict[str, Any]) -> None:
         if "on_event" in self.failing:

@@ -10,6 +10,7 @@ from harnessgateway.api.http import (
     BODY_MAX,
     Api,
     answered,
+    calling,
     limit_of,
     listing,
     make_key,
@@ -45,7 +46,7 @@ __all__ = [
     "Conflict", "Connection", "Database", "Driver", "DriverError", "EgressPolicy", "Extension", "Forbidden",
     "HostEntry", "Invalid", "KeySealer", "Lines", "LocalFolders", "Manifest", "Measured", "Mount", "NotFound",
     "OnLine", "Passed", "Platform", "Principal", "Refused", "SandboxExit", "SandboxPlan", "Sealer", "Settings",
-    "SettingsError", "TooLarge", "Unauthorized", "__version__", "answered", "check_name", "entries", "fingerprint",
-    "give", "is_forbidden_address", "limit_of", "listing", "make_key", "may", "page_of", "parse_object", "permission",
-    "permit", "read_body", "refused", "ulid",
+    "SettingsError", "TooLarge", "Unauthorized", "__version__", "answered", "calling", "check_name", "entries",
+    "fingerprint", "give", "is_forbidden_address", "limit_of", "listing", "make_key", "may", "page_of", "parse_object",
+    "permission", "permit", "read_body", "refused", "ulid",
 ]

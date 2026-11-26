@@ -4,6 +4,7 @@ limit, pages of a list, and how a refusal reaches the caller (the OpenAI error e
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +27,14 @@ KEYS_READ_ALL, KEYS_CHANGE_ALL = "keys.read_all", "keys.write_all"    # and keys
 FILES_READ_ALL, FILES_CHANGE_ALL = "files.read_all", "files.write_all"      # and uploaded files
 KEY_FIELDS = ("name", "expires_at", "scopes")                         # what a key is made from
 Handler = Callable[[Request, Principal], Awaitable[Any]]
+_calling: ContextVar[Principal | None] = ContextVar("calling", default=None)
+
+
+def calling() -> Principal | None:
+    """Who the request being answered came from, with the key they came with; None where no authenticated request
+    is being answered (the platform's own work, a route with no credential). It is how an extension that records a
+    change knows which key made it, without every change being handed one."""
+    return _calling.get()
 
 
 def refused(refusal: Refused) -> JSONResponse:
@@ -75,8 +84,12 @@ class Api:
 
         async def handle(request: Request) -> Any:
             who = await self.who(request)
-            await permit(self.platform, who, action)
-            answer = await handler(request, who)
+            held = _calling.set(who)                   # for as long as the request is answered, and no longer
+            try:
+                await permit(self.platform, who, action)
+                answer = await handler(request, who)
+            finally:
+                _calling.reset(held)
             response = answer if isinstance(answer, Response) else JSONResponse(answer)
             response.headers[SUBJECT] = who.subject        # so a client knows which owner is itself
             return response

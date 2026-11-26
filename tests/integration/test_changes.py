@@ -1,5 +1,5 @@
-"""Changes: every one is told to the extensions inside the transaction that makes it, once, with who made it; and an
-extension that cannot keep its record undoes the change."""
+"""Changes: every one is told to the extensions inside the transaction that makes it, once, with who made it; an
+extension knows which key their request came with; and one that cannot keep its record undoes the change."""
 
 import os
 from pathlib import Path
@@ -63,6 +63,13 @@ async def test_every_change_made_through_the_api_is_told_once_with_who_made_it_a
         ("keys.revoked", made["id"], used), ("providers.deleted", "acme", used)]
     everything = str(await platform.db.all(None, "SELECT * FROM sample_audit"))
     assert not any(secret in everything for secret in ("sk-real", "env-secret", key, made["key"]))
+    # An extension knows which key the caller of the request came with: every change made through the API with it.
+    rows = await platform.db.all(None, "SELECT name, key, about FROM sample_audit ORDER BY id")
+    assert [row["key"] for row in rows] == [None, *[first] * 12]                       # the first key was made on the host
+    created = next(row["about"] for row in rows if row["name"] == "responses.created")
+    assert created == {"session": session, "model": LINE, "key": first}                 # and a turn says which key sent it
+    await platform.keys.create(ORG, "made outside any request", by=used)                # no request: no key
+    assert (await platform.db.all(None, "SELECT key FROM sample_audit ORDER BY id DESC LIMIT 1")) == [{"key": None}]
 
 
 async def test_an_extension_that_cannot_keep_its_record_undoes_the_change_and_refuses_the_request(recorded: Platform):
