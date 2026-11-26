@@ -510,6 +510,10 @@ const api = async (method, path, body) => {
     await shot("14-api-keys");
     const listed = (await api("GET", "/v1/keys")).data.find(key => key.name === "console-check another key");
     expect(listed && listed.subject === WHO && listed.scopes.length === 0 && !JSON.stringify(listed).includes(other), "the key is not kept as the owner's, or the API returns it");
+    expect(listed.created_by === WHO && listed.hint === other.slice(-4), "the key does not say who made it, or how it ends");
+    await page.waitForSelector(`.panel div:has(> div :text("console-check another key")) :text("hg_…${other.slice(-4)}")`);      // how it ends: which key it is
+    expect(await page.locator(".panel span:has-text('by you')").count() >= 1 && await page.locator(".panel span:has-text('by the host')").count() >= 1,
+      "a row does not say who made its key: the person signed in, and whoever set the installation up");
     made.keys.push(listed.id);
     await go("#/usage"); await go("#/keys");
     await page.waitForSelector(".panel :text('console-check another key')");

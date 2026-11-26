@@ -1,6 +1,7 @@
-// What the installation's extensions add to the console: pages, and ways to sign in. Each extension's files are
-// served under x/<name>/, and its edition.js names what it adds. Nothing of an extension's is loaded in place of
-// anything of the console's, or of another extension's.
+// What the installation's extensions add to the console: pages, ways to sign in, and the names of who is here.
+// Each extension's files are served under x/<name>/, and its edition.js names what it adds. Nothing of an
+// extension's is loaded in place of anything of the console's, or of another extension's.
+import { register } from "./names.js";
 
 /** What every extension adds, in the order the extensions were named: {pages, signIns, signOuts, refused}. `taken`
  *  holds the ids the console's own pages have. A page whose id is taken, by the console or by an earlier extension,
@@ -19,6 +20,7 @@ export async function editions(taken) {
     }
     signIns.push(...(edition.signIns || []));
     if (edition.signOut) signOuts.push(edition.signOut);
+    if (edition.names) register(edition.names);
   }
   refused.forEach(why => console.error(why));
   return { pages, signIns, signOuts, refused };

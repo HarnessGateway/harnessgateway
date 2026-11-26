@@ -29,8 +29,8 @@ for (const added of pages) {                    // an extension's pages, each in
 }
 const PAGES = Object.fromEntries(NAV.flatMap(([, items]) => items).map(item => [item.id, item]));
 const $ = id => document.getElementById(id);
-let signedIn = false, allowed = new Set();      // the actions the person signed in may do
-const listed = item => !item.action || allowed.has(item.action);
+let signedIn = false;
+const listed = item => !item.action || session.allows.has(item.action);
 
 function signIn(message = "") {
   signedIn = false;
@@ -44,8 +44,8 @@ function signIn(message = "") {
 
 async function start() {
   try {
-    allowed = new Set((await get("/v1/permissions")).allows);
-    const platform = allowed.has("platform.read") ? await get("/v1/platform") : null;
+    session.allows = new Set((await get("/v1/permissions")).allows);
+    const platform = session.allows.has("platform.read") ? await get("/v1/platform") : null;
     $("about").textContent = platform ? `v${platform.version} · isolation ${platform.isolation}` : "";
   } catch (error) {
     session.key = null;
