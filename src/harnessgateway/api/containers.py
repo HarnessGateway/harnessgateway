@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from harnessgateway.api.http import Api, page_of
+from harnessgateway.api.http import Api, page_of, reaches
 from harnessgateway.domain.principal import Principal
 from harnessgateway.domain.snapshot import Entry
 from harnessgateway.errors import NotFound
@@ -48,13 +48,15 @@ def routes(api: Api) -> list[Route]:
         """A file's id in a container: made from its path, so it is the same for as long as the path is there."""
         return f"cfile_{hashlib.sha256(path.encode()).hexdigest()[:32]}"
 
-    async def work(org_id: str, container: str) -> tuple[Session, dict[str, Entry]]:
+    async def work(who: Principal, container: str) -> tuple[Session, dict[str, Entry]]:
+        org_id = who.org_id
         try:
             if not is_id(container, "container"):
                 raise NotFound(container)
             session = await sessions.get(org_id, session_of(container))
         except NotFound:
             raise NotFound(f"there is no container {container}") from None
+        await reaches(api.platform, who, session.id)
         return session, await made.files(org_id, session.id)
 
     def shown(container: str, path: str, entry: Entry) -> dict[str, Any]:
@@ -64,20 +66,20 @@ def routes(api: Api) -> list[Route]:
 
     async def find(request: Request, who: Principal) -> tuple[str, Entry]:
         container, wanted = request.path_params["id"], request.path_params["file"]
-        for path, entry in (await work(who.org_id, container))[1].items():
+        for path, entry in (await work(who, container))[1].items():
             if file_id(path) == wanted:
                 return path, entry
         raise NotFound(f"container {container} has no file {wanted}")
 
     async def one(request: Request, who: Principal) -> Any:
-        session, _ = await work(who.org_id, request.path_params["id"])
+        session, _ = await work(who, request.path_params["id"])
         return {"id": container_of(session.id), "object": "container", "name": session.id, "status": "running",
                 "created_at": int(session.created_at.timestamp()),
                 "last_active_at": int(session.last_active_at.timestamp())}
 
     async def files(request: Request, who: Principal) -> Any:
         container = request.path_params["id"]
-        found = (await work(who.org_id, container))[1]
+        found = (await work(who, container))[1]
         return page_of([shown(container, path, entry) for path, entry in found.items()], request)
 
     async def file(request: Request, who: Principal) -> Any:

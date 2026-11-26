@@ -43,6 +43,10 @@ Extensions are a chain, so every seam says what several of them together mean.
 | `routes(api)` | None | All added after the core's. A path and method that already has a route is refused |
 | `console()` | None | Each extension's folder, under `/console/x/<name>/` |
 
+A session is its owner's (whoever started it). When someone else reaches one, `authorize` is asked a second
+question, `sessions.read_all` or `sessions.write_all`: the core alone allows it, and an extension with roles says
+who may.
+
 Every route names what it does as `noun.read` or `noun.write` (`responses.write`, `providers.read`, …): that is
 what `authorize` is asked about.
 

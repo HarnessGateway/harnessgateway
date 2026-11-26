@@ -195,6 +195,10 @@ check("a response's input is listed, and a response can be deleted", status == 2
       and call("DELETE", f"/v1/responses/{n['id']}")[1].get("deleted") and call("GET", f"/v1/responses/{n['id']}")[0] == 404)
 time.sleep(3)
 usage = call("GET", "/v1/usage")[1]
+asked = urllib.request.Request(URL + f"/v1/sessions/{session}", headers={"Authorization": f"Bearer {KEY}"})
+with urllib.request.urlopen(asked, timeout=60) as answer:
+    caller, owned = answer.headers.get("hg-subject"), json.loads(answer.read())
+check("a session names who started it, and every answer names its caller", caller and caller.startswith("key_") and owned["owner"] == caller, (caller, owned.get("owner")))
 check("usage is the organization's processor time, memory, network and storage", usage["cpu_seconds"] > 0 and usage["memory_byte_seconds"] > 0
       and usage["network_out_bytes"] > 0 and usage["network_in_bytes"] > 0 and usage["storage_bytes"] > 0, usage)
 sessions = call("GET", "/v1/sessions?limit=5")[1]

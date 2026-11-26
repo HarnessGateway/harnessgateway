@@ -4,8 +4,8 @@ This page is everything needed to build the platform with no other context. It s
 promises, how each part works, which file holds which part, and in what order to build them. Where this page and
 the code disagree, this page is right and the code is a bug.
 
-It is version **1.0.0**: the open-source, self-hosted community edition, and the first version whose installations
-are upgraded in place (section 14.3). It is also the bottom of three layers, each a container image built on the one
+It is version **1.1.0** of the open-source, self-hosted community edition, whose installations are upgraded in
+place since 1.0.0 (section 14.3). It is also the bottom of three layers, each a container image built on the one
 below it and each a package the core loads (section 15):
 
 | Layer | Repository | What it is |
@@ -103,8 +103,9 @@ In this order; the first failure is the answer, as the OpenAI error envelope
 7. The model line parses (four parts; the last may hold slashes and is at most 200 characters; the first three
    are names: 1 to 63 characters of `a-z`, `0-9`, and `-`). Each named definition exists, and the environment
    carries the harness. `none/none` names no provider; `none` on one side only is refused.
-8. `previous_response_id`, when given, names a response that exists, has ended, and left a snapshot whose bytes
-   fit the named environment's `disk_mb`.
+8. `previous_response_id`, when given, names a response that exists, in a session the caller may change (their
+   own, or anyone's: section 5.5), that has ended, and left a snapshot whose bytes fit the named environment's
+   `disk_mb`.
 9. Every `file_id` in `input` (`input_file`, `input_image`) names an uploaded file.
 10. Credentials in the request (an MCP tool's `authorization` and `headers`) are replaced by placeholders, and
     each real value is bound to that server's host and sealed beside the turn until it ends.
@@ -211,6 +212,32 @@ the folders of sessions idle longer than `HG_IDLE_S`: their snapshots hold every
 `DELETE /v1/sessions/{id}` removes the session, its turns, their events, its snapshots (each chunk is named once
 less), and its folders. It is refused while a turn of it is queued or running. A chunk nothing names is removed an
 hour later; asking about a chunk renews that hour, so a save in progress can rely on it.
+
+### 5.5 Whose a session is
+
+A session is its owner's: whoever sent the request that started it. A fork is its forker's. The owner is the
+`principal` of the session's first turn, so it is kept in one place, and a session object names it as `owner`.
+
+Its owner reaches a session as they always did. Anyone else who reaches one is reaching everyone's, and
+`authorize` (section 15.2) is asked about that as well as about the route:
+
+| Action | Asked when someone who is not the owner |
+|---|---|
+| `sessions.read_all` | Reads the session, its turns, one of its responses or its input items, its container or a file of it, makes a view link to it, or takes a package from its work |
+| `sessions.write_all` | Continues or forks from one of its responses, cancels or deletes one, or deletes the session |
+
+`GET /v1/sessions` lists every session of the organization for a caller who may read all of them, and the caller's
+own for one who may not. What someone continues in another's session stays that session's owner's; what they fork
+from it is their own.
+
+The core alone allows whoever is authenticated to do everything, so with API keys alone every key reaches every
+session, as it always has. An edition with roles decides who else may: there, a session is private to whoever
+started it unless their role says otherwise. The two actions are named so that a role's `*.read` or `*.write`
+does not match them: reading everything of an organization's is not reading everyone's conversations.
+
+So that a client knows which `owner` is itself, every answer to an authenticated caller names that caller in the
+header `hg-subject`. It is a header, as OpenAI's own API names the caller's organization in one: nothing is added
+to a response's fields.
 
 ## 6. Handover
 
@@ -467,7 +494,7 @@ it builds to. The environment is what an organization starts with: given once, a
 | `POST` `GET /v1/files`, `GET` `DELETE /v1/files/{id}`, `GET /v1/files/{id}/content` | OpenAI's Files API: what `input_file` and `input_image` name |
 | `GET /v1/containers/{id}`, `…/files`, `…/files/{file}`, `…/files/{file}/content` | OpenAI's Containers API, read-only: a session's work as its latest snapshot holds it. A container's id is its session's id under the prefix `cntr_`; a file's id is made from its path |
 | `POST /v1/containers/{id}/view` | A link a browser opens by itself for an hour: a token naming one session, signed with a key of the installation's own (made once, kept sealed in the `platform` table). Files are served through it sandboxed (a `Content-Security-Policy` with `sandbox`), with byte ranges |
-| `GET /v1/sessions`, `GET` `DELETE /v1/sessions/{id}`, `GET /v1/sessions/{id}/turns` | Every session, as the requests and responses it is made of, with each turn's log and what its sandbox used (`used`: `seconds` it ran, `cpus` and `memory_mb` it was allowed, `cpu_seconds` and `memory_byte_seconds` it measured; `null` for a turn whose sandbox never started) |
+| `GET /v1/sessions`, `GET` `DELETE /v1/sessions/{id}`, `GET /v1/sessions/{id}/turns` | Every session the caller may read (section 5.5), each with its `owner`, as the requests and responses it is made of, with each turn's log and what its sandbox used (`used`: `seconds` it ran, `cpus` and `memory_mb` it was allowed, `cpu_seconds` and `memory_byte_seconds` it measured; `null` for a turn whose sandbox never started) |
 | `GET /v1/usage?start=&end=` | Processor time, memory, network bytes, and storage, for the lifetime or a range of days |
 | `POST` `GET /v1/keys`, `DELETE /v1/keys/{id}` | API keys: shown once, kept as a hash |
 | `GET /v1/platform` | `version`, `contract`, `sdk`, `driver`, `isolation`, and `extensions`: the name and version of each one loaded, in order (empty for the core alone) |
@@ -491,6 +518,11 @@ Signing in is giving the console a credential, which it keeps in the tab (`sessi
 `Authorization: Bearer …` with every call. The core's way is typing an API key. A credential may also arrive in the
 address, as `#credential=<token>`: the console takes it, removes it from the address, and signs in with it. That is
 how a sign-in that happens elsewhere (an edition's single sign-on) comes back.
+
+The chat's list of conversations is kept in the browser, and is the person's who is signed in: it is kept under the
+`hg-subject` the platform's answers name (section 5.5). In a browser several people use, each sees their own chats;
+and someone who may read every session still sees, in the chat, only what they began there. The Sessions page lists
+what `GET /v1/sessions` returns, each with who started it.
 
 Editions add to the console and replace nothing of it (section 15.5): each loaded extension's folder is served
 under `/console/x/<name>/`, and its `edition.js` names the pages and the ways to sign in that it adds. The console
@@ -558,7 +590,7 @@ edition's image sets both to its own. Nothing outside an image has to name its e
 The image is the whole distribution. A host needs Docker with Compose v2, and nothing from the repository:
 
 ```sh
-image=ghcr.io/harnessgateway/harnessgateway:1.0.0
+image=ghcr.io/harnessgateway/harnessgateway:1.1.0
 docker run --rm "$image" harnessgateway compose > compose.yaml    # how it is started, for this version
 docker run --rm "$image" harnessgateway secrets > .env            # once: the installation's secrets. Keep it
 docker compose up --detach --wait                                  # the database, the platform, the egress proxy
@@ -648,7 +680,8 @@ core's; none changes a layer below it.
 | `console()` | None | Each extension's folder, under `/console/x/<name>/` (section 15.5) |
 
 Every route names what it does as `noun.read` or `noun.write` (`responses.write`, `providers.read`, `keys.write`,
-…): that string is what `authorize` is asked about. `who` is a `Principal`: the organization whose data the request
+…): that string is what `authorize` is asked about. Reaching a session that is not the caller's own asks a second one,
+`sessions.read_all` or `sessions.write_all` (section 5.5). `who` is a `Principal`: the organization whose data the request
 may touch, and a `subject` (an API key's id, or whatever an extension names).
 
 ### 15.3 Changes: a change and its record commit together
@@ -808,6 +841,7 @@ What must hold, and which test holds it:
 | A handover's words name every stint and each harness's memory | `unit/test_handover.py` |
 | A turn restores, runs, saves, and concludes; fork and rewind return to a response's state | `integration/test_turns.py` |
 | `store: false` leaves no response, no snapshot, no session, and no record of a change | `integration/test_turns.py` |
+| A session is reached by its owner, and by anyone else only when reaching everyone's is allowed; the list shows a caller what they may read; each person's chats are their own | `integration/test_sessions.py`, `e2e/turns.py`, `e2e/console.cjs` |
 | A harness is told where the one before it keeps its memory | `integration/test_turns.py`, `e2e/turns.py` |
 | The platform names no agent CLI, and no edition | `unit/test_agnostic.py` |
 | What ships keeps the contract, and what the harness package builder is told is what the platform has | `shipped/test_packages.py` |
@@ -861,6 +895,11 @@ Decided here, and the founder's to overrule:
 - A turn's end is an event and not a change: nothing may stop a turn from ending.
 - The first API key is printed by a command someone runs, never into a log.
 - 1.0.0 is installed fresh. Nothing is kept in the code for an installation of 6.x.
+- A session is private to its owner only where an edition says so. The core has no roles, so with keys alone every
+  key reaches every session; what the core gives an edition is the question (`sessions.read_all`,
+  `sessions.write_all`), and each session's owner.
+- The console's chats are kept under who is signed in. Chats a browser kept before 1.1.0, under no one, are not
+  shown: there is no telling whose they were.
 
 Open:
 

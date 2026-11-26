@@ -1,5 +1,5 @@
 """Sessions, as the requests and responses they are made of: everything needed to draw a session's conversation,
-whichever application held it."""
+whichever application held it. A session is its owner's; anyone else reaches it only as `reaches` allows."""
 
 from datetime import UTC, datetime
 from typing import Any
@@ -7,7 +7,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.routing import Route
 
-from harnessgateway.api.http import Api, limit_of, listing
+from harnessgateway.api.http import Api, limit_of, listing, reaches, reads_all
 from harnessgateway.domain.line import NONE
 from harnessgateway.domain.principal import Principal
 from harnessgateway.errors import NotFound
@@ -22,7 +22,7 @@ def _time(value: datetime | None) -> str | None:
 
 def _session(session: Session) -> dict[str, Any]:
     ran_with = [session.environment, session.harness, session.provider or NONE, session.model or NONE]
-    return {"id": session.id, "object": "session", "container_id": container_of(session.id),
+    return {"id": session.id, "object": "session", "owner": session.owner, "container_id": container_of(session.id),
             "head_response_id": session.head_turn_id, "forked_from_response_id": session.forked_from_turn_id,
             "turns": session.turns, "bytes": session.bytes, "status": session.status,
             "model": "/".join(ran_with) if session.environment and session.harness else None,     # type: ignore[arg-type]
@@ -52,16 +52,20 @@ def routes(api: Api) -> list[Route]:
 
     async def page(request: Request, who: Principal) -> Any:
         limit = limit_of(request)
-        found = await sessions.page(who.org_id, after=request.query_params.get("after"), limit=limit + 1)
+        mine = None if await reads_all(platform, who) else who.subject
+        found = await sessions.page(who.org_id, owner=mine, after=request.query_params.get("after"), limit=limit + 1)
         return listing([_session(session) for session in found[:limit]], has_more=len(found) > limit)
 
     async def one(request: Request, who: Principal) -> Any:
+        await reaches(platform, who, session_id(request))
         return _session(await sessions.get(who.org_id, session_id(request)))
 
     async def turns(request: Request, who: Principal) -> Any:
+        await reaches(platform, who, session_id(request))
         return listing([_turn(turn) for turn in await sessions.turns(who.org_id, session_id(request))])
 
     async def delete(request: Request, who: Principal) -> Any:
+        await reaches(platform, who, session_id(request), to_change=True)
         await platform.remove_session(who.org_id, session_id(request), by=who.subject)
         return {"id": request.path_params["id"], "object": "session", "deleted": True}
 
