@@ -99,7 +99,6 @@ async def test_a_requests_credentials_reach_only_the_proxy(platform: Platform):
     assert await platform.turns.credentials(turn) == ()               # and once the turn has ended, they are gone
 
 
-
 async def test_a_session_continues_forks_and_changes_harness(platform: Platform):
     await ready(platform)
     driver = platform.driver
